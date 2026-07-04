@@ -1,6 +1,6 @@
 {
   "name": "tako-cli",
-  "version": "0.3.13",
+  "version": "0.3.14",
   "description": "Tako CLI — unified launcher for AI coding tools (Claude Code, Codex, Gemini) with multi-agent session management",
   "type": "module",
   "homepage": "https://github.com/tako-dev/cli#readme",
