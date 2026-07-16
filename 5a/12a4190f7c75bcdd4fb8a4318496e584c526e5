@@ -1,0 +1,21 @@
+.gitignore
+  s_ead16b50ded4d8::t_17d493f091f10e 9-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5a12a4190f7c75bcdd4fb8a4318496e584c526e5",
+  "prompts": {},
+  "sessions": {
+    "s_ead16b50ded4d8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_ead16b50ded4d8",
+        "model": "unknown"
+      },
+      "human_author": "SHIROHA <shir0ha@qq.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
