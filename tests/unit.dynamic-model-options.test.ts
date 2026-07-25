@@ -165,3 +165,42 @@ describe("filterChatModels + parseCodexResponse", () => {
     expect(filterChatModels(entries as any).map((e) => e.id)).toEqual(["a", "e"]);
   });
 });
+
+describe("parseCodexResponse OpenAI (new-api) fallback", () => {
+  it("无 models 数组时回退解析 data[]，按 api_type 过滤并补 contextWindow", () => {
+    const payload = {
+      object: "list",
+      success: true,
+      data: [
+        { id: "gpt-5.4", object: "model", owned_by: "openai", supported_endpoint_types: ["openai"] },
+        { id: "claude-haiku-4-5", object: "model", owned_by: "claude", supported_endpoint_types: ["anthropic", "openai"] },
+        { id: "glm-5.2", object: "model", owned_by: "zhipu", supported_endpoint_types: ["anthropic"] },
+        { id: "gpt-image-2", object: "model", owned_by: "openai", supported_endpoint_types: ["openai"] },
+      ],
+    };
+    const openaiList = parseCodexResponse(payload as any, "openai");
+    expect(openaiList.map((e) => e.id)).toEqual(["claude-haiku-4-5", "gpt-5.4", "gpt-image-2"]);
+    const haiku = openaiList.find((e) => e.id === "claude-haiku-4-5");
+    expect(haiku?.contextWindow).toBe(200000); // bundled catalog 补
+    const img = openaiList.find((e) => e.id === "gpt-image-2");
+    expect(img?.category).toBe("image"); // 生图模型被标 image，不进 chat 下拉
+    const claudeList = parseCodexResponse(payload as any, "claude");
+    expect(claudeList.map((e) => e.id)).toEqual(["claude-haiku-4-5", "glm-5.2"]);
+  });
+
+  it("codex 形态优先，不走 OpenAI fallback", () => {
+    const codex = {
+      models: [{ slug: "gpt-5.4", display_name: "GPT 5.4", context_window: 272000, priority: 2 }],
+      data: [{ id: "should-ignore" }],
+    };
+    const list = parseCodexResponse(codex as any, "openai");
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({
+      id: "gpt-5.4",
+      displayName: "GPT 5.4",
+      contextWindow: 272000,
+      sortOrder: 2,
+      category: "chat",
+    });
+  });
+});

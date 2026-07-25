@@ -10,6 +10,7 @@
  */
 import { join } from "node:path";
 import { TAKO_DIR } from "../config";
+import { getModelEntry, loadCatalog } from "./catalog";
 import type { Provider } from "../providers/types";
 
 export type TakoApiType = "openai" | "claude";
@@ -96,25 +97,68 @@ interface CodexModelDTO {
   model_category?: string;
 }
 
-export function parseCodexResponse(json: unknown): TakoModelEntry[] {
+export function parseCodexResponse(json: unknown, apiType?: TakoApiType): TakoModelEntry[] {
   const arr = (json as { models?: unknown })?.models;
+  if (Array.isArray(arr)) {
+    const out: TakoModelEntry[] = [];
+    for (const raw of arr as CodexModelDTO[]) {
+      const id = raw?.slug;
+      if (typeof id !== "string" || !id) continue;
+      out.push({
+        id,
+        displayName: raw.display_name || id,
+        description: raw.description || "",
+        contextWindow: typeof raw.context_window === "number" ? raw.context_window : 0,
+        sortOrder: typeof raw.priority === "number" ? raw.priority : 0,
+        category: typeof raw.model_category === "string" && raw.model_category
+          ? raw.model_category
+          : "chat",
+      });
+    }
+    out.sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id));
+    return out;
+  }
+  return parseOpenAIResponse(json, apiType ?? "openai");
+}
+
+interface OpenAIModelDTO {
+  id?: string;
+  object?: string;
+  owned_by?: string;
+  supported_endpoint_types?: string[];
+}
+
+/**
+ * new-api (Tako 后端) 标准 OpenAI 形态 /v1/models 响应。
+ * 没有 context_window —— 从 bundled catalog 按 id 查补；
+ * 没有 model_category —— 按模型名前缀推断生图/视频类模型；
+ * supported_endpoint_types 用来过滤 apiType 客户端能用的子集。
+ */
+function parseOpenAIResponse(json: unknown, apiType: TakoApiType): TakoModelEntry[] {
+  const arr = (json as { data?: unknown })?.data;
   if (!Array.isArray(arr)) return [];
+  const want = apiType === "claude" ? "anthropic" : "openai";
   const out: TakoModelEntry[] = [];
-  for (const raw of arr as CodexModelDTO[]) {
-    const id = raw?.slug;
+  for (const raw of arr as OpenAIModelDTO[]) {
+    const id = raw?.id;
     if (typeof id !== "string" || !id) continue;
+    const endpoints = raw.supported_endpoint_types;
+    if (Array.isArray(endpoints) && endpoints.length > 0 && !endpoints.includes(want)) {
+      continue;
+    }
+    const meta = getModelEntry(id);
     out.push({
       id,
-      displayName: raw.display_name || id,
-      description: raw.description || "",
-      contextWindow: typeof raw.context_window === "number" ? raw.context_window : 0,
-      sortOrder: typeof raw.priority === "number" ? raw.priority : 0,
-      category: typeof raw.model_category === "string" && raw.model_category
-        ? raw.model_category
+      displayName: meta?.displayName || id,
+      description: "",
+      contextWindow: meta?.contextWindow ?? 0,
+      sortOrder: 0,
+      category: /^gpt-image|^grok-imagine|-image($|-)|-video($|-)|-tts($|-)|-audio($|-)/i.test(id)
+        ? "image"
         : "chat",
     });
   }
-  out.sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id));
+  out.sort((a, b) => a.id.localeCompare(b.id));
   return out;
 }
 
@@ -161,7 +205,7 @@ export async function refreshTakoModels(
       });
       if (!res.ok) return;
       const json = await res.json();
-      const entries = parseCodexResponse(json);
+      const entries = parseCodexResponse(json, apiType);
       if (entries.length === 0) return;
       memory.set(key, { fetchedAt: Date.now(), entries });
       await writeDisk();
