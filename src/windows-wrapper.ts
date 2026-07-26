@@ -1,3 +1,16 @@
+/**
+ * 判断磁盘上已有的 wrapper 是否需要重写。
+ *
+ * 老版本（<= 0.3.x 早期）install.ps1 写的 tako.cmd 只有 `@echo off` + 一行 bun
+ * 调用，没有 handoff 逻辑。updateWrapperScript 只在「有新版本可更新」或「旧版全局
+ * 安装迁移」时才跑，所以已经装着最新版的老用户永远碰不到重写时机，handoff 机制
+ * 一直失效 —— Windows 上表现为进入客户端后键盘无响应。
+ * 用 handoff 变量名做特征检测，缺失即视为过期。
+ */
+export function windowsWrapperNeedsRepair(content: string | null): boolean {
+  return !content || !content.includes("TAKO_WINDOWS_HANDOFF_FILE");
+}
+
 // 注意：install.ps1 的 Create-Command 内联了一份等价的 cmd/ps1 wrapper 逻辑
 // （安装期还没有 TS 运行时可用，无法 import 本模块）。改这里的 wrapper 内容时，
 // 必须同步改 install.ps1，否则「安装时写的」和「更新时写的」wrapper 会漂移。
