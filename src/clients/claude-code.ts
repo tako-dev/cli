@@ -350,7 +350,9 @@ function buildDynamicClaudeModels(provider: Provider): LaunchOption[] | null {
     return {
       id: `model-${e.id}`,
       label: { en: e.displayName, zh: e.displayName },
-      shortLabel: e.displayName,
+      shortLabel: e.contextWindow > 0
+        ? `${e.displayName} · ${ctxStrOf(e.contextWindow)} ctx`
+        : e.displayName,
       description: {
         en: `Use ${e.displayName} (${ctxStrOf(e.contextWindow)} ctx)`,
         zh: `使用 ${e.displayName}（上下文 ${ctxStrOf(e.contextWindow)}）`,
@@ -391,7 +393,7 @@ function buildModelOptions(provider?: Provider): LaunchOption[] {
     out.push({
       id: `model-${id}`,
       label: { en: pretty, zh: pretty },
-      shortLabel: pretty,
+      shortLabel: ctx > 0 ? `${pretty} · ${ctxStr} ctx` : pretty,
       description: {
         en: `Use ${pretty} (${ctxStr} ctx)`,
         zh: `使用 ${pretty}（上下文 ${ctxStr}）`,

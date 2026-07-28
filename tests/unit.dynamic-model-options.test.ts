@@ -106,6 +106,8 @@ describe("dynamic model launch options", () => {
       "model-full-claude-opus-4-8",
       "model-anthropic/claude-sonnet-4-6",
     ]);
+    expect(opts.find((o) => o.id === "model-gpt-5.5")?.shortLabel)
+      .toBe("gpt-5.5 · 272k ctx");
   });
 
   it("Claude Code model picker lists chat models in order", () => {
@@ -118,6 +120,8 @@ describe("dynamic model launch options", () => {
       "model-gpt-5.5",
       "model-openai/gpt-5.4",
     ]);
+    expect(opts.find((o) => o.id === "model-claude-opus-4-8")?.shortLabel)
+      .toBe("claude-opus-4-8 · 950k ctx");
   });
 
   it("propagates exact context limits to Claude Code and statusline", () => {
