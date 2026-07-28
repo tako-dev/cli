@@ -3,17 +3,21 @@ import { mkdir, readFile, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import {
+  CLAUDE_CONTEXT_WINDOW_ENV_KEY,
+  TAKO_CONTEXT_WINDOW_ENV_KEY,
   buildTakoClaudeSettingsOverlay,
   findClaudeSettingsConflicts,
   prepareTakoClaudeSettingsForLaunch,
 } from "../src/clients/claude-code";
 
 describe("Claude Code launch settings overlay", () => {
-  it("contains only provider-owned env keys", () => {
+  it("contains only launch-owned env keys", () => {
     const overlay = buildTakoClaudeSettingsOverlay({
       ANTHROPIC_AUTH_TOKEN: "new-token",
       ANTHROPIC_BASE_URL: "https://new.example.com",
-      ANTHROPIC_MODEL: "claude-sonnet-4-6",
+      ANTHROPIC_MODEL: "claude-opus-4-8[1m]",
+      [CLAUDE_CONTEXT_WINDOW_ENV_KEY]: "950000",
+      [TAKO_CONTEXT_WINDOW_ENV_KEY]: "950000",
       API_TIMEOUT_MS: "90000",
       KEEP_ME: "yes",
     });
@@ -23,16 +27,20 @@ describe("Claude Code launch settings overlay", () => {
         ANTHROPIC_API_KEY: "",
         ANTHROPIC_AUTH_TOKEN: "new-token",
         ANTHROPIC_BASE_URL: "https://new.example.com",
-        ANTHROPIC_MODEL: "claude-sonnet-4-6",
+        ANTHROPIC_MODEL: "claude-opus-4-8[1m]",
+        [CLAUDE_CONTEXT_WINDOW_ENV_KEY]: "950000",
+        [TAKO_CONTEXT_WINDOW_ENV_KEY]: "950000",
       },
     });
   });
 
-  it("reports only provider-owned values that will actually change", () => {
+  it("reports only launch-owned values that will actually change", () => {
     const settings = {
       env: {
         ANTHROPIC_AUTH_TOKEN: "old-token",
         ANTHROPIC_BASE_URL: "https://new.example.com",
+        [CLAUDE_CONTEXT_WINDOW_ENV_KEY]: "200000",
+        [TAKO_CONTEXT_WINDOW_ENV_KEY]: "950000",
         ANTHROPIC_CUSTOM_HEADERS: "x-trace: keep",
         API_TIMEOUT_MS: "1000",
         KEEP_ME: "yes",
@@ -41,10 +49,13 @@ describe("Claude Code launch settings overlay", () => {
     const overlay = buildTakoClaudeSettingsOverlay({
       ANTHROPIC_AUTH_TOKEN: "new-token",
       ANTHROPIC_BASE_URL: "https://new.example.com",
+      [CLAUDE_CONTEXT_WINDOW_ENV_KEY]: "950000",
+      [TAKO_CONTEXT_WINDOW_ENV_KEY]: "950000",
     });
 
     expect(findClaudeSettingsConflicts(settings, overlay)).toEqual([
       "ANTHROPIC_AUTH_TOKEN",
+      CLAUDE_CONTEXT_WINDOW_ENV_KEY,
     ]);
   });
 

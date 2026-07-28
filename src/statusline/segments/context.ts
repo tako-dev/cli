@@ -3,13 +3,22 @@ import { theme, style, getIcon, fg } from "../colors";
 import { getModelEntry } from "../../models";
 
 const DEFAULT_CONTEXT_LIMIT = 200000;
+export const TAKO_CONTEXT_WINDOW_ENV_KEY = "TAKO_MODEL_CONTEXT_WINDOW";
+
+export function resolveContextLimit(modelId: string, envValue = process.env[TAKO_CONTEXT_WINDOW_ENV_KEY]): number {
+  if (envValue) {
+    const instanceLimit = Number(envValue);
+    if (Number.isSafeInteger(instanceLimit) && instanceLimit > 0) return instanceLimit;
+  }
+  return getModelEntry(modelId)?.contextWindow ?? DEFAULT_CONTEXT_LIMIT;
+}
 
 /**
  * Context Segment：行内显示上下文剩余百分比
  * 格式：⚡73%
  *
- * 上下文窗口从 models 模块查询（覆盖全网主流模型 + [1m] 变体）。
- * 找不到对应条目时回落到 200K。
+ * 上下文窗口优先使用 tako 启动环境传入的实例值；未传入或无效时才查询
+ * models 模块（覆盖全网主流模型 + [1m] 变体），最后回落到 200K。
  */
 export class ContextSegment implements Segment {
   id = "context";
@@ -19,8 +28,7 @@ export class ContextSegment implements Segment {
 
   async render(input: StatusLineInput): Promise<string | null> {
     const tokens = await this.getTokensWithCache(input.transcript_path);
-    const entry = getModelEntry(input.model.id);
-    const limit = entry?.contextWindow ?? DEFAULT_CONTEXT_LIMIT;
+    const limit = resolveContextLimit(input.model.id);
     const usedPercent = Math.round(((tokens ?? 0) / limit) * 100);
     const remainingPercent = Math.max(0, 100 - usedPercent);
 

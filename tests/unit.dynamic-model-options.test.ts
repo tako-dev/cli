@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getClientLaunchOptions } from "../src/clients/base";
-import { claudeCodeClient } from "../src/clients/claude-code";
+import {
+  CLAUDE_CONTEXT_WINDOW_ENV_KEY,
+  TAKO_CONTEXT_WINDOW_ENV_KEY,
+  claudeCodeClient,
+} from "../src/clients/claude-code";
 import { codexClient } from "../src/clients/codex";
 import type { Provider } from "../src/providers/types";
 import {
@@ -27,12 +31,12 @@ function provider(clientId: string): Provider {
   };
 }
 
-function entry(id: string, category = "chat") {
+function entry(id: string, category = "chat", contextWindow = 200000) {
   return {
     id,
     displayName: id,
     description: id,
-    contextWindow: 200000,
+    contextWindow,
     sortOrder: 0,
     category,
   };
@@ -60,9 +64,9 @@ describe("dynamic model launch options", () => {
           [`${BASE_URL}#openai`]: {
             fetchedAt: Date.now(),
             entries: [
-              entry("gpt-5.5"),
-              entry("claude-opus-4-8"),
-              entry("full-claude-opus-4-8"),
+              entry("gpt-5.5", "chat", 272000),
+              entry("claude-opus-4-8", "chat", 950000),
+              entry("full-claude-opus-4-8", "chat", 950000),
               entry("anthropic/claude-sonnet-4-6"),
               IMAGE_ENTRY,
               VIDEO_ENTRY,
@@ -72,9 +76,9 @@ describe("dynamic model launch options", () => {
           [`${BASE_URL}#claude`]: {
             fetchedAt: Date.now(),
             entries: [
-              entry("claude-opus-4-8"),
-              entry("full-claude-opus-4-8"),
-              entry("gpt-5.5"),
+              entry("claude-opus-4-8", "chat", 950000),
+              entry("full-claude-opus-4-8", "chat", 950000),
+              entry("gpt-5.5", "chat", 272000),
               entry("openai/gpt-5.4"),
               IMAGE_ENTRY,
               VIDEO_ENTRY,
@@ -102,6 +106,8 @@ describe("dynamic model launch options", () => {
       "model-full-claude-opus-4-8",
       "model-anthropic/claude-sonnet-4-6",
     ]);
+    expect(opts.find((o) => o.id === "model-gpt-5.5")?.shortLabel)
+      .toBe("gpt-5.5 · 272k ctx");
   });
 
   it("Claude Code model picker lists chat models in order", () => {
@@ -114,6 +120,52 @@ describe("dynamic model launch options", () => {
       "model-gpt-5.5",
       "model-openai/gpt-5.4",
     ]);
+    expect(opts.find((o) => o.id === "model-claude-opus-4-8")?.shortLabel)
+      .toBe("claude-opus-4-8 · 950k ctx");
+  });
+
+  it("propagates exact context limits to Claude Code and statusline", () => {
+    const opts = getClientLaunchOptions(claudeCodeClient, provider("claude-code"));
+    const opus = opts.find((o) => o.id === "model-claude-opus-4-8");
+    const fullOpus = opts.find((o) => o.id === "model-full-claude-opus-4-8");
+    const gpt = opts.find((o) => o.id === "model-gpt-5.5");
+
+    expect(opus?.envVars).toEqual({
+      ANTHROPIC_MODEL: "claude-opus-4-8[1m]",
+      [CLAUDE_CONTEXT_WINDOW_ENV_KEY]: "950000",
+      [TAKO_CONTEXT_WINDOW_ENV_KEY]: "950000",
+    });
+    expect(fullOpus?.envVars).toEqual({
+      ANTHROPIC_MODEL: "full-claude-opus-4-8[1m]",
+      [CLAUDE_CONTEXT_WINDOW_ENV_KEY]: "950000",
+      [TAKO_CONTEXT_WINDOW_ENV_KEY]: "950000",
+    });
+    expect(gpt?.envVars).toEqual({
+      ANTHROPIC_MODEL: "gpt-5.5",
+      [CLAUDE_CONTEXT_WINDOW_ENV_KEY]: "272000",
+      [TAKO_CONTEXT_WINDOW_ENV_KEY]: "272000",
+    });
+  });
+
+  it("does not inject context limits when the server reports zero", () => {
+    const cachePath = join(tmpDir, "tako-models-cache.json");
+    writeFileSync(
+      cachePath,
+      JSON.stringify({
+        version: 1,
+        buckets: {
+          [`${BASE_URL}#claude`]: {
+            fetchedAt: Date.now(),
+            entries: [entry("unknown-chat-model", "chat", 0)],
+          },
+        },
+      }),
+    );
+    _resetTakoCatalog();
+
+    const option = getClientLaunchOptions(claudeCodeClient, provider("claude-code"))
+      .find((o) => o.id === "model-unknown-chat-model");
+    expect(option?.envVars).toEqual({ ANTHROPIC_MODEL: "unknown-chat-model" });
   });
 
   it("filters out non-chat models (image/video/audio) from both pickers", () => {

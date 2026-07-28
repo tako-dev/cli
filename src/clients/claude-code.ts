@@ -20,6 +20,13 @@ const CLAUDE_PROVIDER_ENV_KEYS = [
 ] as const;
 
 const CLAUDE_MODEL_ENV_KEY = "ANTHROPIC_MODEL";
+export const CLAUDE_CONTEXT_WINDOW_ENV_KEY = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
+export const TAKO_CONTEXT_WINDOW_ENV_KEY = "TAKO_MODEL_CONTEXT_WINDOW";
+const CLAUDE_OPTION_ENV_KEYS = [
+  CLAUDE_MODEL_ENV_KEY,
+  CLAUDE_CONTEXT_WINDOW_ENV_KEY,
+  TAKO_CONTEXT_WINDOW_ENV_KEY,
+] as const;
 
 export function buildTakoClaudeSettingsOverlay(
   launchEnvVars: Record<string, string>,
@@ -29,8 +36,10 @@ export function buildTakoClaudeSettingsOverlay(
     // Empty strings neutralize credentials/routing left by another provider.
     env[key] = launchEnvVars[key] ?? "";
   }
-  if (launchEnvVars[CLAUDE_MODEL_ENV_KEY] !== undefined) {
-    env[CLAUDE_MODEL_ENV_KEY] = launchEnvVars[CLAUDE_MODEL_ENV_KEY];
+  for (const key of CLAUDE_OPTION_ENV_KEYS) {
+    if (launchEnvVars[key] !== undefined) {
+      env[key] = launchEnvVars[key];
+    }
   }
   return { env };
 }
@@ -298,11 +307,17 @@ function prettifyModelId(id: string): string {
  * 规则：bundled catalog 标 `contextWindow >= 1_000_000` 的 claude-*、deepseek-*、
  * kimi-* 系列自动补 `[1m]`。
  */
-export function appendOneMTagIfNeeded(modelId: string): string {
+export function appendOneMTagIfNeeded(modelId: string, contextWindow?: number): string {
   if (!modelId) return modelId;
   if (modelId.endsWith("[1m]") || /:1m$/i.test(modelId)) return modelId;
-  // 支持 claude、deepseek、kimi (moonshotai)、mimo (小米) 系列
-  if (!/^(claude|deepseek|kimi|mimo)[-_]/i.test(modelId)) return modelId;
+  // Claude Code must recognize a 1M tier before its auto-compact window can be
+  // raised above the normal ~200k ceiling. A server-advertised window above
+  // 200k therefore opts eligible Anthropic-compatible model families into that
+  // tier; CLAUDE_CODE_AUTO_COMPACT_WINDOW supplies the exact lower limit.
+  if (!/^(?:full-)?(claude|deepseek|kimi|mimo)[-_]/i.test(modelId)) return modelId;
+  if (contextWindow !== undefined) {
+    return contextWindow > 200000 ? `${modelId}[1m]` : modelId;
+  }
   const entry = BUNDLED_ENTRIES.find((e) => e.id === modelId);
   if (!entry || entry.contextWindow < 1_000_000) return modelId;
   return `${modelId}[1m]`;
@@ -325,18 +340,29 @@ function buildDynamicClaudeModels(provider: Provider): LaunchOption[] | null {
   const chat = filterChatModels(raw);
   if (chat.length === 0) return null;
   return chat.map((e) => {
-    const modelArg = appendOneMTagIfNeeded(e.id);
+    const modelArg = appendOneMTagIfNeeded(e.id, e.contextWindow);
+    const contextEnv = e.contextWindow > 0
+      ? {
+          [CLAUDE_CONTEXT_WINDOW_ENV_KEY]: String(e.contextWindow),
+          [TAKO_CONTEXT_WINDOW_ENV_KEY]: String(e.contextWindow),
+        }
+      : {};
     return {
       id: `model-${e.id}`,
       label: { en: e.displayName, zh: e.displayName },
-      shortLabel: e.displayName,
+      shortLabel: e.contextWindow > 0
+        ? `${e.displayName} · ${ctxStrOf(e.contextWindow)} ctx`
+        : e.displayName,
       description: {
         en: `Use ${e.displayName} (${ctxStrOf(e.contextWindow)} ctx)`,
         zh: `使用 ${e.displayName}（上下文 ${ctxStrOf(e.contextWindow)}）`,
       },
       flag: `--model ${modelArg}`,
       args: [],
-      envVars: { ANTHROPIC_MODEL: modelArg },
+      envVars: {
+        ANTHROPIC_MODEL: modelArg,
+        ...contextEnv,
+      },
       group: "model",
     };
   });
@@ -367,7 +393,7 @@ function buildModelOptions(provider?: Provider): LaunchOption[] {
     out.push({
       id: `model-${id}`,
       label: { en: pretty, zh: pretty },
-      shortLabel: pretty,
+      shortLabel: ctx > 0 ? `${pretty} · ${ctxStr} ctx` : pretty,
       description: {
         en: `Use ${pretty} (${ctxStr} ctx)`,
         zh: `使用 ${pretty}（上下文 ${ctxStr}）`,
