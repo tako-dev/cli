@@ -10,6 +10,17 @@ export interface StatusLineInput {
     current_dir: string;
   };
   transcript_path: string;
+  context_window?: {
+    context_window_size: number;
+    current_usage: {
+      input_tokens: number;
+      output_tokens: number;
+      cache_creation_input_tokens: number;
+      cache_read_input_tokens: number;
+    } | null;
+    used_percentage: number | null;
+    remaining_percentage: number | null;
+  };
   cost?: {
     total_cost_usd?: number;
     total_duration_ms?: number;

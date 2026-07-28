@@ -13,9 +13,15 @@ export function resolveContextLimit(modelId: string, envValue = process.env[TAKO
   return getModelEntry(modelId)?.contextWindow ?? DEFAULT_CONTEXT_LIMIT;
 }
 
+export function statusLineUsageTokens(input: StatusLineInput): number | null {
+  const usage = input.context_window?.current_usage;
+  if (!usage) return null;
+  return usage.input_tokens + usage.cache_creation_input_tokens + usage.cache_read_input_tokens;
+}
+
 /**
- * Context Segment：行内显示上下文剩余百分比
- * 格式：⚡73%
+ * Context Segment：行内显示上下文已用百分比
+ * 格式：⚡73% used
  *
  * 上下文窗口优先使用 tako 启动环境传入的实例值；未传入或无效时才查询
  * models 模块（覆盖全网主流模型 + [1m] 变体），最后回落到 200K。
@@ -27,17 +33,17 @@ export class ContextSegment implements Segment {
   private static readonly CACHE_TTL = 5000;
 
   async render(input: StatusLineInput): Promise<string | null> {
-    const tokens = await this.getTokensWithCache(input.transcript_path);
+    const statusLineTokens = statusLineUsageTokens(input);
+    const tokens = statusLineTokens ?? await this.getTokensWithCache(input.transcript_path);
     const limit = resolveContextLimit(input.model.id);
-    const usedPercent = Math.round(((tokens ?? 0) / limit) * 100);
-    const remainingPercent = Math.max(0, 100 - usedPercent);
+    const usedPercent = Math.min(100, Math.max(0, Math.round(((tokens ?? 0) / limit) * 100)));
 
     const icon = getIcon("context");
-    const color = remainingPercent <= 20 ? fg.brightRed
-      : remainingPercent <= 50 ? fg.brightYellow
+    const color = usedPercent >= 80 ? fg.brightRed
+      : usedPercent >= 50 ? fg.brightYellow
       : fg.brightGreen;
 
-    return `${theme.context.icon}${icon}${style.reset} ${color}${remainingPercent}%${style.reset}`;
+    return `${theme.context.icon}${icon}${style.reset} ${color}${usedPercent}% used${style.reset}`;
   }
 
   private async getTokensWithCache(transcriptPath: string): Promise<number | null> {
@@ -67,8 +73,8 @@ export class ContextSegment implements Segment {
           const entry = JSON.parse(lines[i]);
           if (entry.type === "assistant" && entry.message?.usage) {
             const u = entry.message.usage;
-            return (u.input_tokens || 0) + (u.output_tokens || 0) +
-              (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+            return (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) +
+              (u.cache_read_input_tokens || 0);
           }
         } catch { continue; }
       }
