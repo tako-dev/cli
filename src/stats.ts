@@ -1,4 +1,5 @@
-import { PROXY_BASE_URL, getApiId } from "./config";
+import { PROXY_BASE_URL, loadConfig } from "./config";
+import { resolveTakoApiId } from "./quota/tako";
 
 interface UserStatsResponse {
   success: boolean;
@@ -72,11 +73,20 @@ export async function getUserStats(): Promise<{
   error?: string;
 }> {
   try {
-    const apiId = await getApiId();
-
-    if (!apiId) {
-      return { success: false, error: "未找到 API ID，请重新配置 Key" };
+    const config = await loadConfig();
+    const provider = (config.providers ?? []).find((item) => item.type === "tako");
+    if (!provider) {
+      return { success: false, error: "未配置 Tako provider" };
     }
+    if (!provider.apiKey) {
+      return { success: false, error: "Tako provider 缺少 API key，请重新配置" };
+    }
+
+    const resolved = await resolveTakoApiId(provider.apiKey);
+    if (!resolved.valid) {
+      return { success: false, error: resolved.message };
+    }
+    const apiId = resolved.apiId;
 
     // 获取基础统计
     const statsResponse = await fetch(

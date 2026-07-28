@@ -6,24 +6,26 @@ import { buildQuotaPayload, runQuotaCommand } from "../src/quota/command";
 const ORIGINAL_STDOUT_WRITE = process.stdout.write;
 
 function config(overrides: Partial<TakoConfig> = {}): TakoConfig {
+  return { apiKey: "", apiId: "", installedClients: {}, ...overrides };
+}
+
+function takoProvider(overrides: Record<string, unknown> = {}) {
   return {
-    apiKey: "",
-    apiId: "",
-    installedClients: {},
+    id: "p-tako",
+    name: "Tako 官方",
+    type: "tako" as const,
+    apiKey: "cr_test",
+    apiId: "legacy-par-uuid",
+    createdAt: "2026-06-19T00:00:00.000Z",
     ...overrides,
   };
 }
 
-function okQuota(apiId: string): OfficialQuota {
+function okQuota(): OfficialQuota {
   return {
     provider: "tako",
     status: "ok",
-    primary: {
-      costUsed: apiId === "fresh-id" ? 23.617805056000005 : 12,
-      costLimit: 36,
-      usedPct: apiId === "fresh-id" ? 66 : 33,
-      windowMinutes: 300,
-    },
+    primary: { costUsed: 23.617805056000005, costLimit: 36, usedPct: 66, windowMinutes: 300 },
     daily: { costUsed: 55.44094080099994, costLimit: 120, usedPct: 46 },
     secondary: { costUsed: 191.37152484559988, costLimit: 400, usedPct: 48 },
     fetchedAt: Date.parse("2026-06-19T05:29:21.839Z"),
@@ -35,31 +37,30 @@ afterEach(() => {
 });
 
 describe("tako quota command", () => {
-  it("formats five-hour, daily, and weekly Tako quota as JSON", async () => {
-    const result = await buildQuotaPayload(config({
-      providers: [{
-        id: "p-tako",
-        name: "Tako 官方",
-        type: "tako",
-        apiKey: "cr_test",
-        apiId: "saved-id",
-        createdAt: "2026-06-19T00:00:00.000Z",
-      }],
-    }), {
-      fetchQuotaByApiId: async (apiId) => okQuota(apiId),
-      resolveApiIdFromKey: async () => ({ valid: true, apiId: "fresh-id" }),
+  it("resolves the provider API key first and queries only the numeric user ID", async () => {
+    const calls: string[] = [];
+    const result = await buildQuotaPayload(config({ providers: [takoProvider()] }), {
+      resolveApiIdFromKey: async (apiKey) => {
+        calls.push(`resolve:${apiKey}`);
+        return { valid: true, apiId: "123" };
+      },
+      fetchQuotaByApiId: async (apiId) => {
+        calls.push(`quota:${apiId}`);
+        return okQuota();
+      },
     });
 
+    expect(calls).toEqual(["resolve:cr_test", "quota:123"]);
     expect(result.exitCode).toBe(0);
     expect(result.payload).toEqual({
       provider: "tako",
       status: "ok",
       fiveHour: {
-        used: 12,
+        used: 23.617805056000005,
         limit: 36,
-        usedPct: 33,
-        remaining: 24,
-        remainingPct: 67,
+        usedPct: 66,
+        remaining: 12.382194943999995,
+        remainingPct: 34,
         windowMinutes: 300,
       },
       daily: {
@@ -80,90 +81,45 @@ describe("tako quota command", () => {
     });
   });
 
-  it("re-resolves apiId from Tako provider apiKey and retries when saved apiId fails", async () => {
-    const calls: string[] = [];
-    const result = await buildQuotaPayload(config({
-      providers: [{
-        id: "p-tako",
-        name: "Tako 官方",
-        type: "tako",
-        apiKey: "cr_test",
-        apiId: "stale-id",
-        createdAt: "2026-06-19T00:00:00.000Z",
-      }],
-    }), {
-      fetchQuotaByApiId: async (apiId) => {
-        calls.push(apiId);
-        if (apiId === "stale-id") {
-          return {
-            provider: "tako",
-            status: "error",
-            error: "bad_payload",
-            hint: "Tako 用量数据格式异常",
-            fetchedAt: Date.parse("2026-06-19T05:00:00.000Z"),
-          };
-        }
-        return okQuota(apiId);
-      },
-      resolveApiIdFromKey: async (apiKey) => {
-        expect(apiKey).toBe("cr_test");
-        return { valid: true, apiId: "fresh-id" };
+  it("does not fall back to legacy top-level credentials", async () => {
+    let resolved = false;
+    const result = await buildQuotaPayload(config({ apiKey: "cr_legacy", apiId: "legacy-id" }), {
+      resolveApiIdFromKey: async () => {
+        resolved = true;
+        return { valid: true, apiId: "123" };
       },
     });
 
-    expect(result.exitCode).toBe(0);
-    expect(calls).toEqual(["stale-id", "fresh-id"]);
-    expect(result.payload.status).toBe("ok");
-    expect(result.payload.fiveHour).toEqual({
-      used: 23.617805056000005,
-      limit: 36,
-      usedPct: 66,
-      remaining: 12.382194943999995,
-      remainingPct: 34,
-      windowMinutes: 300,
+    expect(resolved).toBe(false);
+    expect(result).toEqual({
+      exitCode: 1,
+      payload: {
+        provider: "tako",
+        status: "error",
+        error: "missing_tako_provider",
+        message: "Tako provider is not configured",
+      },
     });
   });
 
-  it("does not mix legacy apiId with provider apiKey", async () => {
-    const calls: string[] = [];
-    const result = await buildQuotaPayload(config({
-      apiKey: "cr_legacy",
-      apiId: "legacy-id",
-      providers: [{
-        id: "p-tako",
-        name: "Tako 官方",
-        type: "tako",
-        apiKey: "cr_provider",
-        createdAt: "2026-06-19T00:00:00.000Z",
-      }],
-    }), {
-      fetchQuotaByApiId: async (apiId) => {
-        calls.push(apiId);
-        return okQuota(apiId);
-      },
-      resolveApiIdFromKey: async (apiKey) => {
-        calls.push(`resolve:${apiKey}`);
-        return { valid: true, apiId: "provider-id" };
-      },
-    });
-
-    expect(result.exitCode).toBe(0);
-    expect(calls).toEqual(["resolve:cr_provider", "provider-id"]);
-    expect(result.payload.status).toBe("ok");
-  });
-
-  it("returns JSON error and non-zero exit code when Tako config is missing", async () => {
-    const result = await buildQuotaPayload(config(), {
-      fetchQuotaByApiId: async () => okQuota("unexpected"),
-      resolveApiIdFromKey: async () => ({ valid: true, apiId: "unexpected" }),
-    });
-
+  it("rejects a Tako provider without an API key even when apiId is saved", async () => {
+    const result = await buildQuotaPayload(config({ providers: [takoProvider({ apiKey: "" })] }));
     expect(result.exitCode).toBe(1);
-    expect(result.payload).toEqual({
-      provider: "tako",
-      status: "error",
-      error: "missing_tako_provider",
-      message: "Tako provider is not configured",
+    expect(result.payload).toMatchObject({ error: "missing_api_key" });
+  });
+
+  it("preserves key resolution errors", async () => {
+    const result = await buildQuotaPayload(config({ providers: [takoProvider()] }), {
+      resolveApiIdFromKey: async () => ({ valid: false, error: "invalid_key", message: "Invalid key" }),
+    });
+    expect(result).toEqual({
+      exitCode: 1,
+      payload: {
+        provider: "tako",
+        status: "error",
+        error: "invalid_key",
+        message: "Invalid key",
+      },
     });
   });
 
@@ -175,19 +131,16 @@ describe("tako quota command", () => {
     }) as typeof process.stdout.write;
 
     const code = await runQuotaCommand([], {
-      loadConfig: async () => config({
-        apiKey: "cr_legacy",
-        apiId: "legacy-id",
-      }),
-      fetchQuotaByApiId: async (apiId) => okQuota(apiId),
-      resolveApiIdFromKey: async () => ({ valid: true, apiId: "fresh-id" }),
+      loadConfig: async () => config({ providers: [takoProvider()] }),
+      resolveApiIdFromKey: async () => ({ valid: true, apiId: "123" }),
+      fetchQuotaByApiId: async () => okQuota(),
     });
 
     expect(code).toBe(0);
     expect(JSON.parse(output)).toMatchObject({
       provider: "tako",
       status: "ok",
-      fiveHour: { used: 12, limit: 36 },
+      fiveHour: { used: 23.617805056000005, limit: 36 },
     });
     expect(output.endsWith("\n")).toBe(true);
   });

@@ -1,5 +1,4 @@
-import { getOfficialQuota, fetchTakoQuotaByApiId, type OfficialQuota } from "../../quota";
-import { getApiId } from "../../config";
+import { getOfficialQuota, type OfficialQuota } from "../../quota";
 import { getClientProvider, getDefaultProvider } from "../../providers";
 import type { Segment, StatusLineInput } from "../types";
 import { theme, style, getIcon, fg } from "../colors";
@@ -28,13 +27,7 @@ export class QuotaSegment implements Segment {
         (await getClientProvider("claude-code")) ??
         (await getDefaultProvider());
 
-      // 没绑定 provider — 兜底走老 Tako apiId 路径，兼容老配置
-      if (!provider) {
-        const apiId = await getApiId().catch(() => "");
-        if (!apiId) return null;
-        const tako = await fetchTakoQuotaByApiId(apiId);
-        return this.renderTako(tako);
-      }
+      if (!provider) return null;
 
       const quota = await getOfficialQuota(provider);
       if (quota.status !== "ok") return null;

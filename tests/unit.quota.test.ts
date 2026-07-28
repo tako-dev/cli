@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fetchClaudeSubscriptionQuota } from "../src/quota/claude-subscription";
 import { fetchCodexSubscriptionQuota, _setHttpFnForTest } from "../src/quota/codex-subscription";
-import { fetchTakoQuotaByApiId, getOfficialQuota, _clearQuotaCache, _setQuotaDiskCachePathForTest } from "../src/quota";
+import { fetchTakoQuota, fetchTakoQuotaByApiId, resolveTakoApiId } from "../src/quota/tako";
+import { getOfficialQuota, _clearQuotaCache, _setQuotaDiskCachePathForTest } from "../src/quota";
 import type { Provider } from "../src/providers/types";
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -85,6 +86,73 @@ describe("TP-QUOTA-02 Tako fetcher 完整 quota 端点", () => {
     expect(q.primary?.windowMinutes).toBe(300);
     expect(q.daily?.usedPct).toBe(30);    // 30/100
     expect(q.secondary?.usedPct).toBe(40); // 200/500
+  });
+});
+
+describe("TP-QUOTA-11 Tako provider 新身份流", () => {
+  it("先用 provider API key 解析数字 ID，再查询 quota", async () => {
+    const calls = mockFetch((url, init) => {
+      const body = JSON.parse(String(init?.body));
+      if (url.endsWith("/api/get-key-id")) {
+        expect(body).toEqual({ apiKey: "cr_provider" });
+        return jsonResponse({ success: true, data: { id: "123" } });
+      }
+      if (url.endsWith("/api/user-quota")) {
+        expect(body).toEqual({ apiId: "123" });
+        return jsonResponse({
+          plan: { window_cost_limit: 50 },
+          usage: { windowCost: 10 },
+        });
+      }
+      return jsonResponse({ success: false });
+    });
+    const q = await fetchTakoQuota({
+      id: "p-tako", name: "Tako", type: "tako", apiKey: "cr_provider",
+      apiId: "old-par-uuid", createdAt: new Date().toISOString(),
+    });
+    expect(q.status).toBe("ok");
+    expect(calls.map((call) => call.url.split("/").at(-1))).toEqual(["get-key-id", "user-quota"]);
+  });
+
+  it("拒绝非数字 get-key-id 响应", async () => {
+    mockFetch(() => jsonResponse({ success: true, data: { id: "old-par-uuid" } }));
+    const result = await resolveTakoApiId("cr_provider");
+    expect(result).toEqual({
+      valid: false,
+      error: "bad_payload",
+      message: "Tako key validation returned an invalid numeric user ID",
+    });
+  });
+
+  it("provider 缺 API key 时不读取保存的 apiId", async () => {
+    const calls = mockFetch(() => jsonResponse({}));
+    const q = await fetchTakoQuota({
+      id: "p-tako", name: "Tako", type: "tako", apiId: "123",
+      createdAt: new Date().toISOString(),
+    });
+    expect(q.error).toBe("missing_api_key");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("TP-QUOTA-12 Tako 错误分类", () => {
+  it("User not found 保留为业务错误，而不是 bad_payload", async () => {
+    mockFetch((url) => {
+      if (url.endsWith("/api/user-quota")) return jsonResponse({});
+      return jsonResponse({ success: false, error: "User not found" });
+    });
+    const q = await fetchTakoQuotaByApiId("123");
+    expect(q.error).toBe("user_not_found");
+    expect(q.hint).toBe("User not found");
+  });
+
+  it("缺少 success/data/error 的响应仍标记 bad_payload", async () => {
+    mockFetch((url) => {
+      if (url.endsWith("/api/user-quota")) return jsonResponse({});
+      return jsonResponse({ unexpected: true });
+    });
+    const q = await fetchTakoQuotaByApiId("123");
+    expect(q.error).toBe("bad_payload");
   });
 });
 
@@ -245,6 +313,35 @@ describe("TP-QUOTA-10 dispatcher 缓存", () => {
     const q2 = await getOfficialQuota(provider);
     expect(q1).toBe(q2); // 同一对象（缓存）
     expect(calls).toHaveLength(1);
+  });
+
+  it("同一 provider 更换 API key 后不会命中旧账号缓存", async () => {
+    let quotaRequests = 0;
+    mockFetch((url, init) => {
+      const body = JSON.parse(String(init?.body));
+      if (url.endsWith("/api/get-key-id")) {
+        return jsonResponse({
+          success: true,
+          data: { id: body.apiKey === "cr_first" ? "101" : "202" },
+        });
+      }
+      quotaRequests += 1;
+      return jsonResponse({
+        plan: { window_cost_limit: 100 },
+        usage: { windowCost: body.apiId === "101" ? 10 : 20 },
+      });
+    });
+    const base = {
+      id: "p-key-change", name: "Tako", type: "tako" as const,
+      createdAt: new Date().toISOString(),
+    };
+
+    const first = await getOfficialQuota({ ...base, apiKey: "cr_first" });
+    const second = await getOfficialQuota({ ...base, apiKey: "cr_second" });
+
+    expect(first.primary?.usedPct).toBe(10);
+    expect(second.primary?.usedPct).toBe(20);
+    expect(quotaRequests).toBe(2);
   });
 
   it("内存清空后磁盘缓存仍命中（模拟跨进程）", async () => {

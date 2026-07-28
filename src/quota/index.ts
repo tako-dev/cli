@@ -6,6 +6,7 @@
  *   - 磁盘（~/.tako/quota-cache.json）：跨进程 60s 复用，主要给 statusline
  *     用 — Claude Code 每次刷状态栏都 spawn 一个新进程，纯内存缓存无效。
  */
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Provider } from "../providers/types";
@@ -21,7 +22,10 @@ const CACHE_TTL_MS = 60_000;
 const cache = new Map<string, OfficialQuota>();
 
 function cacheKey(provider: Provider): string {
-  return `${provider.type}:${provider.id}`;
+  const authFingerprint = provider.type === "tako" && provider.apiKey
+    ? createHash("sha256").update(provider.apiKey).digest("hex").slice(0, 12)
+    : "";
+  return `${provider.type}:${provider.id}${authFingerprint ? `:${authFingerprint}` : ""}`;
 }
 
 let diskCachePathOverride: string | null = null;
@@ -123,6 +127,10 @@ export function _clearQuotaCache(): void {
   cache.clear();
 }
 
+function keyMatchesProviderId(key: string, providerId: string): boolean {
+  return key.split(":")[1] === providerId;
+}
+
 /**
  * 失效一个 provider 的所有缓存（内存 + 磁盘）。
  * 在 provider authData 更新后调用，避免重新登录后还看到旧的 unauthorized 错误。
@@ -130,14 +138,14 @@ export function _clearQuotaCache(): void {
 export function invalidateQuotaCache(providerId: string, providerType?: string): void {
   // 内存
   for (const k of [...cache.keys()]) {
-    if (k.endsWith(`:${providerId}`)) cache.delete(k);
+    if (keyMatchesProviderId(k, providerId)) cache.delete(k);
   }
   // 磁盘
   try {
     const disk = readDiskCache();
     let changed = false;
     for (const k of Object.keys(disk)) {
-      if (k.endsWith(`:${providerId}`)) {
+      if (keyMatchesProviderId(k, providerId)) {
         delete disk[k];
         changed = true;
       }

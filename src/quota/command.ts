@@ -1,25 +1,8 @@
 import type { TakoConfig } from "../config";
-import { loadConfig, PROXY_BASE_URL } from "../config";
-import { fetchTakoQuotaByApiId } from "./tako";
+import { loadConfig } from "../config";
+import type { Provider } from "../providers/types";
+import { fetchTakoQuotaByApiId, resolveTakoApiId, type ApiIdResult } from "./tako";
 import type { OfficialQuota, QuotaSlot } from "./types";
-
-type ApiIdResult = { valid: boolean; apiId?: string; error?: string };
-
-async function resolveApiIdFromKey(apiKey: string): Promise<ApiIdResult> {
-  try {
-    const response = await fetch(`${PROXY_BASE_URL}/apiStats/api/get-key-id`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ apiKey }),
-      signal: AbortSignal.timeout(5000),
-    });
-    const data: { success?: boolean; data?: { id?: string }; error?: string } = await response.json();
-    if (data.success && data.data?.id) return { valid: true, apiId: data.data.id };
-    return { valid: false, error: data.error || "Tako key validation failed" };
-  } catch (e) {
-    return { valid: false, error: String((e as Error).message ?? e) };
-  }
-}
 
 export interface QuotaCommandDeps {
   loadConfig?: () => Promise<TakoConfig>;
@@ -59,17 +42,8 @@ export interface QuotaCommandResult {
   payload: QuotaJsonPayload;
 }
 
-interface TakoCredentials {
-  apiId: string;
-  apiKey: string;
-}
-
-function getTakoCredentials(config: TakoConfig): TakoCredentials | null {
-  const provider = (config.providers ?? []).find((p) => p.type === "tako");
-  const apiId = provider ? provider.apiId || "" : config.apiId || "";
-  const apiKey = provider ? provider.apiKey || "" : config.apiKey || "";
-  if (!apiId && !apiKey) return null;
-  return { apiId, apiKey };
+function getTakoProvider(config: TakoConfig): Provider | null {
+  return (config.providers ?? []).find((provider) => provider.type === "tako") ?? null;
 }
 
 function toJsonSlot(slot: QuotaSlot | undefined): QuotaJsonSlot | undefined {
@@ -131,35 +105,17 @@ export async function buildQuotaPayload(
   config: TakoConfig,
   deps: QuotaCommandDeps = {},
 ): Promise<QuotaCommandResult> {
+  const provider = getTakoProvider(config);
+  if (!provider) return errorPayload("missing_tako_provider", "Tako provider is not configured");
+  if (!provider.apiKey) return errorPayload("missing_api_key", "Tako provider is missing its API key");
+
+  const resolveApiId = deps.resolveApiIdFromKey ?? resolveTakoApiId;
+  const resolved = await resolveApiId(provider.apiKey);
+  if (!resolved.valid) return errorPayload(resolved.error, resolved.message);
+
   const fetchQuota = deps.fetchQuotaByApiId ?? fetchTakoQuotaByApiId;
-  const resolveApiId = deps.resolveApiIdFromKey ?? resolveApiIdFromKey;
-  const credentials = getTakoCredentials(config);
-
-  if (!credentials) {
-    return errorPayload("missing_tako_provider", "Tako provider is not configured");
-  }
-
-  let quota: OfficialQuota | null = null;
-  if (credentials.apiId) {
-    quota = await fetchQuota(credentials.apiId);
-    if (quota.status === "ok") return successPayload(quota);
-  }
-
-  if (credentials.apiKey) {
-    const resolved = await resolveApiId(credentials.apiKey);
-    if (resolved.valid && resolved.apiId && resolved.apiId !== credentials.apiId) {
-      quota = await fetchQuota(resolved.apiId);
-      if (quota.status === "ok") return successPayload(quota);
-    } else if (!credentials.apiId) {
-      return errorPayload(
-        "api_id_refresh_failed",
-        resolved.error || "Unable to resolve Tako API ID from API key",
-      );
-    }
-  }
-
-  if (quota) return quotaErrorResult(quota);
-  return errorPayload("missing_api_id", "Tako API ID is not configured");
+  const quota = await fetchQuota(resolved.apiId);
+  return quota.status === "ok" ? successPayload(quota) : quotaErrorResult(quota);
 }
 
 export async function runQuotaCommand(
