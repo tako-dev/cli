@@ -49,6 +49,18 @@ function stripTakoWsFeatures(config: Record<string, any>): void {
   }
 }
 
+export function resolveCodexModel(
+  existingModel: unknown,
+  providerModel?: string,
+  selectedOptionIds?: string[],
+): string {
+  const optionModel = selectedOptionIds
+    ?.find((id) => id.startsWith("model-"))
+    ?.slice("model-".length);
+  const configuredModel = typeof existingModel === "string" ? existingModel.trim() : "";
+  return optionModel || providerModel || configuredModel || "gpt-5.5";
+}
+
 async function setupCodexConfigFiles(
   provider: ProviderContext,
   selectedOptionIds?: string[],
@@ -85,11 +97,9 @@ async function setupCodexConfigFiles(
       baseUrl = `${provider.baseUrl}/v1`;
     }
 
-    // 优先级：launcher 里勾的 model-* > provider.model > gpt-5.5 默认
-    const optionModel = selectedOptionIds
-      ?.find((id) => id.startsWith("model-"))
-      ?.slice("model-".length);
-    const model = optionModel || provider.model || "gpt-5.5";
+    // 优先级：launcher 里勾的 model-* > provider.model > 现有 Codex 配置 > gpt-5.5 默认。
+    // 现有值可能由 cc-switch 等外部工具写入，未显式选模型时不应覆盖它。
+    const model = resolveCodexModel(existing.model, provider.model, selectedOptionIds);
     // GPT 系列走 Codex 内置元数据，不写 model_context_window（避免 par 数据错误带歪
     // Codex，比如曾经把 gpt-5.4 误标 105M）。其它模型 Codex 不认识，需要显式注入。
     // 优先级：bundled catalog → par 服务器返回的目录 → 用户在 provider 上录的 modelContextWindow
