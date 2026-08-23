@@ -4,10 +4,11 @@
 
 | 层 | 文件 | 触发时机 | 耗时 |
 |---|---|---|---|
-| 单测 | `tests/unit.*.test.ts` | 每次开发 | < 1s |
-| Pre-release | `tests/pre-release.test.ts` | release workflow 中 / 本地手动 | < 1s |
-| Smoke test | release.yml "Smoke test built bundle" 步骤 | release workflow 中 | < 1s |
-| e2e (三平台) | `tests/e2e/installer-driver.ts` | release workflow + nightly | 1-3 min |
+| 单测 | `tests/unit.*.test.ts` | 每次 PR / push `main` | < 5s |
+| Platform | `tests/platform.*.test.ts` | 每次 PR / push `main`（三平台） | < 2s |
+| Pre-release | `tests/pre-release.test.ts` | PR Ubuntu + release | < 5s |
+| Smoke test | ci.yml / release.yml “Smoke test built bundle” | PR Ubuntu + release | < 1s |
+| e2e (三平台 × 三客户端) | `tests/e2e/installer-driver.ts` | nightly + release | 1-5 min |
 
 ## TP-REL: Pre-release checks（32 个断言）
 
@@ -22,20 +23,23 @@
 | TP-REL-05 | 构建大小合理 | 1KB < size < 1.5MB |
 | TP-REL-06 | **Bundle smoke test** | `bun dist/index.js --version` exit 0 + 输出含 "Tako CLI" |
 
-## TP-INST-E2E: 三平台 e2e（真实 codex 安装）
+## TP-INST-E2E: 三平台 × 三客户端 e2e
 
-运行：`bun run test:e2e-installer`（本地）或 GHA workflow
+运行：`bun run test:e2e-installer`（Codex）/ `bun run test:e2e-installer:pi` / `bun run test:e2e-installer:pi-web`
+
+GHA：`.github/workflows/installer-e2e.yml`（nightly / 手动）和 `release.yml`（发版 gate）
 
 | 编号 | 场景 | 不变量 |
 |---|---|---|
-| TP-INST-E2E-01 | 全新安装 codex | 包入口 + 原生二进制 >1MB |
+| TP-INST-E2E-00 | Pi Web 先装 Pi | — |
+| TP-INST-E2E-01 | 全新安装 Codex / Pi / Pi Web | 包入口 + Codex 原生二进制 >1MB |
 | TP-INST-E2E-02 | cache 隔离 | INV-INST-02 |
 | TP-INST-E2E-03 | 重复 ensure 幂等 | — |
 | TP-INST-E2E-04 | 半残自愈 | INV-INST-01 |
 | TP-INST-E2E-05 | 更新保留 node_modules | INV-INST-03 |
 | TP-INST-E2E-06 | installAtVersion 指定版本 | — |
-| TP-INST-E2E-07 | launcher spawn codex --version | — |
-| TP-INST-E2E-08 | provider config 写入 | — |
+| TP-INST-E2E-07 | launcher spawn | Codex/Pi `--version`；Pi Web `--help` |
+| TP-INST-E2E-08 | provider config 写入 | 仅 Codex |
 | TP-INST-E2E-09 | PowerShell 7+ 可用 (Windows only) | — |
 
 ## TP-SMOKE: Bundle 启动验证
@@ -53,10 +57,10 @@ echo "$OUTPUT" | grep -q "Tako CLI" || exit 1
 
 | Gate | 位置 | 阻断条件 |
 |---|---|---|
-| e2e 三平台 | release.yml → e2e job | 任一平台 FAIL → publish 不执行 |
-| Build | release.yml → publish job | 构建失败 → 阻断 |
-| Smoke test | release.yml → publish job | bundle 无法启动 → 阻断 |
-| Pre-release | release.yml → publish job | 任何断言失败 → 阻断 |
+| unit + platform | ci.yml（PR / push main，三平台） | 任一平台 FAIL |
+| Build + smoke + pre-release | ci.yml Ubuntu | 构建失败 / bundle 无法启动 / 断言失败 |
+| e2e 三平台 × 三客户端 | release.yml → e2e job | 任一组合 FAIL → publish 不执行 |
+| Build / smoke / unit / pre-release | release.yml → publish job | 任一失败 → 阻断 |
 | npm publish | release.yml → publish job | OIDC/registry/npm CLI 问题 → 阻断 |
 
 ## TP-REL-SCRIPT：release script 版本展开

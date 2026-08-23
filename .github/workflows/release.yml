@@ -1,30 +1,30 @@
 name: CLI release
 
 # 打 tag 触发：git tag v0.x.y && git push --tags
-# 流程：e2e 三平台全过 → build → npm publish
+# 流程：三平台 × 三客户端 e2e 全过 → build / unit / pre-release → npm publish
 on:
   push:
     tags:
       - "v*"
 
 jobs:
-  # ─── 阶段 1：三平台 e2e gate ───
   e2e:
     strategy:
       fail-fast: true
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-
+        client: [codex, pi, pi-web]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Installer e2e
         uses: ./.github/actions/installer-e2e
+        with:
+          client: ${{ matrix.client }}
 
-  # ─── 阶段 2：build + publish（e2e 全过后）───
   publish:
     needs: e2e
     runs-on: ubuntu-latest
@@ -36,9 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+      - uses: ./.github/actions/setup-cli
 
       - uses: actions/setup-node@v4
         with:
@@ -46,9 +44,6 @@ jobs:
 
       - name: Check npm publishing CLI
         run: npx -y npm@11.5.1 --version
-
-      - name: Install deps
-        run: bun install --frozen-lockfile
 
       - name: Build
         run: bun run build

@@ -59,8 +59,8 @@ export interface ClientConfig {
   package: string;
   /** 可执行命令名 */
   command: string;
-  /** 运行时: native=直接执行, bun=用Bun运行(适用于Node.js应用) */
-  runtime?: "native" | "bun";
+  /** 运行时: native=直接执行, bun=用 Tako Bun 运行, node=用 Tako 专属 Node 跑（Pi / Next.js 不能走 bun） */
+  runtime?: "native" | "bun" | "node";
   /** 生成环境变量（根据 Provider 上下文） */
   getEnvVars: (provider: ProviderContext) => Record<string, string>;
   /** 生成配置文件（可选），可返回需要附加到客户端命令行的启动参数 */
@@ -76,6 +76,8 @@ export interface ClientConfig {
   launchOptions?: LaunchOption[] | ((provider?: Provider) => LaunchOption[]);
   /** Brand color for TUI display (Ink color name) */
   brandColor?: string;
+  /** Hidden clients stay installable/launchable but do not appear as launcher tabs. */
+  hidden?: boolean;
 }
 
 /**
@@ -180,7 +182,7 @@ export function registerClient(client: ClientConfig): void {
  * 获取所有客户端
  */
 export function getAllClients(): ClientConfig[] {
-  return Array.from(clients.values());
+  return Array.from(clients.values()).filter((client) => !client.hidden);
 }
 
 /**
@@ -188,4 +190,44 @@ export function getAllClients(): ClientConfig[] {
  */
 export function getClient(id: string): ClientConfig | undefined {
   return clients.get(id);
+}
+
+export function parsePathLookup(output: string, platform: NodeJS.Platform): string | undefined {
+  const candidates = output
+    .split("\n")
+    .map((line) => line.trim().replace(/\r$/, ""))
+    .filter(Boolean);
+  if (platform !== "win32") return candidates[0];
+  return candidates.find((p) => p.toLowerCase().endsWith(".exe"))
+    ?? candidates.find((p) => p.toLowerCase().endsWith(".cmd"))
+    ?? candidates[0];
+}
+
+export function pathLookupCommand(command: string, platform: NodeJS.Platform): string {
+  return platform === "win32"
+    ? `where ${command}.exe 2>nul || where ${command}.cmd 2>nul || where ${command}`
+    : `which ${command}`;
+}
+
+export function buildClientLaunchCommand(
+  client: Pick<ClientConfig, "runtime">,
+  binPath: string,
+  bunPath: string,
+  extraArgs: string[] = [],
+  platform: NodeJS.Platform = process.platform,
+  nodePath?: string,
+): string[] {
+  let command: string[];
+  if (client.runtime === "node") {
+    command = [nodePath || "node", binPath];
+  } else if (client.runtime === "native") {
+    if (platform === "win32" && binPath.toLowerCase().endsWith(".js")) {
+      command = [bunPath, binPath];
+    } else {
+      command = [binPath];
+    }
+  } else {
+    command = [bunPath, binPath];
+  }
+  return extraArgs.length > 0 ? [...command, ...extraArgs] : command;
 }

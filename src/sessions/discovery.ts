@@ -30,11 +30,16 @@ export function isGeminiSessionPath(path: string): boolean {
   return /[\\/]chats[\\/]session-.*\.jsonl?$/.test(path);
 }
 
+export function isPiSessionPath(path: string): boolean {
+  return /_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.test(path);
+}
+
 export async function discoverNativeSessions(home = homedir()): Promise<SessionIndexCandidate[]> {
   const specs: Array<[NativeSessionSource, string, (path: string) => boolean]> = [
     ["claude", join(home, ".claude", "projects"), (path) => path.endsWith(".jsonl")],
     ["codex", join(home, ".codex", "sessions"), (path) => path.endsWith(".jsonl")],
     ["gemini", join(home, ".gemini", "tmp"), isGeminiSessionPath],
+    ["pi", join(home, ".pi", "agent", "sessions"), isPiSessionPath],
   ];
   const output: SessionIndexCandidate[] = [];
   for (const [source, root, accept] of specs) {

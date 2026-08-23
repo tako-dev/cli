@@ -1,0 +1,33 @@
+name: Setup CLI
+description: Install Bun and CLI dependencies, then optionally seed an isolated TAKO_HOME.
+
+inputs:
+  tako-home:
+    description: Isolated TAKO_HOME. Leave empty to skip seeding bun into it.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: latest
+
+    - name: Install CLI deps
+      shell: bash
+      run: bun install --frozen-lockfile
+
+    - name: Prepare TAKO_HOME with system bun
+      if: ${{ inputs.tako-home != '' }}
+      shell: bash
+      env:
+        TAKO_HOME: ${{ inputs.tako-home }}
+      run: |
+        mkdir -p "$TAKO_HOME/bun/bin"
+        BUN_PATH="$(which bun)"
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          cp "$BUN_PATH" "$TAKO_HOME/bun/bin/bun.exe"
+        else
+          ln -sf "$BUN_PATH" "$TAKO_HOME/bun/bin/bun"
+        fi

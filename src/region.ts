@@ -21,10 +21,12 @@ export const MIRRORS = {
   cn: {
     npm: "https://registry.npmmirror.com",
     bunBinary: "https://registry.npmmirror.com/-/binary/bun", // npmmirror 的 Bun 二进制镜像
+    nodeBinary: "https://cdn.npmmirror.com/binaries/node",
   },
   global: {
     npm: "https://registry.npmjs.org",
     bunBinary: null,
+    nodeBinary: "https://nodejs.org/dist",
   },
 };
 

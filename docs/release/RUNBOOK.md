@@ -62,9 +62,10 @@ Tag pushes matching `v*` trigger `.github/workflows/release.yml`.
 
 The workflow must pass:
 
-- installer e2e on Ubuntu, macOS, and Windows
+- installer e2e on Ubuntu, macOS, and Windows for Codex, Pi, and Pi Web
 - `bun run build`
 - bundle smoke test: `bun dist/index.js --version`
+- `bun run test:unit`
 - `bun run test:pre-release`
 - `npx -y npm@11.5.1 publish --provenance --access public`
 

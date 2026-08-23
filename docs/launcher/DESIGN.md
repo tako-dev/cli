@@ -19,9 +19,7 @@ TUI 前，父进程必须释放 stdin 和终端模式，避免子进程渲染出
 
 ### 统一入口
 
-`launchClientUnified` 先校验项目目录、调用 `ensureClientReady`，再解析 Provider 并让
-client 写入必要配置文件。最终它把合并后的 args/env/providerContext 传给
-`launcher-legacy.ts` 的 `launchClient`。
+`launchClientUnified` 先校验项目目录、用 `resolveLaunchTarget` 决定装哪个 client（Pi Web 先装 Pi），再调用 `ensureClientReady`，解析 Provider 并让 client 写入必要配置文件。最终它把合并后的 args/env/providerContext 传给 `launcher-legacy.ts` 的 `launchClient`。Pi Web 启动前会剥掉终端专用的 `--provider/--model/--no-session/--continue/--web`。
 
 ### Claude Code 启动配置覆盖
 
@@ -84,3 +82,5 @@ Claude 更新确认 prompt 显示出来但按键无响应。
 - `tests/unit.windows-wrapper.test.ts` - Windows wrapper handoff 文件路径和执行逻辑
 - `tests/platform.windows.test.ts` - Windows 路径和可执行文件扩展兼容
 - `tests/unit.claude-settings.test.ts` - Claude 最小 overlay、冲突字段与 setting source 保留
+- `tests/unit.pi-client.test.ts` - Pi tab、隐藏 Pi Web、tako-pi / pi-cc-header / pi-claude-code-ui 安装策略
+- `tests/unit.pi-install.test.ts` - 跨 OS 启动命令与 PATH 查找

@@ -23,6 +23,8 @@ export const TAB_STYLE: Record<string, { icon: string; color: string }> = {
   "claude-code": { icon: "✦", color: "yellow" },
   codex:         { icon: "◈", color: "blue" },
   gemini:        { icon: "◆", color: "cyan" },
+  pi:            { icon: "π", color: "magenta" },
+  "pi-web":      { icon: "◎", color: "magenta" },
 };
 
 export const ADD_TYPES: ProviderType[] = [

@@ -7,6 +7,11 @@ describe("Entry Resolution - bin field parsing", () => {
     expect(result).toBe("cli.js");
   });
 
+  it("should parse Pi and Pi Web JS entries", () => {
+    expect(parseBinField(mockPackageJsons.pi.bin, "pi")).toBe("dist/cli.js");
+    expect(parseBinField(mockPackageJsons.piWeb.bin, "pi-web")).toBe("bin/pi-web.js");
+  });
+
   it("should parse string format bin field", () => {
     const result = parseBinField(mockPackageJsons.stringBin.bin, "any");
     expect(result).toBe("index.js");

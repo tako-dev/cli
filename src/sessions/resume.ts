@@ -11,6 +11,7 @@ function existingDirectory(path: string | undefined): string | undefined {
 export function resumeArgs(session: UnifiedSession, cwd = session.cwd): { clientId: string; args: string[] } {
   if (session.source === "claude") return { clientId: "claude-code", args: ["--resume", session.nativeId] };
   if (session.source === "codex") return { clientId: "codex", args: ["resume", session.nativeId, ...(cwd ? ["-C", cwd] : [])] };
+  if (session.source === "pi") return { clientId: "pi", args: ["--session", session.nativeId] };
   throw new Error("Tako does not support resuming Gemini sessions yet; use search or detail view instead.");
 }
 

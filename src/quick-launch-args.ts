@@ -1,5 +1,5 @@
 /**
- * 计算 shortcut 命令（--claude / --codex / --gemini）的透传参数。
+ * 计算 shortcut 命令（--claude / --codex / --pi / --gemini）的透传参数。
  *
  * - 移除 shortcut 标志本身
  * - claude-code: --model <id> / --model=<id> 的值自动补 [1m] 后缀

@@ -36,6 +36,8 @@ ${t("cli.optionHelp")}
 ${t("cli.shortcuts")}
 ${t("cli.shortcutClaude")}
 ${t("cli.shortcutCodex")}
+${t("cli.shortcutPi")}
+${t("cli.shortcutPiWeb")}
 ${t("cli.shortcutGemini")}
 
 Commands:
@@ -53,6 +55,8 @@ ${t("cli.exampleInteractive")}
 ${t("cli.exampleClaude")}
 ${t("cli.exampleClaudeModel")}
 ${t("cli.exampleCodex")}
+${t("cli.examplePi")}
+${t("cli.examplePiWeb")}
 ${t("cli.exampleGemini")}
 `);
 }
@@ -106,7 +110,7 @@ async function runInstallCommand(rest: string[]): Promise<void> {
 }
 
 /**
- * 快捷启动（--claude, --codex, --gemini）
+ * 快捷启动（--claude, --codex, --pi, --pi-web, --gemini）
  * 自动选 Provider，不弹交互式菜单
  */
 async function quickLaunch(
@@ -235,6 +239,16 @@ export async function runCli(main: UiMain): Promise<void> {
   if (args.includes("--gemini")) {
     if (shouldRunStartupUpdate(isDev)) await checkAndUpdate();
     await quickLaunch("gemini", "Gemini CLI", await buildPassthroughArgs("gemini", args, "--gemini"));
+    return;
+  }
+  if (args.includes("--pi")) {
+    if (shouldRunStartupUpdate(isDev)) await checkAndUpdate();
+    await quickLaunch("pi", "Pi", await buildPassthroughArgs("pi", args, "--pi"));
+    return;
+  }
+  if (args.includes("--pi-web")) {
+    if (shouldRunStartupUpdate(isDev)) await checkAndUpdate();
+    await quickLaunch("pi-web", "Pi Web", await buildPassthroughArgs("pi-web", args, "--pi-web"));
     return;
   }
 

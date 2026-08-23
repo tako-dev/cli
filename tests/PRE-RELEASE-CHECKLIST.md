@@ -8,6 +8,8 @@ Before executing `bun run release`, verify the following items:
 - [ ] `bun test:integration` - All integration tests pass
 - [ ] `bun test:platform` - Cross-platform tests pass
 - [ ] `bun test:pre-release` - Pre-release tests pass
+- [ ] GitHub `CLI CI` green on the PR (Ubuntu / macOS / Windows)
+
 
 ## Manual Verification
 

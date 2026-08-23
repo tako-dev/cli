@@ -3,8 +3,9 @@
  */
 
 import type { ClientConfig } from "../clients/base";
+import { getClient } from "../clients/base";
 import type { ProviderContext } from "../providers/types";
-import { ensureClientReady } from "../installer";
+import { ensureClientReady, ensureNodeInstalled } from "../installer";
 import { getDefaultProvider, getProvidersForClient, resolveProviderContext } from "../providers";
 import { loadConfig } from "../config";
 import { recordProjectLaunch, isValidDirectory } from "../project-history";
@@ -67,6 +68,42 @@ async function resolveProvider(
   return null;
 }
 
+export function resolveLaunchTarget(
+  client: Pick<ClientConfig, "id">,
+  options?: LaunchOptions,
+): { installId: string; recordId: string; web: boolean } {
+  const web = wantsPiWeb(client as ClientConfig, options);
+  return {
+    installId: client.id === "pi-web" ? "pi" : client.id,
+    recordId: client.id === "pi-web" ? "pi" : client.id,
+    web,
+  };
+}
+
+export { wantsPiWeb, stripPiOnlyArgs };
+
+function wantsPiWeb(client: ClientConfig, options?: LaunchOptions): boolean {
+  if (client.id === "pi-web") return true;
+  if (client.id !== "pi") return false;
+  if (options?.selectedOptionIds?.includes("web")) return true;
+  return !!options?.args?.includes("--web");
+}
+
+function stripPiOnlyArgs(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--provider" || arg === "--model") {
+      i++;
+      continue;
+    }
+    if (arg === "--no-session" || arg === "--continue" || arg === "--web") continue;
+    if (arg.startsWith("--provider=") || arg.startsWith("--model=")) continue;
+    out.push(arg);
+  }
+  return out;
+}
+
 /**
  * Launch client
  */
@@ -87,11 +124,29 @@ export async function launchClientUnified(
       }
     }
 
-    const installResult = await ensureClientReady(client);
+    const { installId, recordId, web } = resolveLaunchTarget(client, options);
+    const installClient = getClient(installId) ?? client;
+    const installResult = await ensureClientReady(installClient);
     if (!installResult.success) return installResult;
 
+    if (installId === "pi" || web || client.id === "pi" || client.id === "pi-web") {
+      const nodeReady = await ensureNodeInstalled();
+      if (!nodeReady) {
+        return { success: false, error: "Tako 专属 Node 安装失败，Pi 需要 Node >= 22.19" };
+      }
+    }
+
+    let target = client;
+    if (web) {
+      const webClient = getClient("pi-web");
+      if (!webClient) return { success: false, error: "Pi Web client not registered" };
+      const webReady = await ensureClientReady(webClient);
+      if (!webReady.success) return webReady;
+      target = webClient;
+    }
+
     // 解析 Provider
-    const providerContext = await resolveProvider(client, options);
+    const providerContext = await resolveProvider(installClient, options);
     if (!providerContext) {
       return { success: false, error: t("launcher.apiKeyNotConfigured") };
     }
@@ -99,12 +154,12 @@ export async function launchClientUnified(
     // Setup config files
     let setupLaunchArgs: string[] = [];
     let setupEnvVars: Record<string, string> = {};
-    if (client.setupConfigFiles) {
+    if (installClient.setupConfigFiles) {
       const launchEnvVars = {
-        ...client.getEnvVars(providerContext),
+        ...installClient.getEnvVars(providerContext),
         ...(options?.envVars ?? {}),
       };
-      const setupResult = await client.setupConfigFiles(
+      const setupResult = await installClient.setupConfigFiles(
         providerContext,
         options?.selectedOptionIds,
         { forLaunch: true, launchEnvVars },
@@ -116,7 +171,7 @@ export async function launchClientUnified(
       }
     }
 
-    await recordProjectLaunch(workingDir, client.id, options?.selectedOptionIds);
+    await recordProjectLaunch(workingDir, recordId, options?.selectedOptionIds);
     try {
       const pickedModelIds = (options?.selectedOptionIds ?? []).filter((id) => id.startsWith("model-"));
       await recordModelPicks(pickedModelIds);
@@ -125,19 +180,20 @@ export async function launchClientUnified(
     }
 
     const config = await loadConfig();
-    const clientVersion = config.installedClients[client.id]?.version;
+    const clientVersion = config.installedClients[target.id]?.version;
     track("client_launched", {
-      client_id: client.id,
+      client_id: target.id,
       client_version: clientVersion,
       project_hash: hashProjectPath(workingDir),
       is_recent_project: !!options?.projectPath,
     });
 
-    log.info(t("launcher.starting", { client: client.name }));
+    log.info(t("launcher.starting", { client: target.name }));
 
-    return await legacyLaunchClient(client, {
+    const mergedArgs = [...setupLaunchArgs, ...(options?.args ?? [])];
+    return await legacyLaunchClient(target, {
       ...options,
-      args: [...setupLaunchArgs, ...(options?.args ?? [])],
+      args: target.id === "pi-web" ? stripPiOnlyArgs(mergedArgs) : mergedArgs,
       envVars: { ...setupEnvVars, ...(options?.envVars ?? {}) },
       cleanupFiles: [...setupCleanupFiles, ...(options?.cleanupFiles ?? [])],
       providerContext,

@@ -1,7 +1,7 @@
 {
   "name": "tako-cli",
   "version": "0.3.33",
-  "description": "Tako CLI — unified launcher for AI coding tools (Claude Code, Codex, Gemini) with multi-agent session management",
+  "description": "Tako CLI — unified launcher for AI coding tools (Claude Code, Codex, Pi, Gemini) with multi-agent session management",
   "type": "module",
   "homepage": "https://github.com/tako-dev/cli#readme",
   "repository": {
@@ -30,6 +30,8 @@
     "test:pre-release": "bun test tests/pre-release.test.ts",
     "test:e2e": "bash scripts/test-install.sh",
     "test:e2e-installer": "TAKO_HOME=$(mktemp -d) bun tests/e2e/installer-driver.ts",
+    "test:e2e-installer:pi": "TAKO_E2E_CLIENT=pi TAKO_HOME=$(mktemp -d) bun tests/e2e/installer-driver.ts",
+    "test:e2e-installer:pi-web": "TAKO_E2E_CLIENT=pi-web TAKO_HOME=$(mktemp -d) bun tests/e2e/installer-driver.ts",
     "test:watch": "bun test --watch",
     "test:coverage": "bun test --coverage",
     "release": "bun scripts/bump.ts patch && git add package.json && git commit -m \"chore: release v$(node -p 'require(\"./package.json\").version')\" && git tag v$(node -p 'require(\"./package.json\").version') && git push && git push --tags",

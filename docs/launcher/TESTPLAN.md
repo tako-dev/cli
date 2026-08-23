@@ -5,6 +5,8 @@
 | 文件 | 内容 |
 |---|---|
 | `tests/unit.terminal-control.test.ts` | 释放 stdin、重置终端模式、二次 settle |
+| `tests/unit.pi-client.test.ts` | Pi tab / 隐藏 Pi Web / Web 路由 / tako-pi + Claude 工具行安装策略 |
+| `tests/unit.pi-install.test.ts` | Windows / Linux / macOS 启动命令与 PATH 查找 |
 | `tests/unit.terminal-prompt.test.ts` | TUI 退出后直接按键 prompt 前重新接管 stdin |
 | `tests/unit.windows-handoff.test.ts` | Windows handoff 脚本生成、quoting、env、relaunch、UTF-8 BOM |
 | `tests/unit.windows-wrapper.test.ts` | cmd/ps1 wrapper 创建并执行 handoff 文件 |
@@ -51,13 +53,22 @@
 | TP-LAUNCH-05a | TUI teardown 后进入 confirm/pause prompt | prompt 前 ref stdin、移除旧 listeners、关闭 raw mode、pause |
 | TP-LAUNCH-05b | cleanup 延迟后 | 再执行一次 stdin reclaim，防止旧 TUI cleanup 重新占用 |
 
+### TP-LAUNCH-06 Pi / Pi Web 路由
+
+| 编号 | 场景 | 期望 |
+|---|---|---|
+| TP-LAUNCH-06a | Pi 选「浏览器界面」或 `--web` | `wantsPiWeb=true`，先装 Pi 再装 Pi Web |
+| TP-LAUNCH-06b | 直接启动 hidden `pi-web` | 安装/历史都记成 `pi` |
+| TP-LAUNCH-06c | Pi Web 启动参数 | 剥掉 `--provider/--model/--no-session/--continue/--web` |
+| TP-LAUNCH-06d | Pi / Pi Web 入口 | `runtime: node`，用 Tako 专属 Node（`~/.tako/node`，>=22.19）跑 JS 入口，不使用系统 Node 21，也不能 bun（Next.js CJS wrapper） |
+
 ## 运行方式
 
 ```bash
 cd packages/cli
 
 # launcher 相关快速回归
-bun test tests/unit.terminal-control.test.ts tests/unit.terminal-prompt.test.ts tests/unit.windows-handoff.test.ts tests/unit.windows-wrapper.test.ts tests/platform.windows.test.ts
+bun test tests/unit.terminal-control.test.ts tests/unit.terminal-prompt.test.ts tests/unit.windows-handoff.test.ts tests/unit.windows-wrapper.test.ts tests/unit.pi-client.test.ts tests/unit.pi-install.test.ts tests/platform.windows.test.ts
 
 # 发版前总 gate
 bun run build

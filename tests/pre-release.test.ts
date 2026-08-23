@@ -4,6 +4,8 @@ import { getTakoDir, getTakoCliDir, getProjectRoot, getSrcDir, getDistDir } from
 import { expectFileExists, expectValidPackageJson, expectHasShebang } from "./_helpers/assertions";
 import { coreModules, clientModules, requiredConfigFields } from "./_helpers/fixtures";
 import { buildCliUpdateCommand } from "../src/updater";
+import { piClient } from "../src/clients/pi";
+import { piWebClient } from "../src/clients/pi-web";
 
 describe("Pre-Release - Build System", () => {
   const projectRoot = getProjectRoot();
@@ -202,5 +204,13 @@ describe("Pre-Release - Client Registry", () => {
     expect(client.package).toBeTruthy();
     expect(client.command).toBeTruthy();
     expect(["bun", "native"]).toContain(client.runtime);
+  });
+
+  it("Pi and Pi Web client configuration should be complete", () => {
+    expect(piClient.package).toBe("@earendil-works/pi-coding-agent");
+    expect(piClient.runtime).toBe("node");
+    expect(piWebClient.package).toBe("@agegr/pi-web");
+    expect(piWebClient.runtime).toBe("node");
+    expect(piWebClient.hidden).toBe(true);
   });
 });

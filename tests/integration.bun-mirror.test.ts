@@ -130,8 +130,10 @@ describe("Bun Mirror - version parsing", () => {
   it("should have correct mirror config", () => {
     expect(MIRRORS.cn.npm).toBe("https://registry.npmmirror.com");
     expect(MIRRORS.cn.bunBinary).toBe("https://registry.npmmirror.com/-/binary/bun");
+    expect(MIRRORS.cn.nodeBinary).toBe("https://cdn.npmmirror.com/binaries/node");
     expect(MIRRORS.global.npm).toBe("https://registry.npmjs.org");
     expect(MIRRORS.global.bunBinary).toBeNull();
+    expect(MIRRORS.global.nodeBinary).toBe("https://nodejs.org/dist");
   });
 });
 

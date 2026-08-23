@@ -270,6 +270,14 @@ const translations = {
       en: "  --gemini [args...]   Launch Gemini CLI (passes extra args through)",
       zh: "  --gemini [参数...]   启动 Gemini CLI（额外参数透传给 gemini）",
     },
+    shortcutPi: {
+      en: "  --pi [args...]       Launch Pi (passes extra args through)",
+      zh: "  --pi [参数...]       启动 Pi（额外参数透传给 pi）",
+    },
+    shortcutPiWeb: {
+      en: "  --pi-web [args...]   Launch Pi Web (browser UI)",
+      zh: "  --pi-web [参数...]   启动 Pi Web（浏览器界面）",
+    },
     examples: {
       en: "Examples:",
       zh: "示例：",
@@ -293,6 +301,14 @@ const translations = {
     exampleGemini: {
       en: "  tako --gemini     Launch Gemini CLI directly",
       zh: "  tako --gemini     直接启动 Gemini CLI",
+    },
+    examplePi: {
+      en: "  tako --pi         Launch Pi directly",
+      zh: "  tako --pi         直接启动 Pi",
+    },
+    examplePiWeb: {
+      en: "  tako --pi-web     Launch Pi Web in the browser",
+      zh: "  tako --pi-web     在浏览器里启动 Pi Web",
     },
     clientNotFound: {
       en: "{client} client not found",

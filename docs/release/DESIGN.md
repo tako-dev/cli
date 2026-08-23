@@ -13,8 +13,8 @@ tako-cli 的发布完全自动化：本地打 tag → GHA 自动跑 e2e + build 
   ▼
 GHA: .github/workflows/release.yml (tag v* 触发)
   │
-  ├─ e2e job (三平台并行, fail-fast)
-  │   ├─ ubuntu-latest   ✓  9 个 installer e2e check
+  ├─ e2e job (三平台 × Codex / Pi / Pi Web, fail-fast)
+  │   ├─ ubuntu-latest   ✓
   │   ├─ macos-latest    ✓
   │   └─ windows-latest  ✓  + PowerShell 兼容
   │
@@ -22,9 +22,12 @@ GHA: .github/workflows/release.yml (tag v* 触发)
       ├─ bun install
       ├─ bun run build
       ├─ Smoke test: bun dist/index.js --version
-      ├─ Pre-release checks (32 个断言)
+      ├─ bun run test:unit
+      ├─ Pre-release checks
       └─ npx -y npm@11.5.1 publish --provenance (OIDC trusted publishing)
 ```
+
+日常 PR / push `main` 走 `.github/workflows/ci.yml`：三平台 unit + platform，Ubuntu 再跑 build / smoke / pre-release。不装真实 client。
 
 ## 本地命令
 
@@ -46,8 +49,11 @@ bun run release:minor  # minor: 0.x.y → 0.(x+1).0
 
 ## 源文件
 
+- `.github/workflows/ci.yml` — PR / push `main` 日常门禁
 - `.github/workflows/release.yml` — CI 发布 workflow
 - `.github/workflows/installer-e2e.yml` — nightly e2e（独立于 release）
+- `.github/actions/setup-cli` — Bun + deps + 可选 TAKO_HOME
+- `.github/actions/installer-e2e` — 按 `TAKO_E2E_CLIENT` 跑真实安装
 - `scripts/bump.ts` — 版本号更新
 - `scripts/release-gate.sh` — 手动本地 pre-check（可选）
 - `tests/pre-release.test.ts` — 构建产物验证（含 smoke test）

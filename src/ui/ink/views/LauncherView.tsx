@@ -47,6 +47,8 @@ const CLIENT_STYLE: Record<string, { icon: string; color: string }> = {
   "claude-code": { icon: "✦", color: "yellow" },
   codex:         { icon: "◈", color: "blue" },
   gemini:        { icon: "◆", color: "cyan" },
+  pi:            { icon: "π", color: "magenta" },
+  "pi-web":      { icon: "◎", color: "magenta" },
 };
 const DEFAULT_STYLE = { icon: "▪", color: "white" };
 
@@ -59,6 +61,20 @@ function sessionAge(timestamp: number, zh: boolean): string {
   if (diff < 3_600_000) return `${Math.max(1, Math.floor(diff / 60_000))}${zh ? "分钟前" : "m"}`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}${zh ? "小时前" : "h"}`;
   return `${Math.floor(diff / 86_400_000)}${zh ? "天前" : "d"}`;
+}
+
+function sessionSourceLabel(source: UnifiedSession["source"]): string {
+  if (source === "claude") return "Claude";
+  if (source === "codex") return "Codex";
+  if (source === "pi") return "Pi";
+  return "Gemini";
+}
+
+function sessionSourceColor(source: UnifiedSession["source"]): string {
+  if (source === "claude") return "magenta";
+  if (source === "codex") return "blue";
+  if (source === "pi") return "magenta";
+  return "cyan";
 }
 
 function sessionDayGroup(timestamp: number, zh: boolean): string {
@@ -100,6 +116,7 @@ function ProviderBadge({ provider, zh }: { provider: Provider | undefined; zh: b
     "codex-subscription":    { zh: "Codex 官方",    en: "Codex Official",  color: "blue",   icon: "◈"  },
     "anthropic":             { zh: "Anthropic 直连", en: "Anthropic Direct", color: "yellow", icon: "✦" },
     "deepseek":              { zh: "DeepSeek",      en: "DeepSeek",        color: "magenta", icon: "◇" },
+    "xiaomi":                { zh: "小米 MiMo",     en: "Xiaomi MiMo",     color: "yellow",  icon: "🟠" },
     "custom":                { zh: "自定义",        en: "Custom",          color: "gray",    icon: "▪" },
   };
   const meta = TYPE_LABELS[provider.type] ?? TYPE_LABELS.custom;
@@ -753,7 +770,7 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, init
         ) : focus === "search" ? sessionWindow.map((result, localIndex) => {
           const resultIndex = sessionWindowStart + localIndex;
           const focused = resultIndex === sessionIdx;
-          const color = result.session.source === "claude" ? "magenta" : result.session.source === "codex" ? "blue" : "cyan";
+          const color = sessionSourceColor(result.session.source);
           const group = sessionDayGroup(result.session.updatedAt, zh);
           const width = Math.max(30, (stdout.columns || 80) - 14);
           return (
@@ -762,7 +779,7 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, init
                 <Box>
                   <Text color={focused ? "cyan" : undefined} bold={focused}>{focused ? "▸ " : "  "}</Text>
                   <Text color="cyan">{group}</Text><Text dimColor> · </Text>
-                  <Text color={color} bold>{result.session.source === "claude" ? "Claude" : result.session.source === "codex" ? "Codex" : "Gemini"}</Text>
+                  <Text color={color} bold>{sessionSourceLabel(result.session.source)}</Text>
                   <Text dimColor> · {result.session.projectName ?? "未知项目"} · {sessionAge(result.session.updatedAt, zh)}  </Text>
                   <Text bold={focused} color={focused ? "white" : undefined}>{truncateToWidth(cleanSessionText(result.session.title ?? result.session.nativeId.slice(0, 8)), Math.max(12, width - 36))}</Text>
                 </Box>

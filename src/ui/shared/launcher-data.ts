@@ -13,20 +13,29 @@ import {
 import { getClientProvider, getDefaultProvider, getProvidersForClient } from "../../providers";
 import type { LauncherClientData, LauncherLoadResult, ProjectItem } from "./types";
 
+/** Tab 顺序保持注册序。有本目录历史就停在上次用的，否则默认 Pi。 */
+export function resolveDefaultClientIndex(
+  clientIds: string[],
+  lastId: string | null,
+  fallbackId = "pi",
+): number {
+  if (lastId === "pi-web") lastId = "pi";
+  if (lastId) {
+    const lastIdx = clientIds.indexOf(lastId);
+    if (lastIdx >= 0) return lastIdx;
+  }
+  const fallbackIdx = clientIds.indexOf(fallbackId);
+  return fallbackIdx >= 0 ? fallbackIdx : 0;
+}
+
 export async function loadLauncherData(projectPathWidth = 45): Promise<LauncherLoadResult> {
   const all = getAllClients();
   const lastId = await getLastClientForCwd();
   const defaultProvider = await getDefaultProvider();
   const zh = getLocale() === "zh";
 
-  const sorted = [...all].sort((a, b) => {
-    if (a.id === lastId) return -1;
-    if (b.id === lastId) return 1;
-    return 0;
-  });
-
   const clients: LauncherClientData[] = [];
-  for (const client of sorted) {
+  for (const client of all) {
     const recent = await getRecentProjectsForClient(client.id, DISPLAY_PER_CLIENT, true);
     const cwd = process.cwd();
     const projects: ProjectItem[] = [
@@ -74,7 +83,7 @@ export async function loadLauncherData(projectPathWidth = 45): Promise<LauncherL
 
   return {
     clients,
-    defaultIdx: 0,
+    defaultIdx: resolveDefaultClientIndex(clients.map((item) => item.client.id), lastId),
     hasProviders: clients.some((client) => client.providers.length > 0),
     pickCounts,
     zh,

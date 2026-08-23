@@ -1,6 +1,6 @@
-import { ClientConfig, getClientBinPath, getClientEntryPath } from "./clients/base";
+import { ClientConfig, getClientBinPath, getClientEntryPath, buildClientLaunchCommand, parsePathLookup, pathLookupCommand } from "./clients/base";
 import { TAKO_DIR } from "./config";
-import { getBunPath } from "./installer";
+import { getBunPath, getNodePath } from "./installer";
 import { settleTerminalForExternalChild } from "./terminal-control";
 import { WINDOWS_HANDOFF_ENV, writeWindowsHandoffScript } from "./windows-handoff";
 import { join } from "path";
@@ -40,20 +40,10 @@ export async function launchClient(
       const { execSync } = await import("node:child_process");
       // Windows 上优先找 .exe（真正的可执行文件），避免 where 返回无扩展名的
       // POSIX shell 脚本（如 npm 全局安装的 `claude` shim），直接 spawnSync 会卡死。
-      const findCmd = isWindows
-        ? `where ${client.command}.exe 2>nul || where ${client.command}.cmd 2>nul || where ${client.command}`
-        : `which ${client.command}`;
+      const findCmd = pathLookupCommand(client.command, isWindows ? "win32" : process.platform);
       try {
-        const candidates = execSync(findCmd, { encoding: "utf8" })
-          .split("\n")
-          .map((l) => l.trim().replace(/\r$/, "")) // 去掉 Windows \r\n 的 \r
-          .filter(Boolean);
-        // Windows：优先选 .exe，其次 .cmd，最后才用无扩展名的 shim
-        const pick = isWindows
-          ? (candidates.find((p) => p.toLowerCase().endsWith(".exe")) ??
-             candidates.find((p) => p.toLowerCase().endsWith(".cmd")) ??
-             candidates[0])
-          : candidates[0];
+        const candidates = execSync(findCmd, { encoding: "utf8" });
+        const pick = parsePathLookup(candidates, isWindows ? "win32" : process.platform);
         if (pick) binPath = pick;
         else return { success: false, error: `找不到 ${client.command}，请运行 tako install ${client.id}` };
       } catch {
@@ -65,27 +55,14 @@ export async function launchClient(
     const extraEnv = { ...clientEnvVars, ...(options?.envVars ?? {}) };
     const env = { ...process.env, ...extraEnv };
 
-    let command: string[];
-    if (client.runtime === "native") {
-      // native 客户端理应是可执行二进制（如 codex）。但部分 native 客户端
-      // （claude-code）的 entry 实际是 JS 文件（cli.js）——Unix 靠 shebang +
-      // 可执行位能直接跑，Windows 没有这套机制，把 .js 当可执行会被系统关联
-      // 程序（WSH）接管而卡住。故 Windows 上 entry 是 .js 时改用 bun 执行，
-      // 等价于 npm shim 里的 `node cli.js`。
-      if (isWindows && binPath.toLowerCase().endsWith(".js")) {
-        const bunPath = await getBunPath();
-        command = [bunPath, binPath];
-      } else {
-        command = [binPath];
-      }
-    } else {
-      const bunPath = await getBunPath();
-      command = [bunPath, binPath];
-    }
-
-    if (options?.args && options.args.length > 0) {
-      command = [...command, ...options.args];
-    }
+    const command = buildClientLaunchCommand(
+      client,
+      binPath,
+      await getBunPath(),
+      options?.args ?? [],
+      isWindows ? "win32" : process.platform,
+      await getNodePath(),
+    );
 
     if (isWindows && options?.handoffOnWindows) {
       const handoffPath = process.env[WINDOWS_HANDOFF_ENV];

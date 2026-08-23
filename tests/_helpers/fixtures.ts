@@ -13,7 +13,21 @@ export const testClients = {
     package: "@openai/codex",
     command: "codex",
     runtime: "bun" as const,
-  }
+  },
+  pi: {
+    id: "pi",
+    name: "Pi",
+    package: "@earendil-works/pi-coding-agent",
+    command: "pi",
+    runtime: "native" as const,
+  },
+  piWeb: {
+    id: "pi-web",
+    name: "Pi Web",
+    package: "@agegr/pi-web",
+    command: "pi-web",
+    runtime: "node" as const,
+  },
 };
 
 /** Core source modules that should exist */
@@ -35,6 +49,9 @@ export const clientModules = [
   "index.ts",
   "claude-code.ts",
   "codex.ts",
+  "pi.ts",
+  "pi-web.ts",
+  "pi-settings.ts",
 ];
 
 /** Required Tako subdirectories */

@@ -23,8 +23,16 @@ Before opening a PR / 提 PR 前：
 
 ```bash
 bun test                      # all green / 全绿
+bun run build
 bun test tests/pre-release.test.ts   # release gate / 发布门禁
 ```
+
+GitHub Actions on `tako-dev/cli`:
+
+- `ci.yml` — PR / push `main`：Ubuntu / macOS / Windows 跑 unit + platform；Ubuntu 再 build / smoke / pre-release
+- `installer-e2e.yml` — nightly + 手动：三平台真实安装 Codex / Pi / Pi Web
+- `release.yml` — tag `v*`：e2e 全过后再 publish
+
 
 **New pure-logic function → add a unit test.** / 新增纯逻辑函数请配 1 条单测。
 **Fixing a bug → add a regression test.** / 修 bug 请补回归测试。

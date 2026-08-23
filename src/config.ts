@@ -26,6 +26,14 @@ export const TAKO_BUN_BIN = join(
 // （卸载、bun pm cache rm）波及隔离目录的 node_modules（2026-06-15 事故缺陷 A）。
 export const TAKO_BUN_CACHE_DIR = join(TAKO_BUN_DIR, "install-cache");
 
+// Tako 专属 Node（Pi / Pi Web 需要 Node >= 22.19；不使用系统 Node）
+export const TAKO_NODE_VERSION = "22.22.0";
+export const TAKO_NODE_DIR = join(TAKO_DIR, "node");
+export const TAKO_NODE_BIN = join(
+  TAKO_NODE_DIR,
+  process.platform === "win32" ? "node.exe" : "bin/node",
+);
+
 // Tako 服务器地址 (可通过环境变量覆盖，用于本地开发)
 export const TAKO_SERVER = process.env.TAKO_SERVER || "https://tako.shiroha.tech";
 
@@ -91,6 +99,8 @@ export interface TakoConfig {
   clientProviderMap?: Record<string, string>;
   /** 已看过的远端公告 id 列表（popup_once=true 的公告关闭后入此列表，避免重复弹） */
   seenAnnouncementIds?: string[];
+  /** par admin token（`tako channel` 管理命令用；也可由环境变量 TAKO_ADMIN_TOKEN 覆盖） */
+  adminToken?: string;
 }
 
 const defaultConfig: TakoConfig = {

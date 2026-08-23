@@ -9,6 +9,7 @@
 核心职责：
 
 - 安装 / 升级 tako 专属 Bun（国内走 npmmirror，海外走官方脚本）
+- 安装 tako 专属 Node 22.22（Pi / Pi Web 需要 Node >= 22.19，不使用系统 Node；国内 `cdn.npmmirror.com`，海外 `nodejs.org/dist`，失败换备用源）
 - 安装 / 更新 client 包（`bun add <pkg>@latest` 到隔离目录）
 - 按用户指定版本切换 client 包（`tako install <client> <version>`）
 - 确保平台原生二进制就位（Bun 不自动装 optionalDependencies）
@@ -18,7 +19,7 @@
 
 - `src/installer.ts` — 主逻辑
 - `src/installer-versions.ts` — 版本相关
-- `src/clients/base.ts` — `getClientDir` / `getClientEntryPath`（路径解析）
+- `src/clients/base.ts` — `getClientDir` / `getClientEntryPath` / `buildClientLaunchCommand`（路径与跨 OS 启动）
 
 ## 核心逻辑
 
@@ -66,7 +67,10 @@ stdout。这样既能刷新 spinner 阶段，也能避免 Windows 下 stdout/std
 
 ### 启动前 ensure `ensureClientReady`
 
-- 未安装 → `installClient`
+- `ensureClientReady` 未安装 → `installClient`
+- Pi Web 从 Pi tab 启动时先 `ensureClientReady(pi)`，再装 `pi-web`
+- 启动 Pi / Pi Web 前 `ensureNodeInstalled()`，把 Node 22.22 装到 `~/.tako/node`，再用它跑 `dist/cli.js` / `bin/pi-web.js`
+- 启动 Pi 时给 `pi-cc-header` 打 stale-ctx 补丁（Pi 0.84 不允许 `setTimeout` 后再读旧 `ctx.mode`）
 - 已安装 → `ensureNativeBinary`（修 stub 二进制）+ 检查更新（节流：一天一次弹窗）
 
 ## 已知事故与不变量
@@ -96,6 +100,7 @@ stdout。这样既能刷新 spinner 阶段，也能避免 Windows 下 stdout/std
 ## 已有测试
 
 - `tests/unit.installer-detection.test.ts` — INV-INST-01 安装状态判定
+- `tests/unit.pi-install.test.ts` — Pi / Pi Web 跨 OS 安装与启动合约
 - `tests/unit.update-logic.test.ts` — 更新命令构造（路径、无 -g、--latest）
 - `tests/unit.entry-resolution.test.ts` — bin 字段解析
 - `tests/unit.bun-progress.test.ts` — Bun stdout/stderr 同时 drain

@@ -1,4 +1,4 @@
-export type NativeSessionSource = "claude" | "codex" | "gemini";
+export type NativeSessionSource = "claude" | "codex" | "gemini" | "pi";
 
 export type ResumeCapability = "direct" | "partial" | "unsupported";
 

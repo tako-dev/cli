@@ -5,6 +5,16 @@ export const mockPackageJsons = {
     version: "2.1.1",
     bin: { claude: "cli.js" }
   },
+  pi: {
+    name: "@earendil-works/pi-coding-agent",
+    version: "0.84.2",
+    bin: { pi: "dist/cli.js" }
+  },
+  piWeb: {
+    name: "@agegr/pi-web",
+    version: "0.8.0",
+    bin: { "pi-web": "bin/pi-web.js" }
+  },
   stringBin: {
     name: "some-tool",
     bin: "index.js"

@@ -2,8 +2,8 @@ import { join } from "path";
 import { log, createSpinner } from "./logger";
 import { confirmPrompt } from "./ui/shared/terminal";
 import { ClientConfig, getClientDir } from "./clients/base";
-import { loadConfig, updateConfig, TAKO_DIR, TAKO_BUN_DIR, TAKO_BUN_BIN, TAKO_BUN_CACHE_DIR } from "./config";
-import { getNpmRegistry, getBunInstallCommand, detectRegion, showRegionInfo, getBunMirrorDownloadUrl } from "./region";
+import { loadConfig, updateConfig, TAKO_DIR, TAKO_BUN_DIR, TAKO_BUN_BIN, TAKO_BUN_CACHE_DIR, TAKO_NODE_BIN, TAKO_NODE_DIR, TAKO_NODE_VERSION } from "./config";
+import { getNpmRegistry, getBunInstallCommand, detectRegion, showRegionInfo, getBunMirrorDownloadUrl, MIRRORS } from "./region";
 import { track } from "./analytics";
 import { streamBunInstall } from "./bun-progress";
 import { summarizeInstallError } from "./error-format";
@@ -389,6 +389,216 @@ export async function getBunPath(): Promise<string> {
 
   // 未安装时返回 Tako 专属路径（调用方应先调用 ensureBunInstalled）
   return TAKO_BUN_BIN;
+}
+
+const MINIMUM_NODE_VERSION = "22.19.0";
+let nodePath: string | null = null;
+
+function isNodePathInTakoDir(path: string): boolean {
+  return path.startsWith(TAKO_NODE_DIR);
+}
+
+export function nodeDownloadSpec(
+  version = TAKO_NODE_VERSION,
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+  region: "cn" | "global" = "cn",
+): { file: string; url: string; isZip: boolean } {
+  const os = platform === "win32" ? "win" : platform === "darwin" ? "darwin" : "linux";
+  const cpu = arch === "arm64" ? "arm64" : "x64";
+  const isZip = platform === "win32";
+  const file = `node-v${version}-${os}-${cpu}.${isZip ? "zip" : "tar.gz"}`;
+  const base = region === "cn" ? MIRRORS.cn.nodeBinary : MIRRORS.global.nodeBinary;
+  return {
+    file,
+    url: `${base}/v${version}/${file}`,
+    isZip,
+  };
+}
+
+export function nodeDownloadUrls(
+  version = TAKO_NODE_VERSION,
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+  region: "cn" | "global" = "cn",
+): string[] {
+  const primary = nodeDownloadSpec(version, platform, arch, region).url;
+  const fallback = nodeDownloadSpec(version, platform, arch, region === "cn" ? "global" : "cn").url;
+  return primary === fallback ? [primary] : [primary, fallback];
+}
+
+export function nodeVersionMeets(version: string, minimum = MINIMUM_NODE_VERSION): boolean {
+  return compareVersions(version.replace(/^v/, ""), minimum) >= 0;
+}
+
+async function readNodeVersion(bin: string): Promise<string | null> {
+  try {
+    const file = Bun.file(bin);
+    if (!(await file.exists())) return null;
+    const proc = Bun.spawn([bin, "-v"], { stdout: "pipe", stderr: "pipe" });
+    await proc.exited;
+    if (proc.exitCode !== 0) return null;
+    return (await new Response(proc.stdout).text()).trim();
+  } catch {
+    return null;
+  }
+}
+
+export async function isTakoNodeInstalled(): Promise<boolean> {
+  const version = await readNodeVersion(TAKO_NODE_BIN);
+  return !!version && nodeVersionMeets(version);
+}
+
+async function extractNodeArchive(archivePath: string, destDir: string, isZip: boolean): Promise<void> {
+  const fs = await import("fs/promises");
+  await fs.mkdir(destDir, { recursive: true });
+  if (isZip) {
+    const proc = Bun.spawn(["powershell", "-Command", `Expand-Archive -Path "${archivePath}" -DestinationPath "${destDir}" -Force`], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if ((await proc.exited) !== 0) throw new Error("解压 Node 失败");
+    return;
+  }
+  const proc = Bun.spawn(["tar", "-xzf", archivePath, "-C", destDir], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if ((await proc.exited) !== 0) throw new Error("解压 Node 失败");
+}
+
+export function pickNestedNodeDir(names: string[]): string | undefined {
+  return names.find((name) =>
+    name.startsWith("node-v") && !name.endsWith(".tar.gz") && !name.endsWith(".zip") && !name.endsWith(".tgz"),
+  );
+}
+
+async function flattenNodeExtract(destDir: string): Promise<void> {
+  const fs = await import("fs/promises");
+  const { join } = await import("path");
+  const entries = await fs.readdir(destDir, { withFileTypes: true });
+  const nested = entries.find((entry) => entry.isDirectory() && pickNestedNodeDir([entry.name]));
+  if (!nested) return;
+  const nestedDir = join(destDir, nested.name);
+  const children = await fs.readdir(nestedDir);
+  for (const child of children) {
+    await fs.rename(join(nestedDir, child), join(destDir, child));
+  }
+  await fs.rm(nestedDir, { recursive: true, force: true });
+}
+
+function formatMb(bytes: number): string {
+  return (bytes / 1024 / 1024).toFixed(1);
+}
+
+async function downloadFile(
+  url: string,
+  dest: string,
+  onProgress?: (downloaded: number, total: number | null) => void,
+): Promise<void> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(180_000) });
+  if (!response.ok) throw new Error(`下载失败: ${response.status} ${url}`);
+  const total = Number(response.headers.get("content-length")) || null;
+  const body = response.body;
+  if (!body) throw new Error(`空响应: ${url}`);
+  const fs = await import("fs");
+  const writer = fs.createWriteStream(dest);
+  const reader = body.getReader();
+  let downloaded = 0;
+  let lastTick = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      downloaded += value.byteLength;
+      await new Promise<void>((resolve, reject) => {
+        writer.write(Buffer.from(value), (err) => (err ? reject(err) : resolve()));
+      });
+      if (downloaded - lastTick >= 512 * 1024) {
+        lastTick = downloaded;
+        onProgress?.(downloaded, total);
+      }
+    }
+    onProgress?.(downloaded, total);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      writer.end((err?: Error | null) => (err ? reject(err) : resolve()));
+    });
+  }
+}
+
+async function installNode(): Promise<boolean> {
+  const s = createSpinner();
+  s.start(`正在安装 Tako 专属 Node ${TAKO_NODE_VERSION}...`);
+  try {
+    const fs = await import("fs/promises");
+    const { join } = await import("path");
+    await showRegionInfo();
+    const region = await detectRegion();
+    const spec = nodeDownloadSpec(TAKO_NODE_VERSION, process.platform, process.arch, region);
+    await fs.mkdir(TAKO_NODE_DIR, { recursive: true });
+    const archivePath = join(TAKO_NODE_DIR, spec.file);
+    let downloaded = false;
+    let lastError: unknown;
+    for (const url of nodeDownloadUrls(TAKO_NODE_VERSION, process.platform, process.arch, region)) {
+      try {
+        log.info(`下载 Node: ${url}`);
+        await downloadFile(url, archivePath, (done, total) => {
+          if (total) {
+            s.update(`正在下载 Node ${TAKO_NODE_VERSION} ${Math.floor((done / total) * 100)}% (${formatMb(done)}/${formatMb(total)} MB)`);
+          } else {
+            s.update(`正在下载 Node ${TAKO_NODE_VERSION} ${formatMb(done)} MB`);
+          }
+        });
+        downloaded = true;
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        log.warn(error instanceof Error ? error.message : String(error));
+        await fs.rm(archivePath, { force: true });
+      }
+    }
+    if (!downloaded) throw lastError ?? new Error("Node 下载失败");
+    s.update(`正在解压 Node ${TAKO_NODE_VERSION}...`);
+    await extractNodeArchive(archivePath, TAKO_NODE_DIR, spec.isZip);
+    await fs.rm(archivePath, { force: true });
+    await flattenNodeExtract(TAKO_NODE_DIR);
+    if (process.platform !== "win32") {
+      await fs.chmod(TAKO_NODE_BIN, 0o755);
+    }
+    if (!(await isTakoNodeInstalled())) throw new Error("Node 安装后无法运行");
+    nodePath = TAKO_NODE_BIN;
+    s.stop(`Tako 专属 Node ${TAKO_NODE_VERSION} 安装完成`);
+    log.info(`安装位置: ${TAKO_NODE_DIR}`);
+    return true;
+  } catch (error) {
+    s.stop("Node 安装失败");
+    log.warn(error instanceof Error ? error.message : String(error));
+    return false;
+  }
+}
+
+export async function ensureNodeInstalled(): Promise<boolean> {
+  if (await isTakoNodeInstalled()) {
+    nodePath = TAKO_NODE_BIN;
+    return true;
+  }
+  log.warn("未检测到 Tako 专属 Node，正在自动安装...");
+  log.info("（不会影响您系统中已安装的 Node.js）");
+  return await installNode();
+}
+
+export async function getNodePath(): Promise<string> {
+  if (nodePath) {
+    if (!isNodePathInTakoDir(nodePath)) nodePath = TAKO_NODE_BIN;
+    return nodePath;
+  }
+  if (await isTakoNodeInstalled()) {
+    nodePath = TAKO_NODE_BIN;
+    return TAKO_NODE_BIN;
+  }
+  return TAKO_NODE_BIN;
 }
 
 /**

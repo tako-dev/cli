@@ -9,6 +9,7 @@ import {
   claudeCodeClient,
 } from "../src/clients/claude-code";
 import { codexClient } from "../src/clients/codex";
+import { piClient } from "../src/clients/pi";
 import type { Provider } from "../src/providers/types";
 import {
   _resetTakoCatalog,
@@ -168,15 +169,30 @@ describe("dynamic model launch options", () => {
     expect(option?.envVars).toEqual({ ANTHROPIC_MODEL: "unknown-chat-model" });
   });
 
+  it("Pi model picker lists chat models in order", () => {
+    const opts = getClientLaunchOptions(piClient, provider("pi"));
+    const ids = opts.filter((o) => o.group === "model").map((o) => o.id);
+
+    expect(ids).toEqual([
+      "model-claude-opus-4-8",
+      "model-full-claude-opus-4-8",
+      "model-gpt-5.5",
+      "model-openai/gpt-5.4",
+    ]);
+  });
+
   it("filters out non-chat models (image/video/audio) from both pickers", () => {
     const codexIds = getClientLaunchOptions(codexClient, provider("codex"))
       .filter((o) => o.group === "model").map((o) => o.id);
     const claudeIds = getClientLaunchOptions(claudeCodeClient, provider("claude-code"))
       .filter((o) => o.group === "model").map((o) => o.id);
+    const piIds = getClientLaunchOptions(piClient, provider("pi"))
+      .filter((o) => o.group === "model").map((o) => o.id);
 
     for (const id of ["model-gpt-image-2", "model-sora-2", "model-tts-1"]) {
       expect(codexIds).not.toContain(id);
       expect(claudeIds).not.toContain(id);
+      expect(piIds).not.toContain(id);
     }
   });
 });

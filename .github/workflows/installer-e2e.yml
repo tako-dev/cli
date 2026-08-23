@@ -1,7 +1,7 @@
 name: CLI installer e2e
 
-# 真实安装 codex 验证三大不变量（INV-INST-01/02/03）。
-# 手动触发 + nightly 每日跑一次。
+# 真实安装 Codex / Pi / Pi Web，验证 INV-INST-01/02/03。
+# 手动触发 + nightly。发布前必须通过。
 on:
   workflow_dispatch:
   schedule:
@@ -13,12 +13,14 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-
+        client: [codex, pi, pi-web]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Installer e2e
         uses: ./.github/actions/installer-e2e
+        with:
+          client: ${{ matrix.client }}

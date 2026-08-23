@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { parseClaudeSessionText } from "../src/sessions/adapters/claude";
 import { parseCodexSessionText } from "../src/sessions/adapters/codex";
 import { parseGeminiSessionText } from "../src/sessions/adapters/gemini";
-import { isGeminiSessionPath } from "../src/sessions/discovery";
+import { parsePiSessionText } from "../src/sessions/adapters/pi";
+import { isGeminiSessionPath, isPiSessionPath } from "../src/sessions/discovery";
 
 const fixtures = join(import.meta.dir, "fixtures", "sessions");
 
@@ -104,5 +105,51 @@ describe("native session adapters", () => {
   it("recognizes Gemini chat paths on Unix and Windows", () => {
     expect(isGeminiSessionPath("/tmp/project/chats/session-1.json")).toBe(true);
     expect(isGeminiSessionPath("C:\\Users\\me\\.gemini\\tmp\\project\\chats\\session-1.jsonl")).toBe(true);
+  });
+
+  it("normalizes Pi metadata, thinking, tools, and named sessions", async () => {
+    const text = await readFile(join(fixtures, "pi-basic.jsonl"), "utf8");
+    const parsed = parsePiSessionText(text, "/tmp/--work-docs--/2026-08-22T06-49-56-438Z_01a0283b-b3d6-7b03-b37e-0498f8742df4.jsonl");
+
+    expect(parsed?.session).toMatchObject({
+      key: "pi:01a0283b-b3d6-7b03-b37e-0498f8742df4",
+      nativeId: "01a0283b-b3d6-7b03-b37e-0498f8742df4",
+      source: "pi",
+      title: "飞书文档读取",
+      cwd: "/work/docs",
+      projectName: "docs",
+      model: "tako/grok-4.6",
+      resumeCapability: "direct",
+      userMessageCount: 1,
+      assistantMessageCount: 1,
+    });
+    expect(parsed?.messages.map((message) => message.role)).toEqual(["user", "reasoning", "assistant", "tool", "tool", "tool"]);
+    expect(parsed?.messages.find((message) => message.role === "reasoning")).toMatchObject({
+      text: "先确认文档权限",
+      defaultSearchable: false,
+      deepSearchable: true,
+    });
+    expect(parsed?.messages.some((message) => message.text.includes("read:"))).toBe(true);
+    expect(parsed?.messages.some((message) => message.text.includes("支付回调"))).toBe(true);
+  });
+
+  it("recovers a Pi session id from the filename when the header is missing", () => {
+    const text = JSON.stringify({
+      type: "message",
+      timestamp: "2026-08-22T06:50:09.225Z",
+      message: { role: "user", content: [{ type: "text", text: "hello from pi" }] },
+    });
+    const parsed = parsePiSessionText(
+      text,
+      "/tmp/--Users-hashiro--/2026-08-22T06-49-56-438Z_01a0283b-b3d6-7b03-b37e-0498f8742df4.jsonl",
+    );
+    expect(parsed?.session.nativeId).toBe("01a0283b-b3d6-7b03-b37e-0498f8742df4");
+    expect(parsed?.messages.map((message) => message.text)).toEqual(["hello from pi"]);
+  });
+
+  it("recognizes Pi session paths on Unix and Windows", () => {
+    expect(isPiSessionPath("/Users/me/.pi/agent/sessions/--work--/2026-08-22T06-49-56-438Z_01a0283b-b3d6-7b03-b37e-0498f8742df4.jsonl")).toBe(true);
+    expect(isPiSessionPath("C:\\Users\\me\\.pi\\agent\\sessions\\--work--\\2026-08-22T06-49-56-438Z_01a0283b-b3d6-7b03-b37e-0498f8742df4.jsonl")).toBe(true);
+    expect(isPiSessionPath("/Users/me/.pi/agent/sessions/--work--/notes.jsonl")).toBe(false);
   });
 });
