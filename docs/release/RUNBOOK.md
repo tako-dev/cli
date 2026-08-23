@@ -136,3 +136,15 @@ Recovery used:
 - changed release.yml to use `npx -y npm@11.5.1 publish --provenance --access public`
   instead of globally installing `npm@latest`
 - published the rollback as the next patch version
+
+## 2026-08-23 v0.3.34 Notes
+
+`v0.3.34` e2e passed Codex and Pi on Ubuntu / macOS / Windows, then cancelled
+on all three Pi Web jobs. `@agegr/pi-web` has no `--help`; the driver spawned
+`next start` and waited for process exit until the 25-minute job timeout.
+
+Recovery used:
+
+- left the unpublished `v0.3.34` tag in place
+- changed the Pi Web spawn probe to `--no-open` and kill after Ready
+- published the fix as the next patch version

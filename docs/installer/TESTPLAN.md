@@ -75,7 +75,7 @@ GHA workflow：`.github/workflows/installer-e2e.yml`（Ubuntu / macOS / Windows 
 | TP-INST-E2E-04 | 半残自愈（事故复现） | rm node_modules → isClientInstalled=false → 重装成功 | INV-INST-01 |
 | TP-INST-E2E-05 | 更新保留 node_modules | force update 后 node_modules 目录未重建 | INV-INST-03 |
 | TP-INST-E2E-06 | installAtVersion 指定版本 | 重装同版本成功 | — |
-| TP-INST-E2E-07 | launcher spawn | Codex/Pi `--version`；Pi Web `--help` | — |
+| TP-INST-E2E-07 | launcher spawn | Codex/Pi `--version`；Pi Web `--no-open` 等到 Ready 后杀进程 | — |
 | TP-INST-E2E-08 | provider config 写入 | 仅 Codex 写 `~/.codex/config.toml`；Pi 不改用户机 settings | — |
 | TP-INST-E2E-09 | PowerShell 7+ 可用 | Windows only | — |
 

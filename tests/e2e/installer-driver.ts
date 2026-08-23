@@ -33,7 +33,46 @@ function looksLikeVersion(text: string, clientId: string): boolean {
   const lower = text.toLowerCase();
   if (clientId === "codex") return lower.includes("codex");
   if (clientId === "pi") return /pi|0\.\d+/.test(lower);
-  return /pi[ -]?web|listening|127\.0\.0\.1|localhost|usage|help/.test(lower);
+  return /ready|started|listening|localhost|127\.0\.0\.1|pi[ -]?web/.test(lower);
+}
+
+function spawnTimeoutMs(clientId: string): number {
+  return clientId === "pi-web" ? 45_000 : 20_000;
+}
+
+async function collectProcessOutput(
+  proc: ReturnType<typeof Bun.spawn>,
+  timeoutMs: number,
+  ready: (text: string) => boolean,
+): Promise<{ text: string; exitCode: number | null; timedOut: boolean }> {
+  let text = "";
+  let settled = false;
+  const decoder = new TextDecoder();
+
+  const append = async (stream: ReadableStream<Uint8Array> | number | undefined) => {
+    if (!stream || typeof stream === "number") return;
+    const reader = stream.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+      if (ready(text) && !settled) {
+        settled = true;
+        proc.kill();
+      }
+    }
+  };
+
+  const timeout = setTimeout(() => {
+    if (!settled) {
+      settled = true;
+      proc.kill();
+    }
+  }, timeoutMs);
+
+  await Promise.all([append(proc.stdout), append(proc.stderr), proc.exited]);
+  clearTimeout(timeout);
+  return { text, exitCode: proc.exitCode, timedOut: !ready(text) && proc.exitCode !== 0 };
 }
 
 async function run() {
@@ -170,17 +209,23 @@ async function run() {
       client,
       entryPath,
       bunPath,
-      CLIENT_ID === "pi-web" ? ["--help"] : ["--version"],
+      CLIENT_ID === "pi-web" ? ["--no-open"] : ["--version"],
       process.platform,
       nodePath,
     );
     const proc = Bun.spawn(command, { stdout: "pipe", stderr: "pipe" });
-    await proc.exited;
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const text = `${stdout}\n${stderr}`;
-    check(`${client.id}-spawn-exit-0`, proc.exitCode === 0, `exit=${proc.exitCode}`);
-    check(`${client.id}-spawn-output`, looksLikeVersion(text, CLIENT_ID), text.trim().slice(0, 80));
+    const output = await collectProcessOutput(
+      proc,
+      spawnTimeoutMs(CLIENT_ID),
+      (text) => looksLikeVersion(text, CLIENT_ID),
+    );
+    const text = output.text;
+    if (CLIENT_ID === "pi-web") {
+      check(`${client.id}-spawn-ready`, looksLikeVersion(text, CLIENT_ID), text.trim().slice(0, 80));
+    } else {
+      check(`${client.id}-spawn-exit-0`, output.exitCode === 0, `exit=${output.exitCode}`);
+      check(`${client.id}-spawn-output`, looksLikeVersion(text, CLIENT_ID), text.trim().slice(0, 80));
+    }
   }
 
   if (CLIENT_ID === "codex") {
