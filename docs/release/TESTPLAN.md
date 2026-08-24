@@ -38,7 +38,7 @@ GHA：`.github/workflows/installer-e2e.yml`（nightly / 手动）和 `release.ym
 | TP-INST-E2E-04 | 半残自愈 | INV-INST-01 |
 | TP-INST-E2E-05 | 更新保留 node_modules | INV-INST-03 |
 | TP-INST-E2E-06 | installAtVersion 指定版本 | — |
-| TP-INST-E2E-07 | launcher spawn | Codex/Pi `--version`；Pi Web `--no-open` 等到 Ready 后杀进程 |
+| TP-INST-E2E-07 | launcher spawn | Codex/Pi `--version` 自行退出；输出匹配即过，Windows 上 `exit=null` 不算失败。Pi Web `--no-open` 等到 Ready 后杀进程 | — |
 | TP-INST-E2E-08 | provider config 写入 | 仅 Codex |
 | TP-INST-E2E-09 | PowerShell 7+ 可用 (Windows only) | — |
 

@@ -1,4 +1,4 @@
-import { join, isAbsolute, resolve } from "node:path";
+import { join, isAbsolute, relative, resolve } from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { sessionDir } from "./storage";
@@ -79,7 +79,8 @@ export function pathInWorkdir(path: string, workdir: string): boolean {
   if (!path) return false;
   const abs = isAbsolute(path) ? resolve(path) : resolve(workdir, path);
   const base = resolve(workdir);
-  return abs === base || abs.startsWith(base + "/");
+  const rel = relative(base, abs);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 export function evaluatePolicy(policy: Policy, method: string, params: any, workdir: string): PolicyDecision {

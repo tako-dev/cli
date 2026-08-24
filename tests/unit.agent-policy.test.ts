@@ -1,6 +1,14 @@
 import { describe, it, expect } from "bun:test";
+import { join, resolve, sep } from "node:path";
 import { evaluatePolicy, unwrapShellCommand, pathInWorkdir, DEFAULT_POLICY } from "../src/agent/policy";
 import type { Policy } from "../src/agent/policy";
+
+const workdir = resolve(join("home", "user", "project"));
+const insideFile = join(workdir, "src", "index.ts");
+const siblingFile = join(`${workdir}-other`, "file.ts");
+const outsideFile = resolve(join("etc", "passwd"));
+const sshFile = join(resolve(join("home", "user")), ".ssh", "authorized_keys");
+const tmpFile = join(resolve("tmp"), "something.txt");
 
 describe("agent/policy", () => {
   describe("unwrapShellCommand", () => {
@@ -20,22 +28,25 @@ describe("agent/policy", () => {
 
   describe("pathInWorkdir", () => {
     it("recognizes file inside workdir", () => {
-      expect(pathInWorkdir("/home/user/project/src/index.ts", "/home/user/project")).toBe(true);
+      expect(pathInWorkdir(insideFile, workdir)).toBe(true);
     });
     it("rejects file outside workdir", () => {
-      expect(pathInWorkdir("/etc/passwd", "/home/user/project")).toBe(false);
+      expect(pathInWorkdir(outsideFile, workdir)).toBe(false);
     });
     it("recognizes workdir itself", () => {
-      expect(pathInWorkdir("/home/user/project", "/home/user/project")).toBe(true);
+      expect(pathInWorkdir(workdir, workdir)).toBe(true);
     });
     it("rejects similar prefix that is not subdir", () => {
-      expect(pathInWorkdir("/home/user/project-other/file.ts", "/home/user/project")).toBe(false);
+      expect(pathInWorkdir(siblingFile, workdir)).toBe(false);
+    });
+    it("treats slash and native separators the same", () => {
+      const slashPath = `${workdir.replaceAll("\\", "/")}/src/main.ts`;
+      expect(pathInWorkdir(slashPath, workdir)).toBe(true);
+      expect(sep === "\\" || pathInWorkdir(insideFile, workdir)).toBe(true);
     });
   });
 
   describe("evaluatePolicy", () => {
-    const workdir = "/home/user/project";
-
     describe("exec commands", () => {
       const method = "item/commandExecution/requestApproval";
 
@@ -84,7 +95,7 @@ describe("agent/policy", () => {
       const method = "item/fileChange/requestApproval";
 
       it("auto_deny writes to .ssh", () => {
-        const result = evaluatePolicy(DEFAULT_POLICY, method, { path: "/home/user/.ssh/authorized_keys" }, workdir);
+        const result = evaluatePolicy(DEFAULT_POLICY, method, { path: sshFile }, workdir);
         expect(result.kind).toBe("auto_deny");
       });
 
@@ -94,19 +105,19 @@ describe("agent/policy", () => {
       });
 
       it("auto_allow files inside workdir (non-strict)", () => {
-        const result = evaluatePolicy(DEFAULT_POLICY, method, { path: "/home/user/project/src/main.ts" }, workdir);
+        const result = evaluatePolicy(DEFAULT_POLICY, method, { path: join(workdir, "src", "main.ts") }, workdir);
         expect(result.kind).toBe("auto_allow");
       });
 
       it("ask for files outside workdir in non-strict mode", () => {
         const policy: Policy = { ...DEFAULT_POLICY, strict_workdir: false };
-        const result = evaluatePolicy(policy, method, { path: "/tmp/something.txt" }, workdir);
+        const result = evaluatePolicy(policy, method, { path: tmpFile }, workdir);
         expect(result.kind).toBe("ask");
       });
 
       it("auto_deny files outside workdir in strict mode", () => {
         const policy: Policy = { ...DEFAULT_POLICY, strict_workdir: true };
-        const result = evaluatePolicy(policy, method, { path: "/tmp/something.txt" }, workdir);
+        const result = evaluatePolicy(policy, method, { path: tmpFile }, workdir);
         expect(result.kind).toBe("auto_deny");
       });
     });

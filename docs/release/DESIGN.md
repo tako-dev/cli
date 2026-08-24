@@ -90,6 +90,13 @@ bun run release:minor  # minor: 0.x.y → 0.(x+1).0
 **修复**：不再全局升级 npm；发布步骤改用 `npx -y npm@11.5.1 publish --provenance --access public`。
 **防护**：workflow 先执行 `npx -y npm@11.5.1 --version`，发版后继续核对 npm latest。
 
+### v0.3.35 — Windows spawn exit=null (2026-08-24)
+
+**现象**：`v0.3.35` e2e 在 Windows Codex 失败，`codex-spawn-output=PASS` 但 `codex-spawn-exit-0=FAIL (exit=null)`；publish 未跑。nightly 复现 Windows Pi 同样 `exit=null`。
+**根因**：为 Pi Web 引入的 `collectProcessOutput()` 在看到版本输出后立刻 `kill()`；Windows 上 Bun 常留下 `exitCode=null`。Codex/Pi 的 `--version` 本可自行退出，不必杀。
+**修复**：Codex/Pi 等进程自己退出；仅在已看到版本输出时接受 `exit=null`。Pi Web 仍 kill-after-Ready。`pathInWorkdir` 改用 `path.relative`，`formatProjectPath` 把 `\` 收成 `/`，session-index 权限断言只在 POSIX 检查。
+**防护**：Windows unit CI + nightly e2e 覆盖这条；发版前核对 `codex-spawn-exit-0` / `pi-spawn-exit-0`。
+
 ## 回滚
 
 npm 不支持真正的版本回滚（unpublish 有时间限制）。如果发了坏版本：

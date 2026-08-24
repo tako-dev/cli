@@ -44,10 +44,18 @@ async function collectProcessOutput(
   proc: ReturnType<typeof Bun.spawn>,
   timeoutMs: number,
   ready: (text: string) => boolean,
-): Promise<{ text: string; exitCode: number | null; timedOut: boolean }> {
+  killWhenReady: boolean,
+): Promise<{ text: string; exitCode: number | null; timedOut: boolean; sawReady: boolean }> {
   let text = "";
-  let settled = false;
+  let timedOut = false;
+  let sawReady = false;
   const decoder = new TextDecoder();
+
+  const markReady = () => {
+    if (sawReady) return;
+    sawReady = true;
+    if (killWhenReady) proc.kill();
+  };
 
   const append = async (stream: ReadableStream<Uint8Array> | number | undefined) => {
     if (!stream || typeof stream === "number") return;
@@ -56,23 +64,19 @@ async function collectProcessOutput(
       const { done, value } = await reader.read();
       if (done) break;
       text += decoder.decode(value, { stream: true });
-      if (ready(text) && !settled) {
-        settled = true;
-        proc.kill();
-      }
+      if (ready(text)) markReady();
     }
   };
 
   const timeout = setTimeout(() => {
-    if (!settled) {
-      settled = true;
-      proc.kill();
-    }
+    timedOut = true;
+    proc.kill();
   }, timeoutMs);
 
   await Promise.all([append(proc.stdout), append(proc.stderr), proc.exited]);
   clearTimeout(timeout);
-  return { text, exitCode: proc.exitCode, timedOut: !ready(text) && proc.exitCode !== 0 };
+  if (ready(text)) sawReady = true;
+  return { text, exitCode: proc.exitCode, timedOut, sawReady };
 }
 
 async function run() {
@@ -218,13 +222,17 @@ async function run() {
       proc,
       spawnTimeoutMs(CLIENT_ID),
       (text) => looksLikeVersion(text, CLIENT_ID),
+      CLIENT_ID === "pi-web",
     );
     const text = output.text;
     if (CLIENT_ID === "pi-web") {
-      check(`${client.id}-spawn-ready`, looksLikeVersion(text, CLIENT_ID), text.trim().slice(0, 80));
+      check(`${client.id}-spawn-ready`, output.sawReady && !output.timedOut, text.trim().slice(0, 80));
     } else {
-      check(`${client.id}-spawn-exit-0`, output.exitCode === 0, `exit=${output.exitCode}`);
-      check(`${client.id}-spawn-output`, looksLikeVersion(text, CLIENT_ID), text.trim().slice(0, 80));
+      // --version 应自行退出。Windows 上 kill 后 Bun 常给出 exit=null，
+      // 所以只在没看到版本输出、或超时、或明确非 0 时判失败。
+      const exitedCleanly = output.exitCode === 0 || (output.sawReady && output.exitCode == null);
+      check(`${client.id}-spawn-exit-0`, exitedCleanly && !output.timedOut, `exit=${output.exitCode}`);
+      check(`${client.id}-spawn-output`, output.sawReady, text.trim().slice(0, 80));
     }
   }
 

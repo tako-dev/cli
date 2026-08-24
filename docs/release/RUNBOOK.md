@@ -148,3 +148,20 @@ Recovery used:
 - left the unpublished `v0.3.34` tag in place
 - changed the Pi Web spawn probe to `--no-open` and kill after Ready
 - published the fix as the next patch version
+
+## 2026-08-24 v0.3.35 Notes
+
+`v0.3.35` failed before publish. Windows Codex e2e printed `codex-cli 0.149.x` then
+failed `codex-spawn-exit-0` with `exit=null`. Nightly later reproduced the same
+`exit=null` on Windows Pi. The driver had started killing on first version output;
+Windows Bun often leaves `exitCode` null after that kill.
+
+Recovery used:
+
+- left the unpublished `v0.3.34` and `v0.3.35` tags in place
+- let Codex/Pi `--version` exit on their own; accept `exit=null` only when version
+  output already matched
+- keep Pi Web kill-after-Ready
+- make `pathInWorkdir` / `formatProjectPath` / session-index mode tests
+  cross-platform so Windows unit CI can pass
+- published the fix as the next patch version

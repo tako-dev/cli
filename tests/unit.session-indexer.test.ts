@@ -34,14 +34,20 @@ describe("session indexer", () => {
     await mkdir(join(path, ".."), { recursive: true, mode: 0o755 });
     await writeFile(path, "", { mode: 0o644 });
     const db = new SessionDatabase(path);
-    db.replaceSession(parsed("secure"), { size: 1, mtimeMs: 1 });
-    expect((await stat(join(path, ".."))).mode & 0o777).toBe(0o700);
-    expect((await stat(path)).mode & 0o777).toBe(0o600);
-    for (const suffix of ["-wal", "-shm"]) {
-      const sidecar = `${path}${suffix}`;
-      expect((await stat(sidecar)).mode & 0o777).toBe(0o600);
+    try {
+      db.replaceSession(parsed("secure"), { size: 1, mtimeMs: 1 });
+      expect(db.getSession("codex:id-1")?.title).toBe("secure");
+      // Windows ACL/mode 不是 POSIX 0700/0600；chmod 在那边是 best-effort。
+      if (process.platform === "win32") return;
+      expect((await stat(join(path, ".."))).mode & 0o777).toBe(0o700);
+      expect((await stat(path)).mode & 0o777).toBe(0o600);
+      for (const suffix of ["-wal", "-shm"]) {
+        const sidecar = `${path}${suffix}`;
+        expect((await stat(sidecar)).mode & 0o777).toBe(0o600);
+      }
+    } finally {
+      db.close();
     }
-    db.close();
   });
 
   it("returns only recent messages without loading the full history", () => {

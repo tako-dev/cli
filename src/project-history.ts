@@ -227,10 +227,11 @@ export function formatProjectPath(
 ): string {
   const home = homedir();
 
-  // 替换 home 目录为 ~
+  // 替换 home 目录为 ~，并把 Windows 反斜杠收成显示用的 /
   let displayPath = fullPath.startsWith(home)
     ? "~" + fullPath.slice(home.length)
     : fullPath;
+  displayPath = displayPath.replaceAll("\\", "/");
 
   // 如果太长，只保留项目名
   if (displayPath.length > maxLength) {
