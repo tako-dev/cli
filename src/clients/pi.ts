@@ -6,7 +6,8 @@ import { setupPiConfigFiles, takoPiEnv } from "./pi-settings";
 
 export { setupPiConfigFiles, takoPiEnv } from "./pi-settings";
 
-const FALLBACK_MODELS = ["grok-4.6", "mimo-v2.5", "kimi-k2.7-code"];
+export const PI_DEFAULT_MODEL = "grok-4.6";
+const FALLBACK_MODELS = [PI_DEFAULT_MODEL, "mimo-v2.5", "kimi-k2.7-code"];
 
 function ctxStrOf(ctx: number): string {
   if (ctx >= 1_000_000) return "1M";

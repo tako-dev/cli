@@ -21,12 +21,24 @@ const CLAUDE_PROVIDER_ENV_KEYS = [
 
 const CLAUDE_MODEL_ENV_KEY = "ANTHROPIC_MODEL";
 export const CLAUDE_CONTEXT_WINDOW_ENV_KEY = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
+export const CLAUDE_MAX_CONTEXT_ENV_KEY = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
 export const TAKO_CONTEXT_WINDOW_ENV_KEY = "TAKO_MODEL_CONTEXT_WINDOW";
 const CLAUDE_OPTION_ENV_KEYS = [
   CLAUDE_MODEL_ENV_KEY,
   CLAUDE_CONTEXT_WINDOW_ENV_KEY,
+  CLAUDE_MAX_CONTEXT_ENV_KEY,
   TAKO_CONTEXT_WINDOW_ENV_KEY,
 ] as const;
+
+export function claudeContextEnv(contextWindow?: number): Record<string, string> {
+  if (!contextWindow || contextWindow <= 0) return {};
+  const value = String(contextWindow);
+  return {
+    [CLAUDE_CONTEXT_WINDOW_ENV_KEY]: value,
+    [CLAUDE_MAX_CONTEXT_ENV_KEY]: value,
+    [TAKO_CONTEXT_WINDOW_ENV_KEY]: value,
+  };
+}
 
 export function buildTakoClaudeSettingsOverlay(
   launchEnvVars: Record<string, string>,
@@ -314,7 +326,7 @@ export function appendOneMTagIfNeeded(modelId: string, contextWindow?: number): 
   // raised above the normal ~200k ceiling. A server-advertised window above
   // 200k therefore opts eligible Anthropic-compatible model families into that
   // tier; CLAUDE_CODE_AUTO_COMPACT_WINDOW supplies the exact lower limit.
-  if (!/^(?:full-)?(claude|deepseek|kimi|mimo)[-_]/i.test(modelId)) return modelId;
+  if (!/^(?:full-)?(claude|deepseek|kimi|mimo|grok)[-_]/i.test(modelId)) return modelId;
   if (contextWindow !== undefined) {
     return contextWindow > 200000 ? `${modelId}[1m]` : modelId;
   }
@@ -341,12 +353,6 @@ function buildDynamicClaudeModels(provider: Provider): LaunchOption[] | null {
   if (chat.length === 0) return null;
   return chat.map((e) => {
     const modelArg = appendOneMTagIfNeeded(e.id, e.contextWindow);
-    const contextEnv = e.contextWindow > 0
-      ? {
-          [CLAUDE_CONTEXT_WINDOW_ENV_KEY]: String(e.contextWindow),
-          [TAKO_CONTEXT_WINDOW_ENV_KEY]: String(e.contextWindow),
-        }
-      : {};
     return {
       id: `model-${e.id}`,
       label: { en: e.displayName, zh: e.displayName },
@@ -361,7 +367,7 @@ function buildDynamicClaudeModels(provider: Provider): LaunchOption[] | null {
       args: [],
       envVars: {
         ANTHROPIC_MODEL: modelArg,
-        ...contextEnv,
+        ...claudeContextEnv(e.contextWindow),
       },
       group: "model",
     };
@@ -400,7 +406,10 @@ function buildModelOptions(provider?: Provider): LaunchOption[] {
       },
       flag: `--model ${modelArg}`,
       args: [],
-      envVars: { ANTHROPIC_MODEL: modelArg },
+      envVars: {
+        ANTHROPIC_MODEL: modelArg,
+        ...claudeContextEnv(ctx),
+      },
       group: "model",
     });
   }

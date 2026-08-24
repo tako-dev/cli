@@ -15,6 +15,17 @@ import { BUNDLED_ENTRIES, BUNDLED_AT } from "./bundled";
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
+/** Tako 实测：Pi catalog 把 grok-4.6 登记为 500K（changelog/2026-08-17.md）。 */
+export const LOCAL_MODEL_OVERRIDES: Record<string, Partial<ModelEntry>> = {
+  "grok-4.6": {
+    id: "grok-4.6",
+    displayName: "Grok 4.6",
+    provider: "xai",
+    contextWindow: 500000,
+    outputLimit: 16384,
+  },
+};
+
 let cachePathOverride: string | null = null;
 function cachePath(): string {
   return cachePathOverride ?? join(homedir(), ".tako", "models-cache.json");
@@ -32,6 +43,16 @@ function rebuildIndex(entries: ModelEntry[]): void {
   memory.clear();
   for (const e of entries) {
     if (!memory.has(e.id)) memory.set(e.id, e);
+  }
+  for (const [id, override] of Object.entries(LOCAL_MODEL_OVERRIDES)) {
+    const current = memory.get(id);
+    memory.set(id, {
+      id,
+      displayName: override.displayName ?? current?.displayName ?? id,
+      provider: override.provider ?? current?.provider ?? "xai",
+      contextWindow: override.contextWindow ?? current?.contextWindow ?? 0,
+      outputLimit: override.outputLimit ?? current?.outputLimit,
+    });
   }
 }
 

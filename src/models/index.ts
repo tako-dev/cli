@@ -5,6 +5,7 @@ export {
   getModelEntry,
   normalizeModelId,
   BUNDLED_AT,
+  LOCAL_MODEL_OVERRIDES,
   _resetCatalog,
   _setCachePathForTest,
 } from "./catalog";

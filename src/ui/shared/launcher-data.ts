@@ -1,5 +1,7 @@
 import { getAllClients } from "../../clients";
 import { getClientLaunchOptions } from "../../clients/base";
+import { PI_DEFAULT_MODEL } from "../../clients/pi";
+import { enabledWithProviderDefaultModel } from "./launch-options";
 import { getLocale } from "../../i18n";
 import { getModelPickCounts } from "../../model-usage";
 import {
@@ -61,7 +63,12 @@ export async function loadLauncherData(projectPathWidth = 45): Promise<LauncherL
     const launchOptions = getClientLaunchOptions(client, activeProvider);
     const validIds = new Set(launchOptions.map((option) => option.id));
     const savedIds = await getLastSelectedOptionsForClient(client.id);
-    const lastSelectedOptionIds = savedIds.filter((id) => validIds.has(id));
+    const lastSelectedOptionIds = [...enabledWithProviderDefaultModel(
+      new Set(savedIds.filter((id) => validIds.has(id))),
+      launchOptions,
+      activeProvider?.model,
+      client.id === "pi" ? `model-${PI_DEFAULT_MODEL}` : undefined,
+    )];
 
     clients.push({
       client,

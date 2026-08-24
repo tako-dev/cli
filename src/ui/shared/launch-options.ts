@@ -73,10 +73,16 @@ export function enabledWithProviderDefaultModel(
   previous: Set<string>,
   options: LaunchOption[],
   providerModel?: string,
+  fallbackModelId?: string,
 ): Set<string> {
   const validIds = new Set(options.map((option) => option.id));
-  const modelIds = new Set(options.filter((option) => option.group === "model").map((option) => option.id));
-  const providerModelOptionId = providerModel ? `model-${providerModel}` : undefined;
+  const modelOptions = options.filter((option) => option.group === "model");
+  const modelIds = new Set(modelOptions.map((option) => option.id));
+  const preferredIds = [
+    providerModel ? `model-${providerModel}` : undefined,
+    fallbackModelId,
+    modelOptions[0]?.id,
+  ].filter((id): id is string => !!id && modelIds.has(id));
 
   const next = new Set<string>();
   let changed = false;
@@ -90,8 +96,8 @@ export function enabledWithProviderDefaultModel(
     }
   }
 
-  if (!hasModel && providerModelOptionId && modelIds.has(providerModelOptionId)) {
-    next.add(providerModelOptionId);
+  if (!hasModel && preferredIds[0]) {
+    next.add(preferredIds[0]);
     changed = true;
   }
 

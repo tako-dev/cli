@@ -6,8 +6,8 @@
  * 自动加上，避免每次手填。
  *
  * 规则（claude-code.ts:appendOneMTagIfNeeded）：
- *  - claude-*、deepseek-*、kimi-* 系列
- *  - 仅 bundled catalog 标 contextWindow >= 1_000_000 的
+ *  - claude-*、deepseek-*、kimi-*、mimo-*、grok-* 系列
+ *  - 仅 bundled catalog 标 contextWindow >= 1_000_000 的，或动态窗口 > 200k
  *  - 已带 [1m] / :1m 不重复加
  *  - 其他原样返回
  */
@@ -70,7 +70,11 @@ describe("appendOneMTagIfNeeded", () => {
     expect(appendOneMTagIfNeeded("kimi-k2.5")).toBe("kimi-k2.5");
   });
 
-  it("非 claude/deepseek/kimi 模型 → 原样返回（即便 catalog 1M）", () => {
+  it("grok-4.6 动态窗口 500K → 加 [1m]", () => {
+    expect(appendOneMTagIfNeeded("grok-4.6", 500000)).toBe("grok-4.6[1m]");
+  });
+
+  it("非 claude/deepseek/kimi/mimo/grok 模型 → 原样返回（即便 catalog 1M）", () => {
     expect(appendOneMTagIfNeeded("qwen-plus")).toBe("qwen-plus");
   });
 
@@ -87,7 +91,12 @@ describe("Claude Code launchOptions 自动带 [1m]", () => {
     // option.id 保留无后缀（持久化稳定）
     expect(opus47!.id).toBe("model-claude-opus-4-7");
     // 模型通过环境变量传递，不用 --model 参数（避免 Claude Code 持久化到全局设置）
-    expect(opus47!.envVars).toEqual({ ANTHROPIC_MODEL: "claude-opus-4-7[1m]" });
+    expect(opus47!.envVars).toEqual({
+      ANTHROPIC_MODEL: "claude-opus-4-7[1m]",
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
+      CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1000000",
+      TAKO_MODEL_CONTEXT_WINDOW: "1000000",
+    });
     expect(opus47!.args).toEqual([]);
     expect(opus47!.flag).toBe("--model claude-opus-4-7[1m]");
   });
@@ -96,14 +105,24 @@ describe("Claude Code launchOptions 自动带 [1m]", () => {
     const opts = getClientLaunchOptions(claudeCodeClient, fakeProvider({ type: "deepseek" }));
     const flash = opts.find((o) => o.id === "model-deepseek-v4-flash");
     expect(flash).toBeDefined();
-    expect(flash!.envVars).toEqual({ ANTHROPIC_MODEL: "deepseek-v4-flash[1m]" });
+    expect(flash!.envVars).toEqual({
+      ANTHROPIC_MODEL: "deepseek-v4-flash[1m]",
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
+      CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1000000",
+      TAKO_MODEL_CONTEXT_WINDOW: "1000000",
+    });
   });
 
   it("Xiaomi MiMo provider 下 mimo-v2.5-pro 也加 [1m]", () => {
     const opts = getClientLaunchOptions(claudeCodeClient, fakeProvider({ type: "xiaomi" }));
     const pro = opts.find((o) => o.id === "model-mimo-v2.5-pro");
     expect(pro).toBeDefined();
-    expect(pro!.envVars).toEqual({ ANTHROPIC_MODEL: "mimo-v2.5-pro[1m]" });
+    expect(pro!.envVars).toEqual({
+      ANTHROPIC_MODEL: "mimo-v2.5-pro[1m]",
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
+      CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1000000",
+      TAKO_MODEL_CONTEXT_WINDOW: "1000000",
+    });
   });
 
   it("模型选项不传 --model 参数（避免 Claude Code 持久化全局设置）", () => {

@@ -165,6 +165,13 @@ describe("Pi settings merge", () => {
       { type: "tako" },
     );
     expect(next.compaction).toEqual({ enabled: false });
+    expect(next.defaultModel).toBe("grok-4.6");
+  });
+
+  it("defaults Pi to grok-4.6 when no model is selected", () => {
+    const { next, args } = applyPiSettings({}, { type: "tako" });
+    expect(next.defaultModel).toBe("grok-4.6");
+    expect(args).toEqual(["--provider", "tako", "--model", "grok-4.6"]);
   });
 });
 

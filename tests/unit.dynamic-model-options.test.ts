@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { getClientLaunchOptions } from "../src/clients/base";
 import {
   CLAUDE_CONTEXT_WINDOW_ENV_KEY,
+  CLAUDE_MAX_CONTEXT_ENV_KEY,
   TAKO_CONTEXT_WINDOW_ENV_KEY,
   claudeCodeClient,
 } from "../src/clients/claude-code";
@@ -134,16 +135,19 @@ describe("dynamic model launch options", () => {
     expect(opus?.envVars).toEqual({
       ANTHROPIC_MODEL: "claude-opus-4-8[1m]",
       [CLAUDE_CONTEXT_WINDOW_ENV_KEY]: "950000",
+      [CLAUDE_MAX_CONTEXT_ENV_KEY]: "950000",
       [TAKO_CONTEXT_WINDOW_ENV_KEY]: "950000",
     });
     expect(fullOpus?.envVars).toEqual({
       ANTHROPIC_MODEL: "full-claude-opus-4-8[1m]",
       [CLAUDE_CONTEXT_WINDOW_ENV_KEY]: "950000",
+      [CLAUDE_MAX_CONTEXT_ENV_KEY]: "950000",
       [TAKO_CONTEXT_WINDOW_ENV_KEY]: "950000",
     });
     expect(gpt?.envVars).toEqual({
       ANTHROPIC_MODEL: "gpt-5.5",
       [CLAUDE_CONTEXT_WINDOW_ENV_KEY]: "272000",
+      [CLAUDE_MAX_CONTEXT_ENV_KEY]: "272000",
       [TAKO_CONTEXT_WINDOW_ENV_KEY]: "272000",
     });
   });

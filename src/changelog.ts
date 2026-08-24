@@ -21,6 +21,33 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.3.38",
+    date: "2026-08-24",
+    changes: [
+      "Pi 默认模型改为 grok-4.6",
+      "grok-4.6 按 500K 窗口注入 Claude Code 压缩阈值和 statusline 百分比",
+      "启动时显示本版本更新内容",
+    ],
+  },
+  {
+    version: "0.3.37",
+    date: "2026-08-24",
+    changes: [
+      "修复 Windows 发版门禁：Codex / Pi 启动成功后不再因 exit=null 失败",
+      "Windows 路径和权限单测改为跨平台",
+      "策略文件拦截同时识别 / 和 \\",
+    ],
+  },
+  {
+    version: "0.3.34",
+    date: "2026-08-24",
+    changes: [
+      "Pi 成为正式客户端，和 Codex / Claude / Gemini 并列",
+      "没有本目录历史时默认停在 Pi",
+      "可从 Pi 打开浏览器界面",
+    ],
+  },
+  {
     version: "0.2.21",
     date: "2026-04-20",
     changes: [

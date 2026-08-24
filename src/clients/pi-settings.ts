@@ -5,6 +5,7 @@ import { createSpinner, log } from "../logger";
 import { TAKO_DIR } from "../config";
 import { ensureClientReady, getNodePath } from "../installer";
 import type { ProviderContext } from "../providers/types";
+import { PI_DEFAULT_MODEL } from "./pi";
 
 export const PI_SETTINGS_PATH = join(homedir(), ".pi", "agent", "settings.json");
 export const PI_PACKAGE = "git:github.com/Barrierml/tako-pi";
@@ -253,7 +254,7 @@ export function applyPiSettings(
   const optionModel = selectedOptionIds
     ?.find((id) => id.startsWith("model-"))
     ?.slice("model-".length);
-  const model = optionModel || provider.model;
+  const model = optionModel || provider.model || PI_DEFAULT_MODEL;
   if (model) next.defaultModel = model;
 
   if (!asRecord(next.compaction)) {

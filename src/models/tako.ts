@@ -10,7 +10,7 @@
  */
 import { join } from "node:path";
 import { TAKO_DIR } from "../config";
-import { getModelEntry, loadCatalog } from "./catalog";
+import { getModelEntry, loadCatalog, LOCAL_MODEL_OVERRIDES } from "./catalog";
 import type { Provider } from "../providers/types";
 
 export type TakoApiType = "openai" | "claude";
@@ -108,7 +108,9 @@ export function parseCodexResponse(json: unknown, apiType?: TakoApiType): TakoMo
         id,
         displayName: raw.display_name || id,
         description: raw.description || "",
-        contextWindow: typeof raw.context_window === "number" ? raw.context_window : 0,
+        contextWindow: typeof raw.context_window === "number" && raw.context_window > 0
+          ? raw.context_window
+          : (LOCAL_MODEL_OVERRIDES[id]?.contextWindow ?? 0),
         sortOrder: typeof raw.priority === "number" ? raw.priority : 0,
         category: typeof raw.model_category === "string" && raw.model_category
           ? raw.model_category

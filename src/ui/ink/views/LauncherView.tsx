@@ -7,6 +7,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import { getClientLaunchOptions } from "../../../clients/base";
+import { PI_DEFAULT_MODEL } from "../../../clients/pi";
 import { setClientProvider, resolveProviderContext } from "../../../providers";
 import type { Provider } from "../../../providers/types";
 import { getLocale } from "../../../i18n";
@@ -337,7 +338,12 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, init
   //   1. 把 enabled 里已经失效的 option id 清掉（避免幽灵勾选）
   //   2. 若没有任何 model 被勾选，落到 provider.model 上（让 add provider 时挑的模型自动反映）
   useEffect(() => {
-    setEnabled((prev) => enabledWithProviderDefaultModel(prev, options, currentProv?.model));
+    setEnabled((prev) => enabledWithProviderDefaultModel(
+      prev,
+      options,
+      currentProv?.model,
+      current.client.id === "pi" ? `model-${PI_DEFAULT_MODEL}` : undefined,
+    ));
   }, [options, currentProv?.model]);
 
   const openGroupPicker = useCallback((group: string) => {
