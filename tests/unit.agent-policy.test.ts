@@ -99,6 +99,11 @@ describe("agent/policy", () => {
         expect(result.kind).toBe("auto_deny");
       });
 
+      it("auto_deny writes to .ssh with either slash", () => {
+        const result = evaluatePolicy(DEFAULT_POLICY, method, { path: "/home/user/.ssh/authorized_keys" }, workdir);
+        expect(result.kind).toBe("auto_deny");
+      });
+
       it("auto_deny writes to .env files", () => {
         const result = evaluatePolicy(DEFAULT_POLICY, method, { path: ".env.local" }, workdir);
         expect(result.kind).toBe("auto_deny");

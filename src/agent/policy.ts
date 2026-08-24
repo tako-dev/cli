@@ -59,12 +59,12 @@ export const DEFAULT_POLICY: Policy = {
   ],
   file_allow: [],
   file_deny: [
-    "/\\.ssh/",
-    "/\\.aws/",
-    "/\\.gnupg/",
+    "[/\\\\]\\.ssh[/\\\\]",
+    "[/\\\\]\\.aws[/\\\\]",
+    "[/\\\\]\\.gnupg[/\\\\]",
     "\\.env(\\.|$)",
-    "/etc/(passwd|shadow|sudoers)",
-    "/(usr|etc|bin|sbin)/",
+    "[/\\\\]etc[/\\\\](passwd|shadow|sudoers)",
+    "[/\\\\](usr|etc|bin|sbin)[/\\\\]",
   ],
   strict_workdir: false,
 };
