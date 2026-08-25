@@ -11,6 +11,7 @@
 | `tests/unit.windows-handoff.test.ts` | Windows handoff 脚本生成、quoting、env、relaunch、UTF-8 BOM |
 | `tests/unit.windows-wrapper.test.ts` | cmd/ps1 wrapper 创建并执行 handoff 文件 |
 | `tests/platform.windows.test.ts` | Windows 路径和可执行文件扩展兼容 |
+| `tests/unit.launch-options.test.ts` | 空选不勾目录第一项；Pi 才兜底 grok-4.6 |
 
 ## 场景
 

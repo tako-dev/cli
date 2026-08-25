@@ -336,7 +336,8 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, init
 
   // provider 切换 / 初始加载：launchOptions 列表会变。
   //   1. 把 enabled 里已经失效的 option id 清掉（避免幽灵勾选）
-  //   2. 若没有任何 model 被勾选，落到 provider.model 上（让 add provider 时挑的模型自动反映）
+  //   2. 若没有任何 model 被勾选：provider.model → Pi 才落到 grok-4.6。
+  //      其它客户端保持空选，启动时走各自内置默认（Codex gpt-5.5）。
   useEffect(() => {
     setEnabled((prev) => enabledWithProviderDefaultModel(
       prev,
