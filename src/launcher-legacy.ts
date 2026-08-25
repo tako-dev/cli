@@ -1,6 +1,9 @@
 import { ClientConfig, getClientBinPath, getClientEntryPath } from "./clients/base";
+import { TAKO_DIR } from "./config";
 import { getBunPath } from "./installer";
-import { buildWindowsHandoffScript, WINDOWS_HANDOFF_ENV } from "./windows-handoff";
+import { settleTerminalForExternalChild } from "./terminal-control";
+import { WINDOWS_HANDOFF_ENV, writeWindowsHandoffScript } from "./windows-handoff";
+import { join } from "path";
 
 // LaunchOptions 的权威定义在 ./launcher/index.ts；这里复用避免字段漂移。
 // import type 不引入运行时依赖，不会和 launcher/index.ts 对本模块的 import 形成循环。
@@ -17,6 +20,8 @@ export async function launchClient(
   client: ClientConfig,
   options?: LaunchOptions
 ): Promise<{ success: boolean; error?: string; exitCode?: number }> {
+  const cleanupFiles = options?.cleanupFiles ?? [];
+  let cleanupTransferred = false;
   try {
     const workingDir = options?.projectPath || process.cwd();
     const providerContext = options?.providerContext;
@@ -83,83 +88,79 @@ export async function launchClient(
     }
 
     if (isWindows && options?.handoffOnWindows) {
-      const fs = await import("fs/promises");
       const handoffPath = process.env[WINDOWS_HANDOFF_ENV];
       if (handoffPath) {
         // quick-launch：handoff 由外层 cmd/ps1 wrapper 执行，wrapper 进程环境里
         // 没有 client.getEnvVars() 算出的 token，故必须显式写进脚本。脚本用
         // finally 保证执行后自删，token 不残留。
-        await fs.writeFile(
+        await settleTerminalForExternalChild();
+        await writeWindowsHandoffScript(
           handoffPath,
-          buildWindowsHandoffScript({
+          {
             command,
             cwd: workingDir,
             env: extraEnv,
-          }),
-          "utf8",
+            cleanupFiles,
+          },
         );
+        cleanupTransferred = true;
         return { success: true };
       }
     }
 
     if (isWindows && options?.relaunchTakoOnWindows) {
-      const fs = await import("fs/promises");
       const handoffPath = process.env[WINDOWS_HANDOFF_ENV];
       if (handoffPath) {
         // 面板路径：和 quick-launch 一样把启动交给外层 wrapper 执行，Bun 退出后
         // 由顶层 cmd/PowerShell 起客户端 —— 这样 Windows 控制台输入能干净交接给
         // 子进程，键盘才有响应（Bun 作为父进程直接 spawn 会渲染出画面但收不到键）。
         // handoff 由 wrapper 执行，wrapper 环境没有 token，故需显式写 extraEnv。
-        // 客户端退出后 handoff 重新拉起 tako（bun + 当前 tako 入口），用户回到菜单。
-        // process.argv = [bunExe, takoEntry, ...userArgs]；重开面板不带用户参数。
-        const relaunchCommand = [process.argv[0], process.argv[1]].filter(
-          (a): a is string => typeof a === "string" && a.length > 0,
-        );
-        await fs.writeFile(
+        // 客户端退出后 handoff 重新拉起 tako.cmd，用户回到菜单。
+        // 这里必须走 wrapper，不能直接用 `bun dist/index.js`：下一次从菜单启动
+        // 客户端时还需要外层 wrapper 在 Bun 退出后执行新的 handoff 脚本。
+        const relaunchCommand = [
+          process.env.TAKO_WINDOWS_RELAUNCH_COMMAND || join(TAKO_DIR, "bin", "tako.cmd"),
+        ];
+        await settleTerminalForExternalChild();
+        await writeWindowsHandoffScript(
           handoffPath,
-          buildWindowsHandoffScript({
+          {
             command,
             cwd: workingDir,
             env: extraEnv,
             relaunchCommand,
-          }),
-          "utf8",
+            cleanupFiles,
+          },
         );
+        cleanupTransferred = true;
         return { success: true };
       }
       // 没有 wrapper handoff 文件（如直接用 bun 跑、非 wrapper 环境）：
       // 退化到下面的交互式 PowerShell 子进程路径（键盘可能不响应，但不中断）。
     }
 
-    async function releaseStdinForChild(): Promise<void> {
-      try {
-        process.stdin.removeAllListeners();
-        if (!isWindows && process.stdin.isTTY) {
-          process.stdin.setRawMode(false);
-        }
-        process.stdin.pause();
-      } catch { /* ignore */ }
-    }
-
     if (isWindows) {
       const fs = await import("fs/promises");
-      const { join } = await import("path");
       const { tmpdir } = await import("os");
       const handoffPath = join(tmpdir(), `tako-handoff-${process.pid}-${Date.now()}.ps1`);
       // 交互式路径由本进程直接起 PowerShell，PowerShell 继承本进程的 env，
       // 故 handoff 脚本不写 extraEnv（避免 token 明文落盘）。
-      await fs.writeFile(
+      await writeWindowsHandoffScript(
         handoffPath,
-        buildWindowsHandoffScript({
+        {
           command,
           cwd: workingDir,
-        }),
-        "utf8",
+          cleanupFiles,
+        },
       );
 
-      await releaseStdinForChild();
+      await settleTerminalForExternalChild();
       try {
-        const proc = Bun.spawn(
+        // 必须用 spawnSync：Windows 控制台输入是单一共享队列，Bun 事件循环只要还活着
+        // 就持有控制台输入句柄，和子进程争抢按键 —— 表现为子进程 TUI 画面正常但
+        // 键盘无响应。spawnSync 完全阻塞事件循环，子进程独占控制台。
+        // （Unix 分支同理，见文件末尾。）
+        const result = Bun.spawnSync(
           ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", handoffPath],
           {
             env,
@@ -167,7 +168,7 @@ export async function launchClient(
             cwd: workingDir,
           },
         );
-        const exitCode = await proc.exited;
+        const exitCode = result.exitCode ?? 0;
         return { success: exitCode === 0, exitCode };
       } catch (spawnError) {
         // PowerShell 起不来（不在 PATH / 被拦截）：脚本内的自删不会执行，兜底清理
@@ -179,18 +180,18 @@ export async function launchClient(
       }
     }
 
-    // 释放 stdin — 清除父进程（Ink / Bun）残留的监听器
+    // 释放 stdin — 清除父进程（TUI / Bun）残留的监听器
     //
-    // 背景：快捷启动前可能弹过 inkConfirm（更新确认 / 清理 settings），
-    // 交互式主菜单本身也是 Ink。Ink 会 setRawMode(true) 并挂 stdin 的
-    // "data"/"readable" 监听器。unmount 后这些监听器 + raw 状态不一定干净，
+    // 背景：快捷启动前可能弹过 confirmPrompt（更新确认 / 清理 settings），
+    // 交互式主菜单本身也是 TUI。这些都会 setRawMode(true) 并挂 stdin 的
+    // "data"/"readable" 监听器。退出后这些监听器 + raw 状态不一定干净，
     // 父进程 Bun 若继续读 stdin，会和子进程争抢按键 —— 表现为子进程 TUI
     // （Claude Code / Codex）画面渲染出来了，但按键无响应（"卡死"）。
     //
     // 所以启动子进程前必须移除父进程自己的监听器并 pause，把 stdin 完全让给
     // 子进程（子进程通过 stdio:"inherit" 独占）。
     //
-    await releaseStdinForChild();
+    await settleTerminalForExternalChild();
 
     // 清空屏幕 + scrollback —— 否则 launcher 的 Ink 输出会留在终端历史里，
     // 子进程（如 Claude Code）启动后用户向上滚动会看到 Tako 菜单残留，
@@ -224,5 +225,10 @@ export async function launchClient(
       success: false,
       error: error instanceof Error ? error.message : "启动失败",
     };
+  } finally {
+    if (!cleanupTransferred && cleanupFiles.length > 0) {
+      const { rm } = await import("node:fs/promises");
+      await Promise.all(cleanupFiles.map((path) => rm(path, { force: true }).catch(() => {})));
+    }
   }
 }

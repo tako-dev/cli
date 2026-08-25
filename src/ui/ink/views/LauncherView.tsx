@@ -4,25 +4,43 @@
  * 单容器：Header(服务商右上角,可聚焦切换) → Tab → 项目列表 → 启动参数
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
-import { getAllClients, type ClientConfig, type LaunchOption } from "../../../clients";
 import { getClientLaunchOptions } from "../../../clients/base";
-import {
-  getRecentProjectsForClient, getLastClientForCwd,
-  getLastSelectedOptionsForClient,
-  formatProjectPath, formatLastUsed, DISPLAY_PER_CLIENT,
-} from "../../../project-history";
-import {
-  getProvidersForClient, getDefaultProvider, getClientProvider, setClientProvider,
-  resolveProviderContext,
-} from "../../../providers";
+import { setClientProvider, resolveProviderContext } from "../../../providers";
 import type { Provider } from "../../../providers/types";
 import { getLocale } from "../../../i18n";
 import { getOfficialQuota, type OfficialQuota } from "../../../quota";
-import { getModelPickCounts } from "../../../model-usage";
-import { ProviderPicker, GroupPicker, initialModelPickerMode, visibleModelOptions } from "./LauncherPickers";
-import { ModelGridPicker, buildGroupedGrid, getGridColumnCountForOptions, gridIndexOf } from "./ModelGridPicker";
+import { loadLauncherData } from "../../shared/launcher-data";
+import {
+  buildOptionRows,
+  enabledWithProviderDefaultModel,
+  getGroupSelection,
+  selectedArgs,
+  selectedArgsWithGroupOverride,
+} from "../../shared/launch-options";
+import {
+  buildGroupedGrid,
+  getGridColumnCountForOptions,
+  gridIndexOf,
+  initialModelPickerMode,
+  modelPickerRowsInOrder,
+  visibleModelOptions,
+  type ModelPickerMode,
+} from "../../shared/model-picker";
+import type { LauncherClientData, LauncherLoadResult, LauncherResult } from "../../shared/types";
+import { ProviderPicker, GroupPicker } from "./LauncherPickers";
+import { ModelGridPicker } from "./ModelGridPicker";
+import { openSessionDatabase, refreshSessionIndex } from "../../../sessions";
+import { searchSessions } from "../../../sessions/search";
+import { prepareResume } from "../../../sessions/resume";
+import type { SessionDatabase } from "../../../sessions/database";
+import type { ParsedSessionMessage, UnifiedSession } from "../../../sessions/types";
+import { truncateToWidth } from "../../../utils/display-width";
+import { normalizeSessionSearchInput } from "../../../sessions/input";
+import type { LaunchOption } from "../../../clients";
+
+export type { LauncherResult } from "../../shared/types";
 
 const VERSION = process.env.VERSION || "dev";
 
@@ -39,15 +57,6 @@ export function buildInitialEnabled(
   return new Set(launchOptions.filter((o) => o.defaultOn).map((o) => o.id));
 }
 
-export type LauncherResult =
-  | { type: "launch"; clientId: string; projectPath?: string; args: string[]; envVars: Record<string, string>; selectedOptionIds: string[] }
-  | { type: "agent" }
-  | { type: "stats" }
-  | { type: "config" }
-  | { type: "language" }
-  | { type: "providers" }
-  | { type: "exit" };
-
 const CLIENT_STYLE: Record<string, { icon: string; color: string }> = {
   "claude-code": { icon: "✦", color: "yellow" },
   codex:         { icon: "◈", color: "blue" },
@@ -55,74 +64,23 @@ const CLIENT_STYLE: Record<string, { icon: string; color: string }> = {
 };
 const DEFAULT_STYLE = { icon: "▪", color: "white" };
 
-interface ProjectItem { label: string; hint: string; path?: string }
-interface ClientData {
-  client: ClientConfig;
-  projects: ProjectItem[];
-  providers: Provider[];    // 兼容的服务商列表
-  activeProvIdx: number;    // 当前绑定的服务商 index
-  launchOptions: LaunchOption[]; // 经 getClientLaunchOptions 扩充（含 Resume 等合成项）
-  lastSelectedOptionIds: string[]; // 上次启动时勾选的 option id（从持久化恢复）
+function cleanSessionText(text: string): string {
+  return text.replace(/```[\s\S]*?```/g, " [code] ").replace(/[`*_#>|]/g, "").replace(/\s+/g, " ").trim();
 }
 
-interface LoadResult {
-  clients: ClientData[];
-  defaultIdx: number;
-  hasProviders: boolean;
-  pickCounts: Record<string, number>;
+function sessionAge(timestamp: number, zh: boolean): string {
+  const diff = Math.max(0, Date.now() - timestamp);
+  if (diff < 3_600_000) return `${Math.max(1, Math.floor(diff / 60_000))}${zh ? "分钟前" : "m"}`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}${zh ? "小时前" : "h"}`;
+  return `${Math.floor(diff / 86_400_000)}${zh ? "天前" : "d"}`;
 }
 
-async function loadData(): Promise<LoadResult> {
-  const all = getAllClients();
-  const lastId = await getLastClientForCwd();
-  const defaultProv = await getDefaultProvider();
-  const zh = getLocale() === "zh";
-
-  const sorted = [...all].sort((a, b) => {
-    if (a.id === lastId) return -1;
-    if (b.id === lastId) return 1;
-    return 0;
-  });
-
-  const clients: ClientData[] = [];
-  for (const client of sorted) {
-    const recent = await getRecentProjectsForClient(client.id, DISPLAY_PER_CLIENT, true);
-    const cwd = process.cwd();
-    const projects: ProjectItem[] = [
-      { label: zh ? "在当前目录启动" : "Launch in current directory", hint: formatProjectPath(cwd, 45), path: cwd },
-      ...recent.map((p) => ({
-        label: formatProjectPath(p.path, 45),
-        hint: formatLastUsed(p.lastLaunchedAt),
-        path: p.path,
-      })),
-    ];
-    const compatible = await getProvidersForClient(client.id);
-    const bound = await getClientProvider(client.id);
-    const active = bound || compatible.find((p) => p.id === defaultProv?.id) || compatible[0];
-    const activeIdx = active ? compatible.findIndex((p) => p.id === active.id) : 0;
-    const launchOptions = getClientLaunchOptions(client, active);
-    const savedIds = await getLastSelectedOptionsForClient(client.id);
-    // 过滤掉已失效的 option id（client 升级后某些 option 可能被移除）
-    const validIds = launchOptions.map((o) => o.id);
-    const lastSelectedOptionIds = savedIds.filter((id) => validIds.includes(id));
-    clients.push({
-      client,
-      projects,
-      providers: compatible,
-      activeProvIdx: Math.max(activeIdx, 0),
-      launchOptions,
-      lastSelectedOptionIds,
-    });
-  }
-
-  const hasProviders = clients.some((c) => c.providers.length > 0);
-  let pickCounts: Record<string, number> = {};
-  try {
-    pickCounts = await getModelPickCounts();
-  } catch {
-    pickCounts = {};
-  }
-  return { clients, defaultIdx: 0, hasProviders, pickCounts };
+function sessionDayGroup(timestamp: number, zh: boolean): string {
+  const days = Math.floor(Math.max(0, Date.now() - timestamp) / 86_400_000);
+  if (days === 0) return zh ? "今天" : "Today";
+  if (days === 1) return zh ? "昨天" : "Yesterday";
+  if (days < 7) return zh ? "本周" : "This week";
+  return zh ? "更早" : "Earlier";
 }
 
 // ─── 分隔线 ─────────────────────────────────────────
@@ -230,45 +188,17 @@ function QuotaLine({ quota, zh }: { quota: OfficialQuota; zh: boolean }) {
 
 // ─── Main ─────────────────────────────────────────────
 
-type FocusArea = "projects" | "options";
+type FocusArea = "search" | "projects" | "options";
 
-/**
- * 选项区可见行：要么是一个 flag（直接勾选），要么是一个 group 入口（点进去选）。
- */
-type OptionRow =
-  | { kind: "flag"; opt: LaunchOption }
-  | { kind: "group"; group: string; title: string }
-  | { kind: "provider"; title: string };
-
-function buildOptionRows(opts: LaunchOption[], zh: boolean): OptionRow[] {
-  const rows: OptionRow[] = [];
-  const seen = new Set<string>();
-  for (const o of opts) {
-    if (!o.group) {
-      rows.push({ kind: "flag", opt: o });
-    } else if (!seen.has(o.group)) {
-      seen.add(o.group);
-      const title = o.group === "model" ? (zh ? "模型" : "Model") : o.group;
-      rows.push({ kind: "group", group: o.group, title });
-    }
-  }
-  // 服务商入口固定放在最底部
-  rows.push({ kind: "provider", title: zh ? "服务商" : "Provider" });
-  return rows;
-}
-
-function getGroupSelection(opts: LaunchOption[], enabled: Set<string>, group: string): LaunchOption | undefined {
-  return opts.find((o) => o.group === group && enabled.has(o.id));
-}
-
-function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onResult }: {
-  clients: ClientData[]; defaultIdx: number; hasProviders: boolean;
+function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, initialSessionSearch = false, onResult }: {
+  clients: LauncherClientData[]; defaultIdx: number; hasProviders: boolean;
   pickCounts: Record<string, number>;
+  initialSessionSearch?: boolean;
   onResult: (r: LauncherResult) => void;
 }) {
   const { stdout } = useStdout();
   const [clientIdx, setClientIdx] = useState(defaultIdx);
-  const [focus, setFocus] = useState<FocusArea>("projects");
+  const [focus, setFocus] = useState<FocusArea>(initialSessionSearch ? "search" : "projects");
   const [projectIdx, setProjectIdx] = useState(0);
   const [optionIdx, setOptionIdx] = useState(0);
   const [provIdx, setProvIdx] = useState(() => clients[defaultIdx]?.activeProvIdx || 0);
@@ -278,10 +208,25 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
   const [provMsg, setProvMsg] = useState("");
   /** 当前正在打开的 group picker（null = 主界面） */
   const [pickingGroup, setPickingGroup] = useState<string | null>(null);
-  const [modelPickerMode, setModelPickerMode] = useState<"collapsed" | "grid">("collapsed");
+  const [modelPickerMode, setModelPickerMode] = useState<ModelPickerMode>("collapsed");
   /** true = 服务商 picker（与 pickingGroup 互斥） */
   const [pickingProvider, setPickingProvider] = useState(false);
   const [pickerIdx, setPickerIdx] = useState(0);
+  const [sessionQuery, setSessionQuery] = useState("");
+  const [debouncedSessionQuery, setDebouncedSessionQuery] = useState("");
+  const [sessionIdx, setSessionIdx] = useState(0);
+  const sessionIdxRef = useRef(0);
+  const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(null);
+  const selectedSessionKeyRef = useRef<string | null>(null);
+  const [sessionDb, setSessionDb] = useState<SessionDatabase | null>(null);
+  const [sessionTick, setSessionTick] = useState(0);
+  const [indexingSessions, setIndexingSessions] = useState(false);
+  const [sessionIndexError, setSessionIndexError] = useState("");
+  const [sessionDetailKey, setSessionDetailKey] = useState<string | null>(null);
+  const [sessionDetail, setSessionDetail] = useState<{ session: UnifiedSession; messages: ParsedSessionMessage[] } | null>(null);
+  const sessionPageSize = Math.max(2, Math.min((stdout.columns || 80) < 100 ? 4 : 6, Math.floor(((stdout.rows || 30) - 12) / 2)));
+  const [sessionVisibleLimit, setSessionVisibleLimit] = useState(sessionPageSize);
+  const initialClientEffect = useRef(true);
 
   const current = clients[clientIdx];
   const projects = current.projects;
@@ -290,6 +235,65 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
   const zh = getLocale() === "zh";
 
   const currentProv = provs[provIdx];
+  const sessionCandidates = React.useMemo(() => sessionDb ? searchSessions(sessionDb, debouncedSessionQuery, { currentCwd: projects[0]?.path, limit: sessionVisibleLimit + 1 }) : [], [sessionDb, debouncedSessionQuery, sessionTick, projects, sessionVisibleLimit]);
+  const sessionHasMore = sessionCandidates.length > sessionVisibleLimit;
+  const sessionResults = React.useMemo(() => sessionCandidates.slice(0, sessionVisibleLimit), [sessionCandidates, sessionVisibleLimit]);
+  const sessionWindowStart = Math.max(0, Math.min(sessionIdx - sessionPageSize + 1, Math.max(0, sessionResults.length - sessionPageSize)));
+  const sessionWindow = sessionResults.slice(sessionWindowStart, sessionWindowStart + sessionPageSize);
+
+  useEffect(() => {
+    const db = openSessionDatabase();
+    let disposed = false;
+    setSessionDb(db); setIndexingSessions(true); setSessionIndexError("");
+    const refresh = refreshSessionIndex(db)
+      .then(() => { if (!disposed) setSessionTick((value) => value + 1); })
+      .catch((error) => { if (!disposed) setSessionIndexError(error instanceof Error ? error.message : String(error)); })
+      .finally(() => { if (!disposed) setIndexingSessions(false); });
+    return () => {
+      disposed = true;
+      setSessionDb(null);
+      void refresh.finally(() => db.close());
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!sessionQuery) { setDebouncedSessionQuery(""); return; }
+    const timer = setTimeout(() => setDebouncedSessionQuery(sessionQuery), 120);
+    return () => clearTimeout(timer);
+  }, [sessionQuery]);
+
+  useEffect(() => {
+    setSessionVisibleLimit((value) => Math.max(value, sessionPageSize));
+    setSessionIdx((value) => {
+      const next = Math.max(0, Math.min(value, sessionVisibleLimit - 1));
+      sessionIdxRef.current = next;
+      return next;
+    });
+  }, [sessionPageSize, sessionVisibleLimit]);
+
+  useEffect(() => {
+    if (sessionResults.length === 0) {
+      sessionIdxRef.current = 0;
+      selectedSessionKeyRef.current = null;
+      setSessionIdx(0);
+      setSelectedSessionKey(null);
+      return;
+    }
+    const preservedIndex = selectedSessionKeyRef.current ? sessionResults.findIndex((result) => result.session.key === selectedSessionKeyRef.current) : -1;
+    const nextIndex = preservedIndex >= 0 ? preservedIndex : Math.min(sessionIdxRef.current, sessionResults.length - 1);
+    const nextKey = sessionResults[nextIndex].session.key;
+    sessionIdxRef.current = nextIndex;
+    selectedSessionKeyRef.current = nextKey;
+    setSessionIdx(nextIndex);
+    setSelectedSessionKey(nextKey);
+  }, [sessionResults]);
+
+  useEffect(() => {
+    if (!sessionDb || !sessionDetailKey) { setSessionDetail(null); return; }
+    const session = sessionDb.getSession(sessionDetailKey);
+    const messages = sessionDb.getRecentMessages(sessionDetailKey, 32).filter((message) => message.role === "user" || message.role === "assistant").slice(-8);
+    setSessionDetail(session ? { session, messages } : null);
+  }, [sessionDb, sessionDetailKey]);
 
   // launchOptions 是 provider-aware 的（DeepSeek 时会列 DeepSeek 模型），
   // 因此 currentProv 切换时需要重新计算
@@ -316,6 +320,7 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
 
   // 切换工具时重置
   useEffect(() => {
+    if (initialClientEffect.current) { initialClientEffect.current = false; return; }
     setProjectIdx(0); setOptionIdx(0); setFocus("projects");
     setProvIdx(clients[clientIdx]?.activeProvIdx || 0);
     setPickingGroup(null);
@@ -329,27 +334,7 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
   //   1. 把 enabled 里已经失效的 option id 清掉（避免幽灵勾选）
   //   2. 若没有任何 model 被勾选，落到 provider.model 上（让 add provider 时挑的模型自动反映）
   useEffect(() => {
-    const validIds = new Set(options.map((o) => o.id));
-    const modelIds = new Set(options.filter((o) => o.group === "model").map((o) => o.id));
-    const provModelOptionId = currentProv?.model ? `model-${currentProv.model}` : undefined;
-    setEnabled((prev) => {
-      const next = new Set<string>();
-      let changed = false;
-      let hasModel = false;
-      for (const id of prev) {
-        if (validIds.has(id)) {
-          next.add(id);
-          if (modelIds.has(id)) hasModel = true;
-        } else {
-          changed = true;
-        }
-      }
-      if (!hasModel && provModelOptionId && modelIds.has(provModelOptionId)) {
-        next.add(provModelOptionId);
-        changed = true;
-      }
-      return changed ? next : prev;
-    });
+    setEnabled((prev) => enabledWithProviderDefaultModel(prev, options, currentProv?.model));
   }, [options, currentProv?.model]);
 
   const openGroupPicker = useCallback((group: string) => {
@@ -366,7 +351,7 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
         initIdx = gridIndexOf(ids, cur.id, columnCount);
       } else {
         const visible = group === "model"
-          ? visibleModelOptions(groupOpts, enabled, pickCounts, false).list
+          ? visibleModelOptions(groupOpts, enabled, pickCounts).list
           : groupOpts;
         initIdx = visible.findIndex((o) => o.id === cur.id) + 1;
       }
@@ -376,6 +361,16 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
     setModelPickerMode(mode);
     setPickingGroup(group);
   }, [enabled, options, pickCounts, stdout.columns, zh]);
+
+  const launchCurrentDirWithModel = useCallback((forcedOptionId?: string) => {
+    const selected = selectedArgsWithGroupOverride({ launchOptions: options, enabled }, "model", forcedOptionId);
+    onResult({
+      type: "launch",
+      clientId: current.client.id,
+      projectPath: projects[0]?.path,
+      ...selected,
+    });
+  }, [options, enabled, onResult, current.client.id, projects]);
 
   useInput(useCallback((input: string, key: any) => {
     // ─── 服务商 picker 模式 ───
@@ -426,15 +421,24 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
         const ids = groupOpts.map((o) => o.id);
         const columnCount = getGridColumnCountForOptions(groupOpts, stdout.columns || 80, zh);
         const grid = buildGroupedGrid(ids, columnCount);
-        const rowsInOrder = grid.groups.flatMap((group) => group.rows);
+        const rowsInOrder = modelPickerRowsInOrder(ids, columnCount);
         const pickerLen = grid.flat.length;
         if (input === "q") { setPickingGroup(null); setModelPickerMode("collapsed"); return; }
+        if (input === "m") {
+          const pickedId = grid.flat[pickerIdx];
+          launchCurrentDirWithModel(pickedId);
+          return;
+        }
         if (key.escape) {
           if (initialModelPickerMode(groupOpts, pickCounts) === "grid") {
             setPickingGroup(null);
           } else {
             setModelPickerMode("collapsed");
-            setPickerIdx(0);
+            // 回到折叠态时把焦点还原到当前选中项（没有选中则落到「默认/清空」），
+            // 而不是无脑跳回第一行。
+            const cur = getGroupSelection(options, enabled, pickingGroup);
+            const visibleList = visibleModelOptions(groupOpts, enabled, pickCounts).list;
+            setPickerIdx(cur ? Math.max(0, visibleList.findIndex((o) => o.id === cur.id) + 1) : 0);
           }
           return;
         }
@@ -481,10 +485,20 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
       }
 
       const visible = isModelGroup
-        ? visibleModelOptions(groupOpts, enabled, pickCounts, false)
+        ? visibleModelOptions(groupOpts, enabled, pickCounts)
         : { list: groupOpts, hiddenCount: 0 };
       const pickerLen = visible.list.length + 1 + (visible.hiddenCount > 0 ? 1 : 0);
       if (key.escape || input === "q") { setPickingGroup(null); setModelPickerMode("collapsed"); return; }
+      if (isModelGroup && input === "m") {
+        if (pickerIdx === 0) {
+          launchCurrentDirWithModel();
+          return;
+        }
+        if (visible.hiddenCount > 0 && pickerIdx === visible.list.length + 1) return;
+        const picked = visible.list[pickerIdx - 1];
+        launchCurrentDirWithModel(picked?.id);
+        return;
+      }
       if (key.upArrow) { setPickerIdx((p) => (p > 0 ? p - 1 : pickerLen - 1)); return; }
       if (key.downArrow) { setPickerIdx((p) => (p < pickerLen - 1 ? p + 1 : 0)); return; }
       if (key.return) {
@@ -496,7 +510,9 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
           });
         } else if (isModelGroup && visible.hiddenCount > 0 && pickerIdx === visible.list.length + 1) {
           const cur = getGroupSelection(options, enabled, pickingGroup);
-          const initIdx = cur ? groupOpts.findIndex((o) => o.id === cur.id) : 0;
+          const ids = groupOpts.map((o) => o.id);
+          const columnCount = getGridColumnCountForOptions(groupOpts, stdout.columns || 80, zh);
+          const initIdx = cur ? gridIndexOf(ids, cur.id, columnCount) : 0;
           setPickerIdx(Math.max(0, initIdx));
           setModelPickerMode("grid");
           return;
@@ -512,6 +528,42 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
         setPickingGroup(null);
         setModelPickerMode("collapsed");
       }
+      return;
+    }
+
+    if (focus === "search") {
+      if (sessionDetailKey && (key.escape || key.leftArrow)) { setSessionDetailKey(null); return; }
+      if (key.escape || key.leftArrow) { setSessionQuery(""); sessionIdxRef.current = 0; selectedSessionKeyRef.current = null; setSessionIdx(0); setSelectedSessionKey(null); setFocus("projects"); return; }
+      if (key.rightArrow) { const selected = sessionResults.find((result) => result.session.key === selectedSessionKeyRef.current) ?? sessionResults[sessionIdxRef.current]; if (selected) setSessionDetailKey(selected.session.key); return; }
+      if (key.downArrow) {
+        if (sessionResults.length === 0) return;
+        if (sessionIdxRef.current >= sessionResults.length - 1 && sessionHasMore) {
+          setSessionVisibleLimit((value) => value + sessionPageSize);
+          sessionIdxRef.current += 1;
+          setSessionIdx(sessionIdxRef.current);
+        } else {
+          sessionIdxRef.current = Math.min(sessionResults.length - 1, sessionIdxRef.current + 1);
+          setSessionIdx(sessionIdxRef.current);
+        }
+        selectedSessionKeyRef.current = sessionResults[sessionIdxRef.current]?.session.key ?? null;
+        setSelectedSessionKey(selectedSessionKeyRef.current);
+        return;
+      }
+      if (key.upArrow) { sessionIdxRef.current = Math.max(0, sessionIdxRef.current - 1); setSessionIdx(sessionIdxRef.current); selectedSessionKeyRef.current = sessionResults[sessionIdxRef.current]?.session.key ?? null; setSelectedSessionKey(selectedSessionKeyRef.current); return; }
+      if (key.backspace || key.delete) { setSessionQuery((value) => value.slice(0, -1)); sessionIdxRef.current = 0; selectedSessionKeyRef.current = null; setSessionIdx(0); setSelectedSessionKey(null); setSessionDetailKey(null); setSessionVisibleLimit(sessionPageSize); return; }
+      if (key.return) {
+        const selected = sessionResults.find((result) => result.session.key === selectedSessionKeyRef.current) ?? sessionResults[sessionIdxRef.current]; if (!selected) return;
+        if (selected.session.resumeCapability === "unsupported") { setSessionDetailKey(selected.session.key); return; }
+        try {
+          const prepared = prepareResume(selected.session, projects[0]?.path);
+          onResult({ type: "launch", clientId: prepared.clientId, projectPath: prepared.projectPath, args: prepared.args, envVars: {}, selectedOptionIds: [] });
+        } catch (error) {
+          setSessionIndexError(error instanceof Error ? error.message : String(error));
+        }
+        return;
+      }
+      const searchInput = normalizeSessionSearchInput(input, key);
+      if (searchInput) { setSessionQuery((value) => value + searchInput); sessionIdxRef.current = 0; selectedSessionKeyRef.current = null; setSessionIdx(0); setSelectedSessionKey(null); setSessionDetailKey(null); setSessionVisibleLimit(sessionPageSize); }
       return;
     }
 
@@ -539,6 +591,15 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
       }
       if (key.upArrow) {
         if (projectIdx > 0) setProjectIdx((p) => p - 1);
+        else {
+          sessionIdxRef.current = 0;
+          selectedSessionKeyRef.current = sessionResults[0]?.session.key ?? null;
+          setSessionIdx(0);
+          setSelectedSessionKey(selectedSessionKeyRef.current);
+          setSessionVisibleLimit(sessionPageSize);
+          setSessionDetailKey(null);
+          setFocus("search");
+        }
         return;
       }
     }
@@ -592,21 +653,16 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
 
       // 启动
       const project = projects[projectIdx];
-      const args: string[] = [];
-      const envVars: Record<string, string> = {};
-      const selectedOptionIds: string[] = [];
-      for (const opt of options) {
-        if (enabled.has(opt.id)) { args.push(...opt.args); if (opt.envVars) Object.assign(envVars, opt.envVars); selectedOptionIds.push(opt.id); }
-      }
-      onResult({ type: "launch", clientId: current.client.id, projectPath: project.path, args, envVars, selectedOptionIds });
+      const selected = selectedArgs({ launchOptions: options, enabled });
+      onResult({ type: "launch", clientId: current.client.id, projectPath: project.path, ...selected });
     }
-  }, [focus, clientIdx, projectIdx, optionIdx, provIdx, provs, currentProv, current, projects, options, optionRows, enabled, clients, onResult, zh, pickingGroup, pickingProvider, pickerIdx, pickCounts, modelPickerMode, stdout.columns, openGroupPicker]));
+  }, [focus, clientIdx, projectIdx, optionIdx, provIdx, provs, currentProv, current, projects, options, optionRows, enabled, clients, onResult, zh, pickingGroup, pickingProvider, pickerIdx, pickCounts, modelPickerMode, stdout.columns, openGroupPicker, launchCurrentDirWithModel, sessionQuery, sessionIdx, selectedSessionKey, sessionResults, sessionDetailKey, sessionVisibleLimit, sessionPageSize, sessionHasMore]));
 
   return (
     <Box flexDirection="column" paddingX={0} paddingY={0}>
 
       {/* 主容器 */}
-      <Box flexDirection="column" borderStyle="round" borderColor={cs.color} paddingX={1} paddingY={0}>
+      <Box flexDirection="column" borderStyle="round" borderColor={focus === "search" ? "cyan" : cs.color} paddingX={1} paddingY={0}>
 
         {/* Header: 版本 · 账号类型 · 用量（服务商切换在底部入口） */}
         <Box justifyContent="space-between">
@@ -634,8 +690,8 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
           </Box>
         )}
 
-        {/* Tab 栏 */}
-        <Box marginTop={1} gap={1} justifyContent="center">
+        {/* Tab 栏：搜索模式隐藏，减少视觉干扰 */}
+        {focus !== "search" && <Box marginTop={1} gap={1} justifyContent="center">
           <Text dimColor>‹</Text>
           {clients.map((cd, i) => {
             const s = CLIENT_STYLE[cd.client.id] || DEFAULT_STYLE;
@@ -651,9 +707,9 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
             );
           })}
           <Text dimColor>›</Text>
-        </Box>
+        </Box>}
 
-        <Divider color={cs.color} />
+        {focus !== "search" && <Divider color={cs.color} />}
 
         {pickingProvider ? (
           <ProviderPicker provs={provs} provIdx={provIdx} pickerIdx={pickerIdx} color={cs.color} zh={zh} />
@@ -674,13 +730,65 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
             color={cs.color}
             zh={zh}
             pickCounts={pickCounts}
-            expanded={pickingGroup !== "model"}
           />
         ) : (
           <>
 
-        {/* 项目列表 */}
-        {projects.map((p, i) => {
+        {focus === "search" ? (
+          <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column" marginTop={1} marginBottom={1}>
+            <Box justifyContent="space-between">
+              <Text color="cyan" bold>⌕ {zh ? "搜索历史会话" : "Search sessions"}</Text>
+              {indexingSessions && <Text dimColor>{zh ? "索引中..." : "indexing..."}</Text>}
+              {!indexingSessions && sessionIndexError && <Text color="red">⚠ {truncateToWidth(sessionIndexError, Math.max(16, (stdout.columns || 80) - 48))}</Text>}
+            </Box>
+            <Box>
+              <Text color="cyan" bold>› </Text>
+              <Text bold={!!sessionQuery} dimColor={!sessionQuery}>{sessionQuery || (zh ? "输入关键词，留空浏览最近会话" : "Type to search, or browse recent sessions")}</Text>
+              <Text inverse> </Text>
+            </Box>
+          </Box>
+        ) : (
+          <Box paddingLeft={1}>
+            <Text>  ⌕ </Text><Text dimColor>{zh ? "搜索历史会话..." : "Search previous sessions..."}</Text>
+            {indexingSessions && <Text dimColor>  {zh ? "索引中" : "indexing"}</Text>}
+          </Box>
+        )}
+
+        {/* 项目列表 / Session 搜索结果 */}
+        {sessionDetailKey && sessionDetail ? (
+          <Box paddingLeft={2} flexDirection="column">
+            <Text bold color="cyan">{sessionDetail.session.title ?? sessionDetailKey}</Text>
+            <Text dimColor>{sessionDetail.session.cwd}</Text>
+            {sessionDetail.session.resumeCapability === "unsupported" && <Text color="yellow">{zh ? "此来源暂不支持直接续接，仅可搜索和查看。" : "This source is view-only and cannot be resumed yet."}</Text>}
+            {sessionDetail.messages.map((message) => (
+              <Text key={message.ordinal}><Text color={message.role === "user" ? "yellow" : "green"}>{message.role === "user" ? "You" : "AI"}: </Text>{message.text.replace(/\s+/g, " ").slice(0, Math.max(40, (stdout.columns || 80) - 12))}</Text>
+            ))}
+          </Box>
+        ) : focus === "search" ? sessionWindow.map((result, localIndex) => {
+          const resultIndex = sessionWindowStart + localIndex;
+          const focused = resultIndex === sessionIdx;
+          const color = result.session.source === "claude" ? "magenta" : result.session.source === "codex" ? "blue" : "cyan";
+          const group = sessionDayGroup(result.session.updatedAt, zh);
+          const width = Math.max(30, (stdout.columns || 80) - 14);
+          return (
+            <React.Fragment key={result.session.key}>
+              <Box paddingLeft={1} flexDirection="column">
+                <Box>
+                  <Text color={focused ? "cyan" : undefined} bold={focused}>{focused ? "▸ " : "  "}</Text>
+                  <Text color="cyan">{group}</Text><Text dimColor> · </Text>
+                  <Text color={color} bold>{result.session.source === "claude" ? "Claude" : result.session.source === "codex" ? "Codex" : "Gemini"}</Text>
+                  <Text dimColor> · {result.session.projectName ?? "未知项目"} · {sessionAge(result.session.updatedAt, zh)}  </Text>
+                  <Text bold={focused} color={focused ? "white" : undefined}>{truncateToWidth(cleanSessionText(result.session.title ?? result.session.nativeId.slice(0, 8)), Math.max(12, width - 36))}</Text>
+                </Box>
+                <Text dimColor>{"    "}{truncateToWidth(cleanSessionText(result.snippet), width)}</Text>
+              </Box>
+            </React.Fragment>
+          );
+        }).concat([
+          <Box key="session-window-status" paddingLeft={4} marginTop={1}>
+            <Text dimColor>{sessionResults.length === 0 ? (zh ? "暂无会话" : "No sessions") : `${sessionWindowStart + 1}-${Math.min(sessionWindowStart + sessionPageSize, sessionResults.length)} / ${sessionResults.length}${sessionHasMore ? "+" : ""}`}{sessionHasMore ? `  ·  ↓ ${zh ? "继续浏览" : "more"}` : ""}</Text>
+          </Box>
+        ]) : projects.map((p, i) => {
           const focused = focus === "projects" && i === projectIdx;
           return (
             <Box key={i} paddingLeft={1}>
@@ -698,7 +806,7 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
         })}
 
         {/* 选项区：启动参数（勾选）+ group 入口（如"模型 ›"） */}
-        {optionRows.length > 0 && (
+        {focus !== "search" && optionRows.length > 0 && (
           <>
             <Divider color={cs.color} />
             {optionRows.map((row, idx) => {
@@ -779,7 +887,17 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
 
       {/* Footer — 根据焦点区域动态变化 */}
       <Box paddingX={2} marginTop={0} justifyContent="center" gap={2}>
-        {focus === "options" ? (
+        {focus === "search" ? (
+          <>
+            <Text dimColor bold>↑↓</Text><Text dimColor>{zh ? "选择" : "select"}</Text>
+            <Text dimColor>│</Text>
+            <Text dimColor bold>Enter</Text><Text dimColor>{sessionResults[sessionIdx]?.session.resumeCapability === "unsupported" ? (zh ? "查看" : "open") : (zh ? "续接" : "resume")}</Text>
+            <Text dimColor>│</Text>
+            <Text dimColor bold>→</Text><Text dimColor>{zh ? "查看" : "details"}</Text>
+            <Text dimColor>│</Text>
+            <Text dimColor bold>Esc</Text><Text dimColor>{zh ? "返回" : "back"}</Text>
+          </>
+        ) : focus === "options" ? (
           <>
             <Text dimColor bold>Space</Text><Text dimColor>{zh ? "开关" : "toggle"}</Text>
             <Text dimColor>│</Text>
@@ -817,9 +935,9 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
   );
 }
 
-export function LauncherView({ onResult }: { onResult: (r: LauncherResult) => void }) {
-  const [data, setData] = useState<LoadResult | null>(null);
-  useEffect(() => { loadData().then(setData); }, []);
+export function LauncherView({ onResult, initialSessionSearch = false }: { onResult: (r: LauncherResult) => void; initialSessionSearch?: boolean }) {
+  const [data, setData] = useState<LauncherLoadResult | null>(null);
+  useEffect(() => { loadLauncherData(45).then(setData); }, []);
   if (!data) return <Text dimColor>Loading...</Text>;
   return (
     <LauncherViewInner
@@ -827,6 +945,7 @@ export function LauncherView({ onResult }: { onResult: (r: LauncherResult) => vo
       defaultIdx={data.defaultIdx}
       hasProviders={data.hasProviders}
       pickCounts={data.pickCounts}
+      initialSessionSearch={initialSessionSearch}
       onResult={onResult}
     />
   );

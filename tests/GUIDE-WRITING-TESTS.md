@@ -105,7 +105,6 @@ import {
 import {
   mockPackageJsons,    // Mock package.json data
   parseBinField,       // Parse bin field function
-  getMockUpdateCommand, // Get mock update command
   mockConfig,          // Empty config structure
   mockValidConfig,     // Valid config example
 } from "./_helpers/mocks";

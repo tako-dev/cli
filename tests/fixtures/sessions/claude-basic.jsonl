@@ -1,0 +1,4 @@
+{"type":"ai-title","sessionId":"claude-session-1","cwd":"/work/payments","timestamp":"2026-07-01T08:00:00.000Z","title":"修复支付回调签名"}
+{"type":"user","sessionId":"claude-session-1","cwd":"/work/payments","timestamp":"2026-07-01T08:01:00.000Z","message":{"role":"user","content":"线上支付回调偶尔验签失败"}}
+{"type":"assistant","sessionId":"claude-session-1","cwd":"/work/payments","timestamp":"2026-07-01T08:02:00.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"检查字段顺序"},{"type":"text","text":"最终定位为 callback 字段排序不一致。"}]}}
+{"type":"system","sessionId":"claude-session-1","cwd":"/work/payments","timestamp":"2026-07-01T08:03:00.000Z","message":{"role":"system","content":"private system template"}}

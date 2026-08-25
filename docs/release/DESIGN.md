@@ -23,7 +23,7 @@ GHA: .github/workflows/release.yml (tag v* 触发)
       ├─ bun run build
       ├─ Smoke test: bun dist/index.js --version
       ├─ Pre-release checks (32 个断言)
-      └─ npm publish --provenance (OIDC trusted publishing)
+      └─ npx -y npm@11.5.1 publish --provenance (OIDC trusted publishing)
 ```
 
 ## 本地命令
@@ -39,7 +39,7 @@ bun run release:minor  # minor: 0.x.y → 0.(x+1).0
 **OIDC Trusted Publishing**（无需 token）：
 - npmjs.com 包 Settings → Trusted Publisher 已配置（tako-dev/cli/release.yml）
 - GHA workflow 声明 `permissions: { id-token: write }`
-- npm >= 11.5.1（workflow 中 `npm install -g npm@latest`）
+- npm >= 11.5.1（workflow 中用 `npx -y npm@11.5.1 ...` 固定发布 CLI）
 - `npm publish --provenance` 自动获取 OIDC id-token
 
 详细踩坑记录：`my-documents/incidents/2026-06-15-npm-oidc-publish-tako-cli.md`
@@ -74,6 +74,15 @@ bun run release:minor  # minor: 0.x.y → 0.(x+1).0
 **根因**：`package.json` script 中单引号内部保留了 `\"` 反斜杠，Node 收到 `require(\"./package.json\")`。
 **修复**：将 script 中版本表达式改为实际执行 `require("./package.json").version`。
 **防护**：发版后必须核对 `git ls-remote --tags origin 'refs/tags/v*'` 和 `npm view tako-cli version dist-tags.latest --json`；误 tag 清理步骤见 `RUNBOOK.md`。
+
+### v0.3.22 — npm@latest provenance 缺 sigstore
+
+**现象**：三平台 e2e、build、unit、pre-release 全过，但 `npm publish --provenance`
+失败，报 `Cannot find module 'sigstore'`。
+**根因**：workflow 用 `npm install -g npm@latest` 覆盖 runner 全局 npm，npm CLI 依赖树
+漂移后 `libnpmpublish` 运行时找不到 `sigstore`。
+**修复**：不再全局升级 npm；发布步骤改用 `npx -y npm@11.5.1 publish --provenance --access public`。
+**防护**：workflow 先执行 `npx -y npm@11.5.1 --version`，发版后继续核对 npm latest。
 
 ## 回滚
 

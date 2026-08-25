@@ -18,6 +18,8 @@ export interface LaunchOptions {
   projectPath?: string;
   args?: string[];
   envVars?: Record<string, string>;
+  /** Ephemeral launch files removed after the client exits. */
+  cleanupFiles?: string[];
   selectedOptionIds?: string[];
   /** 调用方直接指定的 Provider（跳过选择） */
   providerContext?: ProviderContext;
@@ -72,6 +74,7 @@ export async function launchClientUnified(
   client: ClientConfig,
   options?: LaunchOptions
 ): Promise<LaunchResult> {
+  let setupCleanupFiles: string[] = [];
   try {
     const workingDir = options?.projectPath || process.cwd();
     if (options?.projectPath) {
@@ -97,14 +100,19 @@ export async function launchClientUnified(
     let setupLaunchArgs: string[] = [];
     let setupEnvVars: Record<string, string> = {};
     if (client.setupConfigFiles) {
+      const launchEnvVars = {
+        ...client.getEnvVars(providerContext),
+        ...(options?.envVars ?? {}),
+      };
       const setupResult = await client.setupConfigFiles(
         providerContext,
         options?.selectedOptionIds,
-        { forLaunch: true },
+        { forLaunch: true, launchEnvVars },
       );
       if (setupResult && typeof setupResult === "object") {
         setupLaunchArgs = setupResult.args ?? [];
         setupEnvVars = setupResult.envVars ?? {};
+        setupCleanupFiles = setupResult.cleanupFiles ?? [];
       }
     }
 
@@ -131,9 +139,14 @@ export async function launchClientUnified(
       ...options,
       args: [...setupLaunchArgs, ...(options?.args ?? [])],
       envVars: { ...setupEnvVars, ...(options?.envVars ?? {}) },
+      cleanupFiles: [...setupCleanupFiles, ...(options?.cleanupFiles ?? [])],
       providerContext,
     });
   } catch (error) {
+    if (setupCleanupFiles.length > 0) {
+      const { rm } = await import("node:fs/promises");
+      await Promise.all(setupCleanupFiles.map((path) => rm(path, { force: true }).catch(() => {})));
+    }
     return {
       success: false,
       error: error instanceof Error ? error.message : "Launch failed",

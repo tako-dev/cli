@@ -27,9 +27,10 @@ interface AppProps {
   onLaunch: (result: LauncherResult) => void;
   onExit: () => void;
   initialView?: View;
+  initialSessionSearch?: boolean;
 }
 
-function App({ onLaunch, onExit, initialView = "launcher" }: AppProps) {
+function App({ onLaunch, onExit, initialView = "launcher", initialSessionSearch = false }: AppProps) {
   const [view, setView] = useState<View>(initialView);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -96,6 +97,7 @@ function App({ onLaunch, onExit, initialView = "launcher" }: AppProps) {
       case "launcher":
         return (
           <LauncherView
+            initialSessionSearch={initialSessionSearch}
             onResult={(result) => {
               switch (result.type) {
                 case "launch": onLaunch(result); break;
@@ -161,7 +163,7 @@ export type { LauncherResult };
 /**
  * 启动 Ink App，返回 Promise
  */
-export function startApp(): Promise<LauncherResult | null> {
+export function startApp(options: { initialSessionSearch?: boolean } = {}): Promise<LauncherResult | null> {
   return new Promise((resolve) => {
     let instance: ReturnType<typeof render> | null = null;
 
@@ -196,7 +198,7 @@ export function startApp(): Promise<LauncherResult | null> {
     }
 
     instance = render(
-      <App onLaunch={handleLaunch} onExit={handleExit} />
+      <App onLaunch={handleLaunch} onExit={handleExit} initialSessionSearch={options.initialSessionSearch} />
     );
   });
 }

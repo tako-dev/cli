@@ -99,6 +99,21 @@ Manage persistent AI agent sessions from CLI or TUI. Sessions survive shell rest
 
 从 CLI 或 TUI 管理持久化的 AI agent 会话。会话跨 shell 重启保持。
 
+### Native Session Search / 原生会话搜索
+
+Launcher 项目列表第一项按 `↑` 即可进入历史会话搜索，统一检索 Claude Code、Codex 和 Gemini 的本地 session。搜索框留空时直接浏览最近会话，Claude/Codex 按 `Enter` 续接，Gemini 按 `Enter` 查看详情，按 `→` 均可查看最近对话。
+
+```bash
+tako sessions search "支付回调"
+tako sessions search "upstream timeout" --deep
+tako sessions resume codex:<session-id>
+tako sessions index --status
+tako sessions index --rebuild
+tako sessions index --clear
+```
+
+索引完全保存在本机 `~/.tako/session-index/`，目录权限为 `0700`、数据库文件权限为 `0600`。默认搜索排除 system/developer prompt；`--deep` 才包含工具输出和 reasoning。当前 Gemini 历史仅支持搜索和查看，不会伪装成可续接会话。
+
 ```bash
 tako agent run claude --prompt "fix the failing tests" --json  # One-shot task / 一次性任务
 tako agent start claude --model claude-sonnet-4-6   # Create session / 创建会话
@@ -187,6 +202,7 @@ curl -fsSL https://raw.githubusercontent.com/tako-dev/cli/main/skills/model-benc
 | 🧪 Agent test plan / 测试计划 | [`docs/agent/TESTPLAN.md`](docs/agent/TESTPLAN.md) |
 | 💰 Quota module / 用量模块 | [`docs/quota/DESIGN.md`](docs/quota/DESIGN.md) |
 | 🚢 Release runbook / 发版手册 | [`docs/release/RUNBOOK.md`](docs/release/RUNBOOK.md) |
+| Maintainer release rule | Releases are tag-driven through GitHub Actions; see [`AGENTS.md`](AGENTS.md) before publishing. |
 | 🤖 tako-agent skill | [`skills/tako-agent/SKILL.md`](skills/tako-agent/SKILL.md) |
 | 📊 Model benchmark & picker / 选模型指南 | [`skills/model-benchmark/SKILL.md`](skills/model-benchmark/SKILL.md) |
 | 🐛 Issues & feedback | [GitHub Issues](https://github.com/tako-dev/cli/issues) |

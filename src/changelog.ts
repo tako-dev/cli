@@ -5,10 +5,10 @@
  * 新版本请在 CHANGELOG 数组顶部添加条目。
  */
 
-import { inkConfirm } from "./ui/ink/views/ConfirmDialog";
 import { loadConfig, updateConfig } from "./config";
 import { CURRENT_VERSION } from "./updater";
 import { log } from "./logger";
+import { pausePrompt } from "./ui/shared/terminal";
 
 export interface ChangelogEntry {
   version: string;
@@ -137,8 +137,5 @@ export async function showFullChangelog(): Promise<void> {
   }
 
   // 等用户按回车返回
-  await inkConfirm({
-    message: "返回主菜单",
-    defaultValue: true,
-  });
+  await pausePrompt("返回主菜单");
 }

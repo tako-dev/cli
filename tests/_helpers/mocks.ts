@@ -37,11 +37,6 @@ export function parseBinField(bin: any, command: string): string | null {
   return null;
 }
 
-/** Mock update command */
-export function getMockUpdateCommand(bunBin: string): string[] {
-  return [bunBin, "update", "tako-cli", "--latest"];
-}
-
 /** Mock config structure */
 export const mockConfig = {
   apiKey: "",

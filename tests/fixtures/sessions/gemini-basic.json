@@ -1,0 +1,9 @@
+{
+  "sessionId": "gemini-json-session-1",
+  "startTime": "2026-07-10T10:00:00.000Z",
+  "lastUpdated": "2026-07-10T10:01:00.000Z",
+  "messages": [
+    { "type": "user", "timestamp": "2026-07-10T10:00:00.000Z", "content": "查找旧会话" },
+    { "type": "gemini", "timestamp": "2026-07-10T10:01:00.000Z", "content": "这里是结果" }
+  ]
+}

@@ -21,30 +21,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install CLI deps
-        run: bun install
-
-      - name: Prepare TAKO_HOME with system bun
-        shell: bash
-        env:
-          TAKO_HOME: ${{ runner.temp }}/tako-e2e
-        run: |
-          mkdir -p "$TAKO_HOME/bun/bin"
-          BUN_PATH="$(which bun)"
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            cp "$BUN_PATH" "$TAKO_HOME/bun/bin/bun.exe"
-          else
-            ln -sf "$BUN_PATH" "$TAKO_HOME/bun/bin/bun"
-          fi
-
-      - name: Run installer e2e
-        env:
-          TAKO_HOME: ${{ runner.temp }}/tako-e2e
-        run: bun tests/e2e/installer-driver.ts
+      - name: Installer e2e
+        uses: ./.github/actions/installer-e2e
 
   # ─── 阶段 2：build + publish（e2e 全过后）───
   publish:
@@ -66,11 +44,11 @@ jobs:
         with:
           node-version: 22
 
-      - name: Upgrade npm (OIDC trusted publishing requires >= 11.5.1)
-        run: npm install -g npm@latest
+      - name: Check npm publishing CLI
+        run: npx -y npm@11.5.1 --version
 
       - name: Install deps
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Build
         run: bun run build
@@ -81,8 +59,11 @@ jobs:
           echo "$OUTPUT"
           echo "$OUTPUT" | grep -q "Tako CLI" || (echo "FAIL: bundle cannot start" && exit 1)
 
+      - name: Unit tests
+        run: bun run test:unit
+
       - name: Pre-release checks
         run: bun run test:pre-release
 
       - name: Publish to npm (OIDC trusted publishing)
-        run: npm publish --provenance --access public
+        run: npx -y npm@11.5.1 publish --provenance --access public

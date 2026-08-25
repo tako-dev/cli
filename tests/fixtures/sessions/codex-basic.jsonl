@@ -1,0 +1,6 @@
+{"type":"session_meta","payload":{"id":"codex-session-1","cwd":"/work/compass","cli_version":"0.144.4"}}
+{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"private developer instructions"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>cwd metadata</environment_context>"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"帮我定位 HTTP 200 但 output_tokens=0"}]}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"问题位于上游空响应回退。"}]}}
+{"type":"response_item","payload":{"type":"function_call_output","output":"curl returned 500 upstream timeout"}}

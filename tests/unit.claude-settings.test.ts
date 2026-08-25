@@ -3,40 +3,55 @@ import { mkdir, readFile, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import {
+  buildTakoClaudeSettingsOverlay,
+  findClaudeSettingsConflicts,
   prepareTakoClaudeSettingsForLaunch,
-  sanitizeClaudeSettingsForTako,
 } from "../src/clients/claude-code";
 
-describe("Claude Code settings isolation", () => {
-  it("removes conflicting env keys without mutating the original settings object", () => {
-    const original = {
+describe("Claude Code launch settings overlay", () => {
+  it("contains only provider-owned env keys", () => {
+    const overlay = buildTakoClaudeSettingsOverlay({
+      ANTHROPIC_AUTH_TOKEN: "new-token",
+      ANTHROPIC_BASE_URL: "https://new.example.com",
+      ANTHROPIC_MODEL: "claude-sonnet-4-6",
+      API_TIMEOUT_MS: "90000",
+      KEEP_ME: "yes",
+    });
+
+    expect(overlay).toEqual({
+      env: {
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_AUTH_TOKEN: "new-token",
+        ANTHROPIC_BASE_URL: "https://new.example.com",
+        ANTHROPIC_MODEL: "claude-sonnet-4-6",
+      },
+    });
+  });
+
+  it("reports only provider-owned values that will actually change", () => {
+    const settings = {
       env: {
         ANTHROPIC_AUTH_TOKEN: "old-token",
-        ANTHROPIC_BASE_URL: "https://old.example.com",
+        ANTHROPIC_BASE_URL: "https://new.example.com",
+        ANTHROPIC_CUSTOM_HEADERS: "x-trace: keep",
         API_TIMEOUT_MS: "1000",
         KEEP_ME: "yes",
       },
-      statusLine: { type: "command", command: "tako statusline" },
     };
-
-    const result = sanitizeClaudeSettingsForTako(original);
-
-    expect(result.cleanedFields).toEqual([
-      "ANTHROPIC_AUTH_TOKEN",
-      "ANTHROPIC_BASE_URL",
-      "API_TIMEOUT_MS",
-    ]);
-    expect(result.settings).toEqual({
-      env: { KEEP_ME: "yes" },
-      statusLine: { type: "command", command: "tako statusline" },
+    const overlay = buildTakoClaudeSettingsOverlay({
+      ANTHROPIC_AUTH_TOKEN: "new-token",
+      ANTHROPIC_BASE_URL: "https://new.example.com",
     });
-    expect(original.env.ANTHROPIC_AUTH_TOKEN).toBe("old-token");
+
+    expect(findClaudeSettingsConflicts(settings, overlay)).toEqual([
+      "ANTHROPIC_AUTH_TOKEN",
+    ]);
   });
 
-  it("writes a Tako-managed clean settings file and returns Claude launch args", async () => {
+  it("writes a minimal overlay without disabling the user settings source", async () => {
     const dir = join(tmpdir(), `tako-claude-settings-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     const sourcePath = join(dir, "source-settings.json");
-    const targetPath = join(dir, "tako", "settings.json");
+    const targetPath = join(dir, "tako", "launch-settings.json");
 
     await mkdir(dir, { recursive: true });
     try {
@@ -48,50 +63,66 @@ describe("Claude Code settings isolation", () => {
             NORMAL_ENV: "keep",
           },
           permissions: { allow: ["Bash(git *)"] },
+          enabledPlugins: { "review@personal": true },
         }),
       );
 
       const result = await prepareTakoClaudeSettingsForLaunch({
+        launchEnvVars: {
+          ANTHROPIC_AUTH_TOKEN: "new-token",
+          ANTHROPIC_BASE_URL: "https://new.example.com",
+        },
         sourcePath,
         targetPath,
         logConflicts: false,
       });
 
-      expect(result).toBeDefined();
-      expect(result!.args).toEqual([
-        "--setting-sources",
-        "project,local",
-        "--settings",
-        targetPath,
-      ]);
-      expect(result!.cleanedFields).toEqual(["ANTHROPIC_AUTH_TOKEN"]);
+      expect(result.args).toEqual(["--settings", targetPath]);
+      expect(result.args).not.toContain("--setting-sources");
+      expect(result.conflictingFields).toEqual(["ANTHROPIC_AUTH_TOKEN"]);
+      expect(result.cleanupFiles).toEqual([targetPath]);
 
       const source = JSON.parse(await readFile(sourcePath, "utf-8"));
       const target = JSON.parse(await readFile(targetPath, "utf-8"));
-      expect(source.env.ANTHROPIC_AUTH_TOKEN).toBe("old-token");
+      expect(source.permissions).toEqual({ allow: ["Bash(git *)"] });
+      expect(source.enabledPlugins).toEqual({ "review@personal": true });
       expect(target).toEqual({
-        env: { NORMAL_ENV: "keep" },
-        permissions: { allow: ["Bash(git *)"] },
+        env: {
+          ANTHROPIC_API_KEY: "",
+          ANTHROPIC_AUTH_TOKEN: "new-token",
+          ANTHROPIC_BASE_URL: "https://new.example.com",
+        },
       });
+      expect(target.permissions).toBeUndefined();
+      expect(target.enabledPlugins).toBeUndefined();
+      expect(target.env.NORMAL_ENV).toBeUndefined();
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
   });
 
-  it("returns null when settings has no conflicting env keys", async () => {
+  it("creates the overlay even when user settings are absent", async () => {
     const dir = join(tmpdir(), `tako-claude-settings-clean-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    const sourcePath = join(dir, "source-settings.json");
-    const targetPath = join(dir, "tako", "settings.json");
+    const sourcePath = join(dir, "missing-settings.json");
+    const targetPath = join(dir, "launch-settings.json");
 
     await mkdir(dir, { recursive: true });
     try {
-      await writeFile(sourcePath, JSON.stringify({ env: { KEEP_ME: "yes" } }));
       const result = await prepareTakoClaudeSettingsForLaunch({
+        launchEnvVars: { ANTHROPIC_API_KEY: "selected-key" },
         sourcePath,
         targetPath,
         logConflicts: false,
       });
-      expect(result).toBeNull();
+
+      expect(result.conflictingFields).toEqual([]);
+      expect(JSON.parse(await readFile(targetPath, "utf-8"))).toEqual({
+        env: {
+          ANTHROPIC_API_KEY: "selected-key",
+          ANTHROPIC_AUTH_TOKEN: "",
+          ANTHROPIC_BASE_URL: "",
+        },
+      });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

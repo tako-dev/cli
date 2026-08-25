@@ -57,7 +57,7 @@ echo "$OUTPUT" | grep -q "Tako CLI" || exit 1
 | Build | release.yml → publish job | 构建失败 → 阻断 |
 | Smoke test | release.yml → publish job | bundle 无法启动 → 阻断 |
 | Pre-release | release.yml → publish job | 任何断言失败 → 阻断 |
-| npm publish | release.yml → publish job | OIDC/registry 问题 → 阻断 |
+| npm publish | release.yml → publish job | OIDC/registry/npm CLI 问题 → 阻断 |
 
 ## TP-REL-SCRIPT：release script 版本展开
 
@@ -76,6 +76,18 @@ node -p 'require("./package.json").version'
 ```
 
 实际展开的 script 中不应出现传给 Node 的 `require(\"./package.json\")`。
+
+## TP-REL-PUBLISH：npm provenance 发布 CLI
+
+release workflow 必须使用固定 npm 发布 CLI：
+
+```bash
+npx -y npm@11.5.1 --version
+npx -y npm@11.5.1 publish --provenance --access public
+```
+
+不要用 `npm install -g npm@latest` 覆盖 runner 全局 npm，避免 npm CLI 依赖树漂移导致
+`sigstore` 等 provenance 依赖缺失。
 
 ## 运行方式
 

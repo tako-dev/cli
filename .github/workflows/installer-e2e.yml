@@ -20,27 +20,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install CLI deps
-        run: bun install
-
-      - name: Prepare TAKO_HOME with system bun
-        shell: bash
-        env:
-          TAKO_HOME: ${{ runner.temp }}/tako-e2e
-        run: |
-          mkdir -p "$TAKO_HOME/bun/bin"
-          BUN_PATH="$(which bun)"
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            cp "$BUN_PATH" "$TAKO_HOME/bun/bin/bun.exe"
-          else
-            ln -sf "$BUN_PATH" "$TAKO_HOME/bun/bin/bun"
-          fi
-
-      - name: Run installer e2e
-        env:
-          TAKO_HOME: ${{ runner.temp }}/tako-e2e
-        run: bun tests/e2e/installer-driver.ts
+      - name: Installer e2e
+        uses: ./.github/actions/installer-e2e

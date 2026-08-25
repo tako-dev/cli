@@ -2,136 +2,11 @@ import React from "react";
 import { Box, Text, useStdout } from "ink";
 import type { LaunchOption } from "../../../clients";
 import { getDisplayWidth, padToWidth } from "../../../utils/display-width";
-
-const MAX_PER_LINE = 4;
-const MIN_COLUMN_WIDTH = 16;
-const GRID_PADDING = 12;
-
-export interface ModelGrid {
-  rows: string[][];
-  flat: string[];
-}
-
-export interface GroupedModelGrid {
-  groups: Array<{ family: string; rows: string[][] }>;
-  flat: string[];
-}
-
-export function getGridColumnCountForLabels(labels: string[], terminalColumns: number): number {
-  if (labels.length === 0) return 1;
-  const maxWidth = Math.max(...labels.map((label) => getDisplayWidth(label)));
-  const colWidth = Math.max(MIN_COLUMN_WIDTH, maxWidth + 4);
-  const usable = Math.max(colWidth, terminalColumns - GRID_PADDING);
-  return Math.max(1, Math.min(MAX_PER_LINE, labels.length, Math.floor(usable / colWidth)));
-}
-
-export function getGridColumnCountForOptions(
-  options: LaunchOption[],
-  terminalColumns: number,
-  zh: boolean,
-): number {
-  const labels = options.map((opt) => opt.label[zh ? "zh" : "en"] || opt.label.en || opt.id);
-  return getGridColumnCountForLabels(labels, terminalColumns);
-}
-
-export function getGridColumnCount(ids: string[], terminalColumns: number): number {
-  if (ids.length === 0) return 1;
-  return getGridColumnCountForLabels(ids, terminalColumns);
-}
-
-export function buildGrid(ids: string[], columns: number): ModelGrid {
-  const colCount = Math.max(1, Math.min(MAX_PER_LINE, Math.floor(columns) || 1));
-  const rows: string[][] = [];
-  for (let i = 0; i < ids.length; i += colCount) {
-    rows.push(ids.slice(i, i + colCount));
-  }
-  return { rows, flat: rows.flat() };
-}
-
-function rawModelId(id: string): string {
-  return id.startsWith("model-") ? id.slice(6) : id;
-}
-
-export function modelFamilyOf(id: string): string {
-  const raw = rawModelId(id).toLowerCase();
-  return raw.slice(0, 3) || raw;
-}
-
-function familyRank(family: string): number {
-  const order = [
-    "gpt",
-    "ful",
-    "cla",
-    "dee",
-    "glm",
-    "kim",
-    "qwe",
-    "min",
-    "mim",
-    "spa",
-  ];
-  const idx = order.indexOf(family);
-  return idx === -1 ? order.length : idx;
-}
-
-function modelTokens(id: string): Array<number | string> {
-  const raw = rawModelId(id).toLowerCase();
-  const tokens: Array<number | string> = [];
-  for (const part of raw.match(/\d+(?:\.\d+)?|[a-z]+/g) ?? [raw]) {
-    const n = Number(part);
-    tokens.push(Number.isFinite(n) && /^\d/.test(part) ? n : part);
-  }
-  return tokens;
-}
-
-export function compareModelIdsForPicker(a: string, b: string): number {
-  const fa = modelFamilyOf(a);
-  const fb = modelFamilyOf(b);
-  const familyDiff = familyRank(fa) - familyRank(fb) || fa.localeCompare(fb);
-  if (familyDiff !== 0) return familyDiff;
-
-  const at = modelTokens(a);
-  const bt = modelTokens(b);
-  const len = Math.max(at.length, bt.length);
-  for (let i = 0; i < len; i++) {
-    const av = at[i];
-    const bv = bt[i];
-    if (av === undefined) return 1;
-    if (bv === undefined) return -1;
-    if (typeof av === "number" && typeof bv === "number") {
-      if (av !== bv) return bv - av;
-      continue;
-    }
-    const as = String(av);
-    const bs = String(bv);
-    if (as !== bs) return as.localeCompare(bs);
-  }
-  return rawModelId(a).localeCompare(rawModelId(b));
-}
-
-export function buildGroupedGrid(ids: string[], columns: number): GroupedModelGrid {
-  const sorted = [...ids].sort(compareModelIdsForPicker);
-  const families: Array<{ family: string; ids: string[] }> = [];
-  for (const id of sorted) {
-    const family = modelFamilyOf(id);
-    const last = families[families.length - 1];
-    if (last?.family === family) {
-      last.ids.push(id);
-    } else {
-      families.push({ family, ids: [id] });
-    }
-  }
-
-  const groups = families.map((group) => ({
-    family: group.family,
-    rows: buildGrid(group.ids, columns).rows,
-  }));
-  return { groups, flat: groups.flatMap((group) => group.rows.flat()) };
-}
-
-export function gridIndexOf(ids: string[], id: string, columns: number): number {
-  return buildGroupedGrid(ids, columns).flat.indexOf(id);
-}
+import {
+  buildGroupedGrid,
+  getGridColumnCountForOptions,
+  MODEL_GRID_MIN_COLUMN_WIDTH,
+} from "../../shared/model-picker";
 
 function GridFooter({ zh }: { zh: boolean }) {
   return (
@@ -139,6 +14,8 @@ function GridFooter({ zh }: { zh: boolean }) {
       <Text dimColor bold>↑↓←→</Text><Text dimColor>{zh ? "选择" : "select"}</Text>
       <Text dimColor>│</Text>
       <Text dimColor bold>Enter</Text><Text dimColor>{zh ? "确认" : "confirm"}</Text>
+      <Text dimColor>│</Text>
+      <Text dimColor bold>m</Text><Text dimColor>{zh ? "当前目录启动" : "launch cwd"}</Text>
       <Text dimColor>│</Text>
       <Text dimColor bold>Esc</Text><Text dimColor>{zh ? "返回" : "back"}</Text>
     </Box>
@@ -165,16 +42,21 @@ export function ModelGridPicker({
   const columnCount = getGridColumnCountForOptions(options, stdout.columns || 80, zh);
   const grid = buildGroupedGrid(ids, columnCount);
   const cellWidth = Math.max(
-    MIN_COLUMN_WIDTH,
-    ...ids.map((id) => getDisplayWidth(labelOf(id)) + 3),
+    MODEL_GRID_MIN_COLUMN_WIDTH,
+    ...(ids.length > 0 ? ids.map((id) => getDisplayWidth(labelOf(id)) + 3) : [0]),
   );
 
   return (
     <Box flexDirection="column" marginTop={0} borderStyle="round" borderColor={color} paddingX={1} paddingY={0}>
       <Text bold color={color}>▣ {zh ? "选择模型" : "Pick Model"}</Text>
       <Box flexDirection="column" marginTop={0}>
-        {grid.groups.map((group) => (
+        {grid.groups.map((group, gi) => (
           <Box key={group.family} flexDirection="column" marginTop={0}>
+            {gi > 0 && (
+              <Box>
+                <Text dimColor>{"╌".repeat(Math.max(8, cellWidth * columnCount))}</Text>
+              </Box>
+            )}
             {group.rows.map((row, rowIdx) => (
               <Box key={`${group.family}-${rowIdx}`}>
                 {row.map((id) => {

@@ -11,6 +11,7 @@ export {
 export type { TakoModelEntry, TakoApiType } from "./tako";
 export {
   getTakoModels,
+  filterChatModels,
   refreshTakoModels,
   refreshAllTakoCatalogs,
   _resetTakoCatalog,

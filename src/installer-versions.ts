@@ -10,8 +10,16 @@
 import { join } from "node:path";
 import type { ClientConfig } from "./clients/base";
 import { getClientDir } from "./clients/base";
-import { TAKO_BUN_BIN, loadConfig, updateConfig } from "./config";
-import { getNpmRegistry } from "./region";
+import { loadConfig, updateConfig } from "./config";
+import {
+  buildBunInstallEnv,
+  ensureBunInstalled,
+  ensureNativeBinary,
+  getBunPath,
+} from "./installer";
+import { getNpmRegistry, detectRegion } from "./region";
+import { streamBunInstall } from "./bun-progress";
+import { createSpinner, log } from "./logger";
 
 export interface VersionInfo {
   version: string;
@@ -68,34 +76,43 @@ export async function installAtVersion(client: ClientConfig, version: string): P
   const fs = await import("node:fs/promises");
   const clientDir = getClientDir(client.id);
 
+  if (!(await ensureBunInstalled())) {
+    throw new Error("Tako 专属 Bun 安装失败，请检查网络或手动删除 ~/.tako/bun 目录后重试");
+  }
+
   await fs.mkdir(clientDir, { recursive: true });
 
-  // 清理旧安装（bun 不会自动更新 optional deps 如 platform binary）
+  // 清理 lockfile 让 Bun 重新解析依赖；保留 node_modules，避免更新失败后旧版本也不可用。
   const lockPath = join(clientDir, "bun.lock");
-  const nmPath = join(clientDir, "node_modules");
   await fs.rm(lockPath, { force: true }).catch(() => {});
-  await fs.rm(nmPath, { recursive: true, force: true }).catch(() => {});
 
   // 写 package.json
   const pkgPath = join(clientDir, "package.json");
   await Bun.write(pkgPath, JSON.stringify({ name: `tako-${client.id}-host`, version: "0.0.0", private: true }, null, 2));
 
   const registry = await getNpmRegistry();
-  const { detectRegion } = await import("./region");
   const region = await detectRegion();
-  const { log } = await import("./logger");
   log.info(`网络环境: ${region === "cn" ? "国内" : "海外"} | registry: ${registry}`);
-  const proc = Bun.spawn([TAKO_BUN_BIN, "add", `${client.package}@${version}`], {
+  const bun = await getBunPath();
+  const proc = Bun.spawn([bun, "add", `${client.package}@${version}`], {
     cwd: clientDir,
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, BUN_CONFIG_REGISTRY: registry },
+    env: buildBunInstallEnv(registry),
   });
-  await proc.exited;
-  if (proc.exitCode !== 0) {
-    const err = await new Response(proc.stderr).text();
-    throw new Error(`bun add ${client.package}@${version} failed: ${err.slice(0, 500).trim()}`);
+
+  const s = createSpinner();
+  const prefix = `正在切换 ${client.name} 到 ${version}`;
+  s.start(prefix);
+  const output = await streamBunInstall(proc, prefix, (msg) => s.update(msg));
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    s.stop();
+    throw new Error(`bun add ${client.package}@${version} failed: ${output.slice(0, 500).trim()}`);
   }
+
+  await ensureNativeBinary(client, { reinstallOnFailure: false, forcePlace: true });
+  s.stop(`${client.name} 已切换到 ${version}`);
 
   // 持久化记录
   const config = await loadConfig();

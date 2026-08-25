@@ -6,3 +6,16 @@ dist/
 *.log
 .DS_Store
 tests/_results/
+
+# Stray tsc compile artifacts. This project is noEmit and runs .ts directly via
+# bun, so any .js/.d.ts/.d.ts.map sitting next to a .ts source came from an
+# accidental plain `tsc` run — never commit them.
+src/**/*.js
+src/**/*.d.ts
+src/**/*.d.ts.map
+scripts/**/*.js
+scripts/**/*.d.ts
+scripts/**/*.d.ts.map
+tests/**/*.js
+tests/**/*.d.ts
+tests/**/*.d.ts.map

@@ -10,13 +10,11 @@ describe("model usage picks", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "tako-model-usage-"));
     const mod = await import("../src/model-usage");
     mod._setPathForTest(join(tmpDir, "model-usage.json"));
-    mod._reset();
   });
 
   afterEach(async () => {
     const mod = await import("../src/model-usage");
     mod._setPathForTest(null);
-    mod._reset();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 

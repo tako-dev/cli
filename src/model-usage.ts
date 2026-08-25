@@ -75,7 +75,3 @@ export async function recordModelPicks(pickedModelOptionIds: string[]): Promise<
 export function _setPathForTest(path: string | null): void {
   pathForTest = path;
 }
-
-export function _reset(): void {
-  pathForTest = pathForTest;
-}

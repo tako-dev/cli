@@ -1,0 +1,4 @@
+{"sessionId":"gemini-session-1","projectHash":"project-1","startTime":"2026-04-24T08:38:00.000Z"}
+{"id":"user-1","type":"user","timestamp":"2026-04-24T08:39:03.778Z","content":[{"text":"帮我查看 Gemini 历史会话"}]}
+{"id":"gemini-1","type":"gemini","timestamp":"2026-04-24T08:39:09.216Z","content":"可以从本地 chats 目录读取。"}
+{"id":"tool-1","type":"tool","timestamp":"2026-04-24T08:39:10.000Z","content":"rg session chats"}

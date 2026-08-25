@@ -1,11 +1,12 @@
 import { join } from "path";
 import { log, createSpinner } from "./logger";
-import { inkConfirm } from "./ui/ink/views/ConfirmDialog";
+import { confirmPrompt } from "./ui/shared/terminal";
 import { ClientConfig, getClientDir } from "./clients/base";
 import { loadConfig, updateConfig, TAKO_DIR, TAKO_BUN_DIR, TAKO_BUN_BIN, TAKO_BUN_CACHE_DIR } from "./config";
 import { getNpmRegistry, getBunInstallCommand, detectRegion, showRegionInfo, getBunMirrorDownloadUrl } from "./region";
 import { track } from "./analytics";
 import { streamBunInstall } from "./bun-progress";
+import { summarizeInstallError } from "./error-format";
 
 // Tako 专属 Bun 路径（完全隔离，不使用系统 Bun）
 // 重要：永远不要使用系统 Bun，只使用 Tako 专属的
@@ -509,9 +510,21 @@ async function ensurePlatformDep(
     // 检查平台包的二进制是否真正存在（不只看 package.json，Bun 可能装了目录但没提取二进制）
     const isWindows = process.platform === "win32";
     const binaryName = isWindows ? `${client.command}.exe` : client.command;
+    const depPkgPath = join(clientDir, "node_modules", dep.pkg, "package.json");
+    let depVersionMatches = false;
+    try {
+      const depPkgFile = Bun.file(depPkgPath);
+      if (await depPkgFile.exists()) {
+        const depPkgJson = await depPkgFile.json();
+        depVersionMatches = depPkgJson.version === dep.version;
+      }
+    } catch {
+      depVersionMatches = false;
+    }
+
     const depBinPath = join(clientDir, "node_modules", dep.pkg, binaryName);
     const depBinFile = Bun.file(depBinPath);
-    if (await depBinFile.exists() && depBinFile.size > 1024) return;
+    if (depVersionMatches && await depBinFile.exists() && depBinFile.size > 1024) return;
 
     // 未安装，显式安装平台包
     log.info(`正在安装平台包 ${dep.pkg}...`);
@@ -527,11 +540,11 @@ async function ensurePlatformDep(
           env: buildBunInstallEnv(registry),
         }
       );
-      await proc.exited;
-      if (proc.exitCode === 0) break;
+      const output = await streamBunInstall(proc, `正在安装平台包 ${dep.pkg}`, () => {});
+      const exitCode = await proc.exited;
+      if (exitCode === 0) break;
       if (version === "latest") {
-        const stderr = await new Response(proc.stderr).text();
-        log.warn(`平台包安装失败: ${stderr.slice(0, 200)}`);
+        log.warn(`平台包安装失败: ${output.slice(0, 200)}`);
       }
     }
   } catch (e) {
@@ -586,10 +599,10 @@ async function placeNativeBinary(client: ClientConfig, clientDir: string): Promi
         stdout: "pipe",
         stderr: "pipe",
       });
-      await proc.exited;
-      if (proc.exitCode !== 0) {
-        const stderr = await new Response(proc.stderr).text();
-        log.warn(`postinstall 失败: ${stderr.slice(0, 200)}`);
+      const output = await streamBunInstall(proc, "正在通过 postinstall 安装原生二进制", () => {});
+      const exitCode = await proc.exited;
+      if (exitCode !== 0) {
+        log.warn(`postinstall 失败: ${output.slice(0, 200)}`);
       }
       // 检查是否成功
       const destFile = Bun.file(destPath);
@@ -701,7 +714,7 @@ async function placeNativeBinary(client: ClientConfig, clientDir: string): Promi
 export async function installClient(
   client: ClientConfig,
   forceUpdate = false
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; skippedUpdate?: boolean }> {
   const s = createSpinner();
   const clientDir = getClientDir(client.id);
 
@@ -776,14 +789,14 @@ export async function installClient(
     const exitCode = await proc.exited;
 
     if (exitCode !== 0) {
-      s.stop(`${action} ${client.name} 失败`);
+      s.stop();
       // INV-INST-03：失败不留半残状态。
       // - 全新安装失败：清掉刚写的占位 package.json，让目录回到"未初始化"。
       // - 更新失败：保留 node_modules（已保留，未删），旧版本仍可用。
       if (!isInstalled) {
         await fs.rm(packageJsonPath, { force: true }).catch(() => {});
       }
-      return { success: false, error: output || "未知错误" };
+      return { success: false, error: summarizeInstallError(output) };
     }
 
     // 确保平台原生二进制就位（Bun 不自动安装 optionalDependencies）
@@ -820,10 +833,10 @@ export async function installClient(
     s.stop(`${client.name} ${action}完成`);
     return { success: true };
   } catch (error) {
-    s.stop(`操作失败`);
+    s.stop();
     return {
       success: false,
-      error: error instanceof Error ? error.message : "未知错误",
+      error: summarizeInstallError(error instanceof Error ? error.message : undefined),
     };
   }
 }
@@ -861,8 +874,13 @@ async function isStubBinary(filePath: string): Promise<boolean> {
  * 确保客户端的原生二进制已就位
  * 解决 Bun 不运行 postinstall + 不安装 optionalDependencies 的问题
  */
-export async function ensureNativeBinary(client: ClientConfig): Promise<void> {
+export async function ensureNativeBinary(
+  client: ClientConfig,
+  options: { reinstallOnFailure?: boolean; forcePlace?: boolean } = {},
+): Promise<void> {
   if (client.runtime !== "native") return;
+  const reinstallOnFailure = options.reinstallOnFailure ?? true;
+  const forcePlace = options.forcePlace ?? false;
 
   const clientDir = getClientDir(client.id);
   const packageJsonPath = join(clientDir, "node_modules", client.package, "package.json");
@@ -882,8 +900,9 @@ export async function ensureNativeBinary(client: ClientConfig): Promise<void> {
 
     const binPath = join(clientDir, "node_modules", client.package, entryFile);
 
-    // 用二进制头部检测是否为真正的原生二进制
-    if (!(await isStubBinary(binPath))) return;
+    // 用二进制头部检测是否为真正的原生二进制。指定版本安装会强制重放置，
+    // 避免 package.json 已切到新版本但旧 claude.exe 仍留在 bin 里。
+    if (!forcePlace && !(await isStubBinary(binPath))) return;
 
     // 是 stub，需要修复：先确保平台包已安装，再直接复制二进制
     log.info("正在安装原生二进制...");
@@ -894,6 +913,10 @@ export async function ensureNativeBinary(client: ClientConfig): Promise<void> {
     const placed = await placeNativeBinary(client, clientDir);
 
     if (!placed || await isStubBinary(binPath)) {
+      if (!reinstallOnFailure) {
+        log.warn("原生二进制修复失败");
+        return;
+      }
       // 修复失败，删掉整个工具目录强制重装
       log.warn("原生二进制修复失败，正在重新安装...");
       const fs = await import("fs/promises");
@@ -921,7 +944,7 @@ export async function ensureNativeBinary(client: ClientConfig): Promise<void> {
  */
 export async function ensureClientReady(
   client: ClientConfig
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; skippedUpdate?: boolean }> {
   const isInstalled = await isClientInstalled(client);
 
   if (!isInstalled) {
@@ -953,7 +976,7 @@ export async function ensureClientReady(
       return { success: true };
     }
 
-    const shouldDoUpdate = await inkConfirm({
+    const shouldDoUpdate = await confirmPrompt({
       message: `是否更新 ${client.name}？`,
       defaultValue: false,
     });
@@ -967,8 +990,11 @@ export async function ensureClientReady(
     const result = await installClient(client, true);
     if (result.success) {
       await ensureNativeBinary(client);
+      return result;
     }
-    return result;
+    log.warn(`更新 ${client.name} 失败：${result.error ?? "未知错误"}`);
+    log.info("继续使用当前已安装版本");
+    return { success: true, skippedUpdate: true, error: result.error };
   }
 
   return { success: true };

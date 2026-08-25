@@ -35,6 +35,19 @@ export interface LaunchOption {
   defaultOn?: boolean;
 }
 
+export interface ClientLaunchSetupContext {
+  forLaunch?: boolean;
+  /** Final launch env after provider and selected-option values are merged. */
+  launchEnvVars?: Record<string, string>;
+}
+
+export interface ClientLaunchSetup {
+  args?: string[];
+  envVars?: Record<string, string>;
+  /** Files owned by this launch and removed after the client exits. */
+  cleanupFiles?: string[];
+}
+
 /**
  * 客户端配置接口
  * 所有客户端都需要实现这个接口
@@ -56,8 +69,8 @@ export interface ClientConfig {
   setupConfigFiles?: (
     provider: ProviderContext,
     selectedOptionIds?: string[],
-    context?: { forLaunch?: boolean },
-  ) => Promise<void | { args?: string[]; envVars?: Record<string, string> }>;
+    context?: ClientLaunchSetupContext,
+  ) => Promise<void | ClientLaunchSetup>;
   /** 接续会话的命令行参数（如 "--continue"） */
   continueArg?: string;
   /** Launch options (toggleable flags). 可以是数组或 lazy 函数 — 后者用于运行时根据

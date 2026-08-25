@@ -1,8 +1,8 @@
 /**
  * Tako Logger — 统一日志抽象
  *
- * 默认用 console 输出。Ink App 运行时通过 setLogHandler 替换为
- * 消息回调，由 Ink 组件统一渲染，避免 console.log 打断 TUI。
+ * 默认用 console 输出。TUI 运行时可通过 setLogHandler 替换为
+ * 消息回调，由界面统一渲染，避免 console.log 打断 TUI。
  */
 
 export interface SpinHandle {
@@ -49,7 +49,7 @@ const consoleHandler: LogHandler = {
 
 let handler: LogHandler = consoleHandler;
 
-/** Ink App 调用此函数替换日志处理器 */
+/** TUI 调用此函数替换日志处理器 */
 export function setLogHandler(h: LogHandler): void {
   handler = h;
 }

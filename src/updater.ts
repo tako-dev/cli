@@ -5,13 +5,26 @@ import { join } from "path";
 import { t } from "./i18n";
 import { track } from "./analytics";
 import { streamBunInstall } from "./bun-progress";
-import { buildWindowsCmdWrapper, buildWindowsPs1Wrapper } from "./windows-wrapper";
+import {
+  buildWindowsCmdWrapper,
+  buildWindowsPs1Wrapper,
+  windowsWrapperNeedsRepair,
+} from "./windows-wrapper";
+import { summarizeInstallError } from "./error-format";
 
 // Tako CLI 包名
 const PACKAGE_NAME = "tako-cli";
 
 // 当前版本（构建时自动从 package.json 注入）
 export const CURRENT_VERSION = process.env.VERSION || "0.0.0";
+
+export function buildCliUpdateCommand(): string[] {
+  return [TAKO_BUN_BIN, "update", PACKAGE_NAME, "--latest"];
+}
+
+export function buildCliInstallCommand(): string[] {
+  return [TAKO_BUN_BIN, "add", `${PACKAGE_NAME}@latest`];
+}
 
 /**
  * 比较版本号
@@ -76,7 +89,7 @@ export async function checkForUpdates(): Promise<{
  * 更新 wrapper script，确保指向正确的安装位置
  * 解决从全局安装迁移到本地安装时 wrapper 指向错误的问题
  */
-async function updateWrapperScript(): Promise<void> {
+export async function updateWrapperScript(): Promise<void> {
   const fs = await import("fs/promises");
   const takoBinDir = join(TAKO_DIR, "bin");
   const wrapperPath = join(takoBinDir, "tako");
@@ -96,6 +109,30 @@ async function updateWrapperScript(): Promise<void> {
     // Unix: 创建 bash script
     const shContent = `#!/bin/bash\nexec "${TAKO_BUN_BIN}" "${takoEntry}" "$@"\n`;
     await fs.writeFile(wrapperPath, shContent, { mode: 0o755 });
+  }
+}
+
+/**
+ * 启动时自愈过期的 Windows wrapper。
+ *
+ * 老版本装的 tako.cmd 没有 handoff 逻辑，而自更新只替换 dist、从不重写 wrapper，
+ * 于是老用户的 handoff 机制永久失效 —— 进入客户端后键盘无响应。这里检测到就重写。
+ * 纯 best-effort：任何失败都不能影响启动。
+ */
+export async function repairWindowsWrapperIfStale(): Promise<boolean> {
+  if (process.platform !== "win32") return false;
+  try {
+    const fs = await import("fs/promises");
+    const cmdPath = join(TAKO_DIR, "bin", "tako.cmd");
+    const existing = await fs.readFile(cmdPath, "utf8").catch(() => null);
+    // wrapper 不存在说明不是 wrapper 安装（npm -g / 源码直跑），不要凭空造一个。
+    if (existing === null) return false;
+    if (!windowsWrapperNeedsRepair(existing)) return false;
+
+    await updateWrapperScript();
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -128,7 +165,7 @@ async function performUpdate(latestVersion: string): Promise<boolean> {
     // 在 Tako CLI 目录下执行更新
     // 使用 bun update --latest 强制更新到最新版本（bun add 受 lockfile 影响可能不会更新）
     const proc = Bun.spawn(
-      [TAKO_BUN_BIN, "update", PACKAGE_NAME, "--latest"],
+      buildCliUpdateCommand(),
       {
         cwd: TAKO_CLI_DIR,
         stdout: "pipe",
@@ -157,11 +194,13 @@ async function performUpdate(latestVersion: string): Promise<boolean> {
       s.stop(`更新成功！已更新到 v${latestVersion}`);
       return true;
     } else {
-      s.stop(`更新失败: ${output || "未知错误"}`);
+      s.stop();
+      log.warn(`更新失败: ${summarizeInstallError(output)}`);
       return false;
     }
   } catch (error) {
-    s.stop(`更新失败: ${error instanceof Error ? error.message : "未知错误"}`);
+    s.stop();
+    log.warn(`更新失败: ${summarizeInstallError(error instanceof Error ? error.message : undefined)}`);
     return false;
   }
 }
@@ -207,7 +246,7 @@ async function installToLocal(): Promise<boolean> {
 
     // 安装到本地
     const proc = Bun.spawn(
-      [TAKO_BUN_BIN, "add", `${PACKAGE_NAME}@latest`],
+      buildCliInstallCommand(),
       {
         cwd: TAKO_CLI_DIR,
         stdout: "pipe",
@@ -303,5 +342,38 @@ export async function checkAndUpdate(): Promise<void> {
     }
   } catch {
     // 静默失败，不影响正常使用
+  }
+}
+
+/**
+ * 手动更新命令（tako update）
+ * 始终联网检查并执行更新，不受 STARTUP_AUTO_UPDATE_ENABLED 控制。
+ */
+export async function runUpdateCommand(): Promise<void> {
+  console.log(`Tako CLI 当前版本: v${CURRENT_VERSION}`);
+  console.log("正在检查更新...");
+
+  const result = await checkForUpdates();
+
+  if (!result.hasUpdate) {
+    if (result.latestVersion) {
+      console.log(`已是最新版本 v${CURRENT_VERSION}`);
+    } else {
+      console.log("检查更新失败，请检查网络连接后重试");
+    }
+    return;
+  }
+
+  console.log(`发现新版本: v${result.latestVersion}（当前: v${CURRENT_VERSION}）`);
+  console.log("正在更新...");
+
+  const success = await performUpdate(result.latestVersion);
+
+  if (success) {
+    console.log(`更新成功！请重启 tako 以使用新版本。`);
+  } else {
+    console.error("更新失败，请稍后重试或手动执行:");
+    console.error(`  cd ~/.tako/cli && bun update tako-cli --latest`);
+    process.exit(1);
   }
 }

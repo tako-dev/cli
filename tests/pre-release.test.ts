@@ -3,6 +3,7 @@ import { join } from "path";
 import { getTakoDir, getTakoCliDir, getProjectRoot, getSrcDir, getDistDir } from "./_helpers/paths";
 import { expectFileExists, expectValidPackageJson, expectHasShebang } from "./_helpers/assertions";
 import { coreModules, clientModules, requiredConfigFields } from "./_helpers/fixtures";
+import { buildCliUpdateCommand } from "../src/updater";
 
 describe("Pre-Release - Build System", () => {
   const projectRoot = getProjectRoot();
@@ -15,6 +16,11 @@ describe("Pre-Release - Build System", () => {
   it("build artifact should exist", async () => {
     const distPath = join(getDistDir(), "index.js");
     await expectFileExists(distPath);
+  });
+
+  it("legacy split backend artifacts should not exist", async () => {
+    expect(await Bun.file(join(getDistDir(), "index-ink.js")).exists()).toBe(false);
+    expect(await Bun.file(join(getDistDir(), "index-opentui.js")).exists()).toBe(false);
   });
 
   it("build artifact should contain shebang (Unix executable)", async () => {
@@ -33,6 +39,13 @@ describe("Pre-Release - Build System", () => {
     const size = file.size;
     expect(size).toBeGreaterThan(1000); // At least 1KB
     expect(size).toBeLessThan(1500000); // Less than 1.5MB (includes Ink/React)
+  });
+
+  it("build artifact should not load OpenTUI backend", async () => {
+    const bundle = await Bun.file(join(getDistDir(), "index.js")).text();
+
+    expect(bundle).not.toContain("@opentui/core");
+    expect(bundle).not.toContain("index-opentui");
   });
 
   it("build artifact should start without errors (smoke test)", async () => {
@@ -117,7 +130,7 @@ describe("Pre-Release - Update Logic", () => {
   });
 
   it("update command should not contain -g flag", () => {
-    const command = ["bun", "add", "tako-cli@latest"];
+    const command = buildCliUpdateCommand();
     expect(command).not.toContain("-g");
   });
 

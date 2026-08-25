@@ -4,7 +4,7 @@ import { ClientConfig, LaunchOption, registerClient } from "./base";
 import { PROXY_BASE_URL } from "../config";
 import type { ProviderContext, Provider } from "../providers/types";
 import { parse, stringify } from "smol-toml";
-import { loadCatalog, getTakoModels } from "../models";
+import { loadCatalog, getTakoModels, filterChatModels } from "../models";
 import { BUNDLED_ENTRIES } from "../models/bundled";
 
 const CODEX_DIR = join(homedir(), ".codex");
@@ -214,7 +214,9 @@ function buildDynamicCodexModels(provider: Provider): LaunchOption[] | null {
   if (!provider.baseUrl) return null;
   const raw = getTakoModels(provider.baseUrl, "openai");
   if (!raw || raw.length === 0) return null;
-  return raw.map((e) => ({
+  const chat = filterChatModels(raw);
+  if (chat.length === 0) return null;
+  return chat.map((e) => ({
     id: `model-${e.id}`,
     label: { en: e.displayName, zh: e.displayName },
     shortLabel: e.displayName,

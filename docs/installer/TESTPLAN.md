@@ -7,6 +7,7 @@
 | `tests/unit.installer-detection.test.ts` | 安装状态判定（INV-INST-01）+ cache 隔离（INV-INST-02） |
 | `tests/unit.update-logic.test.ts` | 更新命令构造（路径在 tako 目录、无 -g、含 --latest） |
 | `tests/unit.entry-resolution.test.ts` | bin 字段解析（对象/字符串/多命令/缺失） |
+| `tests/unit.bun-progress.test.ts` | Bun install/update stdout+stderr drain 和 spinner 阶段 |
 
 ## 场景
 
@@ -41,6 +42,21 @@
 不变量 INV-INST-03：任何安装失败都不留"占位文件在 + node_modules 缺"的半残态。
 注：依赖真实 bun 安装失败，难以纯单测，靠流程注释 + 与 INV-INST-01 配合（半残态被
 判未安装会重装）兜底。
+
+### TP-INST-04 Bun 输出流（`streamBunInstall`）
+
+| 编号 | 场景 | 期望 |
+|---|---|---|
+| TP-INST-04a | stderr 输出 resolving / lockfile | 输出被完整收集，spinner 阶段更新 |
+| TP-INST-04b | stdout 输出 downloaded / installed | stdout 同样被 drain，避免 pipe buffer 卡住 |
+
+### TP-INST-05 指定版本安装（`installAtVersion`）
+
+| 编号 | 场景 | 期望 |
+|---|---|---|
+| TP-INST-05a | 切换指定版本 | 使用 Tako Bun + 隔离 cache 执行 `bun add <pkg>@<version>` |
+| TP-INST-05b | 切换失败 | 保留旧 `node_modules`，不删除可用旧版本 |
+| TP-INST-05c | 切换成功后原生二进制 | 强制重新放置平台二进制，避免旧 exe 残留 |
 
 ### TP-INST-E2E 端到端（真实 codex 安装，CI nightly）
 

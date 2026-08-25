@@ -1,99 +1,103 @@
 import { homedir } from "os";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "path";
 import { ClientConfig, LaunchOption, registerClient } from "./base";
 import type { ProviderContext, Provider } from "../providers/types";
 import { DEEPSEEK_ANTHROPIC_URL, resolveXiaomiBaseUrl } from "../providers/types";
 import { log } from "../logger";
 import { t } from "../i18n";
-import { loadCatalog, getTakoModels } from "../models";
+import { loadCatalog, getTakoModels, filterChatModels } from "../models";
 import { BUNDLED_ENTRIES } from "../models/bundled";
 import { TAKO_DIR } from "../config";
 
 const CLAUDE_SETTINGS_PATH = join(homedir(), ".claude", "settings.json");
-const TAKO_CLAUDE_SETTINGS_PATH = join(TAKO_DIR, "claude-code", "settings.json");
+const TAKO_CLAUDE_SETTINGS_DIR = join(TAKO_DIR, "claude-code", "launch-settings");
 
-const CONFLICTING_ENV_EXACT = [
-  "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
-  "API_TIMEOUT_MS",
-];
+const CLAUDE_PROVIDER_ENV_KEYS = [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_BASE_URL",
+] as const;
 
-function isConflictingEnvKey(key: string): boolean {
-  if (key.startsWith("ANTHROPIC_")) return true;
-  return CONFLICTING_ENV_EXACT.includes(key);
+const CLAUDE_MODEL_ENV_KEY = "ANTHROPIC_MODEL";
+
+export function buildTakoClaudeSettingsOverlay(
+  launchEnvVars: Record<string, string>,
+): Record<string, unknown> {
+  const env: Record<string, string> = {};
+  for (const key of CLAUDE_PROVIDER_ENV_KEYS) {
+    // Empty strings neutralize credentials/routing left by another provider.
+    env[key] = launchEnvVars[key] ?? "";
+  }
+  if (launchEnvVars[CLAUDE_MODEL_ENV_KEY] !== undefined) {
+    env[CLAUDE_MODEL_ENV_KEY] = launchEnvVars[CLAUDE_MODEL_ENV_KEY];
+  }
+  return { env };
 }
 
-export function sanitizeClaudeSettingsForTako(settings: Record<string, any>): {
-  settings: Record<string, any>;
-  cleanedFields: string[];
-} {
-  const sanitized: Record<string, any> = { ...settings };
-  const cleanedFields: string[] = [];
+export function findClaudeSettingsConflicts(
+  settings: Record<string, any>,
+  overlay: Record<string, unknown>,
+): string[] {
   const env = settings.env;
-  if (env && typeof env === "object" && !Array.isArray(env)) {
-    const sanitizedEnv = { ...env };
-    for (const key of Object.keys(sanitizedEnv)) {
-      if (isConflictingEnvKey(key)) {
-        cleanedFields.push(key);
-        delete sanitizedEnv[key];
-      }
-    }
-    if (cleanedFields.length > 0) {
-      if (Object.keys(sanitizedEnv).length === 0) {
-        delete sanitized.env;
-      } else {
-        sanitized.env = sanitizedEnv;
-      }
-    }
-  }
+  if (!env || typeof env !== "object" || Array.isArray(env)) return [];
 
-  return { settings: sanitized, cleanedFields };
+  const overlayEnv = overlay.env;
+  if (!overlayEnv || typeof overlayEnv !== "object" || Array.isArray(overlayEnv)) return [];
+
+  return Object.entries(overlayEnv)
+    .filter(([key, value]) => Object.hasOwn(env, key) && String(env[key]) !== value)
+    .map(([key]) => key);
 }
 
 export interface ClaudeSettingsLaunchSetup {
   args: string[];
-  cleanedFields: string[];
+  conflictingFields: string[];
   settingsPath: string;
+  cleanupFiles: string[];
 }
 
 export async function prepareTakoClaudeSettingsForLaunch(opts: {
+  launchEnvVars: Record<string, string>;
   sourcePath?: string;
   targetPath?: string;
   logConflicts?: boolean;
-} = {}): Promise<ClaudeSettingsLaunchSetup | null> {
+}): Promise<ClaudeSettingsLaunchSetup> {
   const fs = await import("fs/promises");
   const sourcePath = opts.sourcePath ?? CLAUDE_SETTINGS_PATH;
-  const targetPath = opts.targetPath ?? TAKO_CLAUDE_SETTINGS_PATH;
+  const targetPath = opts.targetPath ?? join(
+    TAKO_CLAUDE_SETTINGS_DIR,
+    `${process.pid}-${Date.now()}-${randomUUID()}.json`,
+  );
+  const overlay = buildTakoClaudeSettingsOverlay(opts.launchEnvVars);
+  let conflictingFields: string[] = [];
 
-  let content: string;
   try {
-    content = await fs.readFile(sourcePath, "utf-8");
+    const content = await fs.readFile(sourcePath, "utf-8");
+    const settings: Record<string, any> = JSON.parse(content);
+    conflictingFields = findClaudeSettingsConflicts(settings, overlay);
   } catch {
-    return null;
+    // User settings are diagnostic only. Project/local settings may still conflict,
+    // so the launch overlay is always created.
   }
 
-  let settings: Record<string, any>;
-  try {
-    settings = JSON.parse(content);
-  } catch {
-    return null;
-  }
-
-  const { settings: sanitized, cleanedFields } = sanitizeClaudeSettingsForTako(settings);
-
-  if (cleanedFields.length === 0) return null;
-
-  if (opts.logConflicts !== false) {
-    log.warn(t("claudeCode.settingsDetected", { fields: cleanedFields.join(", ") }));
+  if (opts.logConflicts !== false && conflictingFields.length > 0) {
+    log.warn(t("claudeCode.settingsDetected", { fields: conflictingFields.join(", ") }));
     log.info(t("claudeCode.usingIsolatedSettings", { path: targetPath }));
   }
 
   await fs.mkdir(dirname(targetPath), { recursive: true });
-  await fs.writeFile(targetPath, JSON.stringify(sanitized, null, 2) + "\n");
+  await fs.writeFile(targetPath, JSON.stringify(overlay, null, 2) + "\n", {
+    encoding: "utf-8",
+    flag: "wx",
+    mode: 0o600,
+  });
 
   return {
-    args: ["--setting-sources", "project,local", "--settings", targetPath],
-    cleanedFields,
+    args: ["--settings", targetPath],
+    conflictingFields,
     settingsPath: targetPath,
+    cleanupFiles: [targetPath],
   };
 }
 
@@ -206,24 +210,23 @@ export const claudeCodeClient: ClientConfig = {
     }
   },
 
-  async setupConfigFiles(provider: ProviderContext, _selectedOptionIds?: string[], context?: { forLaunch?: boolean }) {
-    let launchArgs: string[] = [];
-
-    // Claude Code 的 user settings 里若写死 ANTHROPIC_*，会覆盖 Tako 启动时注入的 provider。
-    // 这里不修改用户原文件，而是生成 Tako 托管的清理副本，并在本次启动中排除原 user settings。
-    if (context?.forLaunch) {
-      const isolatedSettings = await prepareTakoClaudeSettingsForLaunch();
-      if (isolatedSettings) {
-        launchArgs = isolatedSettings.args;
-      }
-    }
-
+  async setupConfigFiles(provider: ProviderContext, _selectedOptionIds?: string[], context?: { forLaunch?: boolean; launchEnvVars?: Record<string, string> }) {
     // 多账号切换：把目标账号的 OAuth tokens 还原到 Claude Code 的存储位置
     if (provider.type === "claude-subscription") {
       await syncClaudeSubscription(provider);
     }
 
-    return launchArgs.length > 0 ? { args: launchArgs } : undefined;
+    if (!context?.forLaunch) return undefined;
+
+    // Keep all normal Claude configuration sources enabled. The CLI overlay has
+    // higher precedence but contains only provider-owned env keys.
+    const launchSettings = await prepareTakoClaudeSettingsForLaunch({
+      launchEnvVars: context.launchEnvVars ?? claudeCodeClient.getEnvVars(provider),
+    });
+    return {
+      args: launchSettings.args,
+      cleanupFiles: launchSettings.cleanupFiles,
+    };
   },
 
   launchOptions: (provider?: Provider) => buildClaudeCodeLaunchOptions(provider),
@@ -320,7 +323,9 @@ function buildDynamicClaudeModels(provider: Provider): LaunchOption[] | null {
   if (!provider.baseUrl) return null;
   const raw = getTakoModels(provider.baseUrl, "claude");
   if (!raw || raw.length === 0) return null;
-  return raw.map((e) => {
+  const chat = filterChatModels(raw);
+  if (chat.length === 0) return null;
+  return chat.map((e) => {
     const modelArg = appendOneMTagIfNeeded(e.id);
     return {
       id: `model-${e.id}`,

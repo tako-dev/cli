@@ -2,7 +2,7 @@
 /**
  * 构建脚本 - 打包为 JS bundle
  */
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
 
 const pkg = await Bun.file("package.json").json();
 const version = pkg.version;
@@ -16,12 +16,14 @@ mkdirSync(stubDir, { recursive: true });
 writeFileSync(`${stubDir}/index.js`, "export default {initialize(){},connectToDevTools(){}};");
 writeFileSync(`${stubDir}/package.json`, '{"name":"react-devtools-core","version":"0.0.0","main":"index.js"}');
 
+rmSync("dist", { recursive: true, force: true });
+
 const result = await Bun.build({
   entrypoints: ["src/index.ts"],
   outdir: "dist",
   naming: "index.js",
   minify: true,
-  target: "bun",
+  target: "bun" as const,
   define: {
     "process.env.VERSION": JSON.stringify(version),
   },

@@ -66,7 +66,11 @@ The workflow must pass:
 - `bun run build`
 - bundle smoke test: `bun dist/index.js --version`
 - `bun run test:pre-release`
-- `npm publish --provenance --access public`
+- `npx -y npm@11.5.1 publish --provenance --access public`
+
+The workflow intentionally uses a pinned npm CLI through `npx`; do not replace
+it with `npm install -g npm@latest`, because npm CLI dependency drift can break
+provenance publishing before the package reaches the registry.
 
 ## Bad Tag Cleanup
 
@@ -117,3 +121,17 @@ Recovery steps used:
 - pushed the script fix to `main`
 - tagged the final commit as `v0.3.6`
 - confirmed the release workflow succeeded and npm `latest` became `0.3.6`
+
+## 2026-07-09 v0.3.22 Notes
+
+The `v0.3.22` release workflow passed e2e, build, smoke, unit, and pre-release
+checks, then failed in `npm publish --provenance --access public` with
+`Cannot find module 'sigstore'`.
+
+Recovery used:
+
+- left the failed `v0.3.22` tag in place because it was a valid commit but not
+  published to npm
+- changed release.yml to use `npx -y npm@11.5.1 publish --provenance --access public`
+  instead of globally installing `npm@latest`
+- published the rollback as the next patch version
