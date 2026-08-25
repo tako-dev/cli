@@ -26,6 +26,19 @@ import { ModelGridPicker, buildGroupedGrid, getGridColumnCountForOptions, gridIn
 
 const VERSION = process.env.VERSION || "dev";
 
+/**
+ * 计算启动面板的默认勾选集合（尊重记忆）：
+ *  - 有记忆（lastSelectedOptionIds 非空）→ 用它初始化（用户手动关过就保持关）
+ *  - 无记忆（首次）→ 默认勾选所有 defaultOn 的危险开关（默认全放行）
+ */
+export function buildInitialEnabled(
+  launchOptions: LaunchOption[],
+  lastSelectedOptionIds: string[],
+): Set<string> {
+  if (lastSelectedOptionIds.length > 0) return new Set(lastSelectedOptionIds);
+  return new Set(launchOptions.filter((o) => o.defaultOn).map((o) => o.id));
+}
+
 export type LauncherResult =
   | { type: "launch"; clientId: string; projectPath?: string; args: string[]; envVars: Record<string, string>; selectedOptionIds: string[] }
   | { type: "agent" }
@@ -260,7 +273,7 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
   const [optionIdx, setOptionIdx] = useState(0);
   const [provIdx, setProvIdx] = useState(() => clients[defaultIdx]?.activeProvIdx || 0);
   const [enabled, setEnabled] = useState<Set<string>>(
-    () => new Set(clients[defaultIdx]?.lastSelectedOptionIds ?? [])
+    () => buildInitialEnabled(clients[defaultIdx]?.launchOptions ?? [], clients[defaultIdx]?.lastSelectedOptionIds ?? [])
   );
   const [provMsg, setProvMsg] = useState("");
   /** 当前正在打开的 group picker（null = 主界面） */
@@ -308,8 +321,8 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, onRe
     setPickingGroup(null);
     setModelPickerMode("collapsed");
     setPickingProvider(false);
-    // 勾选状态也随工具切换，恢复到该工具上次的选择
-    setEnabled(new Set(clients[clientIdx]?.lastSelectedOptionIds ?? []));
+    // 勾选状态也随工具切换：有记忆则恢复到该工具上次的选择，无记忆则默认全放行
+    setEnabled(buildInitialEnabled(clients[clientIdx]?.launchOptions ?? [], clients[clientIdx]?.lastSelectedOptionIds ?? []));
   }, [clientIdx]);
 
   // provider 切换 / 初始加载：launchOptions 列表会变。

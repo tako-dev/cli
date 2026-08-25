@@ -179,6 +179,7 @@ const CODEX_BASE_FLAGS: LaunchOption[] = [
     },
     flag: "--dangerously-bypass-approvals-and-sandbox",
     args: ["--dangerously-bypass-approvals-and-sandbox"],
+    defaultOn: true,
   },
 ];
 

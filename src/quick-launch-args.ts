@@ -7,6 +7,7 @@
  * - 继承 panel 上次勾选的"危险跳过"开关：
  *     claude-code · skip-permissions → --dangerously-skip-permissions
  *     codex       · bypass-sandbox    → --dangerously-bypass-approvals-and-sandbox
+ *   无记忆（首次）默认补全放行 flag；有记忆则尊重上次选择，仅当勾过该开关才补。
  *   若用户已显式传入对应 flag 则不重复补。
  * - 其它 client 原样透传
  *
@@ -70,5 +71,8 @@ async function resolveInheritedFlag(
 
   const reader = opts?.getLastSelectedOptionIds ?? getLastSelectedOptionsForClient;
   const ids = await reader(clientId);
-  return ids.includes(entry.optionId) ? entry.flag : null;
+  // 有记忆：尊重用户上次的选择（只有勾过该危险开关才补全放行 flag）
+  if (ids.length > 0) return ids.includes(entry.optionId) ? entry.flag : null;
+  // 无记忆（首次）：默认全放行 → 补危险 flag
+  return entry.flag;
 }
