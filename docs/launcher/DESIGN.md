@@ -84,3 +84,4 @@ Claude 更新确认 prompt 显示出来但按键无响应。
 - `tests/unit.claude-settings.test.ts` - Claude 最小 overlay、冲突字段与 setting source 保留
 - `tests/unit.pi-client.test.ts` - Pi tab、隐藏 Pi Web、tako-pi / pi-cc-header / pi-claude-code-ui 安装策略
 - `tests/unit.pi-install.test.ts` - 跨 OS 启动命令与 PATH 查找
+- `tests/unit.launch-options.test.ts` - 空选不勾目录第一项；只有 Pi 才兜底 grok-4.6

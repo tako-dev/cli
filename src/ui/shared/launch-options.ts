@@ -69,6 +69,13 @@ export function selectedArgsWithGroupOverride(
   });
 }
 
+/**
+ * Keep last-selected flags, drop stale ids, and fill a model only when we have
+ * an explicit default. Catalog order is not a default: leaving the group empty
+ * lets each client use its own built-in model (Codex gpt-5.5, Claude Code's
+ * own policy). Pass fallbackModelId for Pi so an empty selection still lands
+ * on grok-4.6.
+ */
 export function enabledWithProviderDefaultModel(
   previous: Set<string>,
   options: LaunchOption[],
@@ -76,12 +83,10 @@ export function enabledWithProviderDefaultModel(
   fallbackModelId?: string,
 ): Set<string> {
   const validIds = new Set(options.map((option) => option.id));
-  const modelOptions = options.filter((option) => option.group === "model");
-  const modelIds = new Set(modelOptions.map((option) => option.id));
+  const modelIds = new Set(options.filter((option) => option.group === "model").map((option) => option.id));
   const preferredIds = [
     providerModel ? `model-${providerModel}` : undefined,
     fallbackModelId,
-    modelOptions[0]?.id,
   ].filter((id): id is string => !!id && modelIds.has(id));
 
   const next = new Set<string>();
