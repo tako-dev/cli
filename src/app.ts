@@ -2,7 +2,7 @@
 import "./clients";
 
 // 导入模块
-import { checkAndUpdate, runUpdateCommand } from "./updater";
+import { checkAndUpdate, runUpdateCommand, repairWindowsWrapperIfStale } from "./updater";
 import { getClient } from "./clients/base";
 import { launchClientUnified } from "./launcher";
 import { t } from "./i18n";
@@ -217,6 +217,12 @@ export async function runCli(main: UiMain): Promise<void> {
     showHelp();
     return;
   }
+
+  // Windows wrapper 自愈：老版本装的 tako.cmd 没有 handoff 逻辑，而自更新只替换
+  // dist、从不重写 wrapper，于是 handoff 永久失效 —— 进入客户端后键盘无响应。
+  // 本次进程已经在旧 wrapper 里跑了（拿不到 handoff 文件），launcher 会退化到
+  // spawnSync 路径；重写后下一次启动就能走正常 handoff。best-effort，不阻塞。
+  await repairWindowsWrapperIfStale();
 
   // dev 模式不自动更新：源码直跑（VERSION=dev）/ 显式 TAKO_DEV / localhost server
   const isDev = VERSION === "dev" || IS_DEV;

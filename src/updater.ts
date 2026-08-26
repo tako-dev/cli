@@ -5,7 +5,11 @@ import { join } from "path";
 import { t } from "./i18n";
 import { track } from "./analytics";
 import { streamBunInstall } from "./bun-progress";
-import { buildWindowsCmdWrapper, buildWindowsPs1Wrapper } from "./windows-wrapper";
+import {
+  buildWindowsCmdWrapper,
+  buildWindowsPs1Wrapper,
+  windowsWrapperNeedsRepair,
+} from "./windows-wrapper";
 import { summarizeInstallError } from "./error-format";
 
 // Tako CLI 包名
@@ -85,7 +89,7 @@ export async function checkForUpdates(): Promise<{
  * 更新 wrapper script，确保指向正确的安装位置
  * 解决从全局安装迁移到本地安装时 wrapper 指向错误的问题
  */
-async function updateWrapperScript(): Promise<void> {
+export async function updateWrapperScript(): Promise<void> {
   const fs = await import("fs/promises");
   const takoBinDir = join(TAKO_DIR, "bin");
   const wrapperPath = join(takoBinDir, "tako");
@@ -105,6 +109,30 @@ async function updateWrapperScript(): Promise<void> {
     // Unix: 创建 bash script
     const shContent = `#!/bin/bash\nexec "${TAKO_BUN_BIN}" "${takoEntry}" "$@"\n`;
     await fs.writeFile(wrapperPath, shContent, { mode: 0o755 });
+  }
+}
+
+/**
+ * 启动时自愈过期的 Windows wrapper。
+ *
+ * 老版本装的 tako.cmd 没有 handoff 逻辑，而自更新只替换 dist、从不重写 wrapper，
+ * 于是老用户的 handoff 机制永久失效 —— 进入客户端后键盘无响应。这里检测到就重写。
+ * 纯 best-effort：任何失败都不能影响启动。
+ */
+export async function repairWindowsWrapperIfStale(): Promise<boolean> {
+  if (process.platform !== "win32") return false;
+  try {
+    const fs = await import("fs/promises");
+    const cmdPath = join(TAKO_DIR, "bin", "tako.cmd");
+    const existing = await fs.readFile(cmdPath, "utf8").catch(() => null);
+    // wrapper 不存在说明不是 wrapper 安装（npm -g / 源码直跑），不要凭空造一个。
+    if (existing === null) return false;
+    if (!windowsWrapperNeedsRepair(existing)) return false;
+
+    await updateWrapperScript();
+    return true;
+  } catch {
+    return false;
   }
 }
 

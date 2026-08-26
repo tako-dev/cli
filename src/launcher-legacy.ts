@@ -133,7 +133,11 @@ export async function launchClient(
 
       await settleTerminalForExternalChild();
       try {
-        const proc = Bun.spawn(
+        // 必须用 spawnSync：Windows 控制台输入是单一共享队列，Bun 事件循环只要还活着
+        // 就持有控制台输入句柄，和子进程争抢按键 —— 表现为子进程 TUI 画面正常但
+        // 键盘无响应。spawnSync 完全阻塞事件循环，子进程独占控制台。
+        // （Unix 分支同理，见文件末尾。）
+        const result = Bun.spawnSync(
           ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", handoffPath],
           {
             env,
@@ -141,7 +145,7 @@ export async function launchClient(
             cwd: workingDir,
           },
         );
-        const exitCode = await proc.exited;
+        const exitCode = result.exitCode ?? 0;
         return { success: exitCode === 0, exitCode };
       } catch (spawnError) {
         // PowerShell 起不来（不在 PATH / 被拦截）：脚本内的自删不会执行，兜底清理
