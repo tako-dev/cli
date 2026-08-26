@@ -31,6 +31,8 @@ export interface LaunchOption {
   envVars?: Record<string, string>;
   /** Mutual exclusion group — options in the same group cannot be selected together */
   group?: string;
+  /** Default-on when the user has no saved selection (首次/无记忆时默认勾选) */
+  defaultOn?: boolean;
 }
 
 export interface ClientLaunchSetupContext {

@@ -5,10 +5,10 @@
  * 负责剥掉 shortcut 标志本身，并对 claude-code 的 --model 自动补 [1m]
  * （与交互菜单选模型行为一致；底层用 appendOneMTagIfNeeded 决定是否补）。
  *
- * 危险跳过开关从 panel 上次勾选继承（claude-code: skip-permissions →
- * --dangerously-skip-permissions; codex: bypass-sandbox →
- * --dangerously-bypass-approvals-and-sandbox）。注入式 reader 让单测
- * 不依赖磁盘 config。
+ * 危险跳过开关默认全放行：无记忆（首次）自动补全放行 flag
+ * （claude-code: --dangerously-skip-permissions; codex:
+ * --dangerously-bypass-approvals-and-sandbox）；有记忆则尊重上次选择，
+ * 仅当勾过对应开关才补。注入式 reader 让单测不依赖磁盘 config。
  */
 import { describe, it, expect } from "bun:test";
 import { buildPassthroughArgs } from "../src/quick-launch-args";
@@ -18,8 +18,8 @@ import "../src/clients";
 const noInherit = { getLastSelectedOptionIds: async () => [] };
 
 describe("buildPassthroughArgs", () => {
-  it("无额外参数 → 返回空数组", async () => {
-    expect(await buildPassthroughArgs("claude-code", ["--claude"], "--claude", noInherit)).toEqual([]);
+  it("claude-code: 无额外参数、无记忆 → 默认补跳过权限", async () => {
+    expect(await buildPassthroughArgs("claude-code", ["--claude"], "--claude", noInherit)).toEqual(["--dangerously-skip-permissions"]);
   });
 
   it("claude-code: --model <id> → 自动补 [1m]（catalog 1M 模型）", async () => {
@@ -30,7 +30,7 @@ describe("buildPassthroughArgs", () => {
         "--claude",
         noInherit,
       ),
-    ).toEqual(["--model", "claude-opus-4-7[1m]"]);
+    ).toEqual(["--dangerously-skip-permissions", "--model", "claude-opus-4-7[1m]"]);
   });
 
   it("claude-code: --model=<id> 形式同样自动补 [1m]", async () => {
@@ -41,7 +41,7 @@ describe("buildPassthroughArgs", () => {
         "--claude",
         noInherit,
       ),
-    ).toEqual(["--model=claude-opus-4-7[1m]"]);
+    ).toEqual(["--dangerously-skip-permissions", "--model=claude-opus-4-7[1m]"]);
   });
 
   it("claude-code: 200k 模型不补后缀", async () => {
@@ -52,7 +52,7 @@ describe("buildPassthroughArgs", () => {
         "--claude",
         noInherit,
       ),
-    ).toEqual(["--model", "claude-sonnet-4-5"]);
+    ).toEqual(["--dangerously-skip-permissions", "--model", "claude-sonnet-4-5"]);
   });
 
   it("claude-code: 已带 [1m] 不重复加", async () => {
@@ -63,7 +63,7 @@ describe("buildPassthroughArgs", () => {
         "--claude",
         noInherit,
       ),
-    ).toEqual(["--model", "claude-opus-4-7[1m]"]);
+    ).toEqual(["--dangerously-skip-permissions", "--model", "claude-opus-4-7[1m]"]);
   });
 
   it("claude-code: 非 --model 参数原样透传", async () => {
@@ -74,7 +74,7 @@ describe("buildPassthroughArgs", () => {
         "--claude",
         noInherit,
       ),
-    ).toEqual(["--resume", "abc", "--continue"]);
+    ).toEqual(["--dangerously-skip-permissions", "--resume", "abc", "--continue"]);
   });
 
   it("claude-code: shortcut 标志可在中间，仍能正确剥除", async () => {
@@ -85,16 +85,16 @@ describe("buildPassthroughArgs", () => {
         "--claude",
         noInherit,
       ),
-    ).toEqual(["--model", "claude-opus-4-7[1m]"]);
+    ).toEqual(["--dangerously-skip-permissions", "--model", "claude-opus-4-7[1m]"]);
   });
 
   it("claude-code: --model 末尾孤立（缺值）→ 原样透传，交给 claude 自己报错", async () => {
     expect(
       await buildPassthroughArgs("claude-code", ["--claude", "--model"], "--claude", noInherit),
-    ).toEqual(["--model"]);
+    ).toEqual(["--dangerously-skip-permissions", "--model"]);
   });
 
-  it("codex: --model 不补 [1m]（无 1M 概念）", async () => {
+  it("codex: --model 不补 [1m]（无 1M 概念）；无记忆默认补 bypass", async () => {
     expect(
       await buildPassthroughArgs(
         "codex",
@@ -102,10 +102,10 @@ describe("buildPassthroughArgs", () => {
         "--codex",
         noInherit,
       ),
-    ).toEqual(["--model", "claude-opus-4-7"]);
+    ).toEqual(["--dangerously-bypass-approvals-and-sandbox", "--model", "claude-opus-4-7"]);
   });
 
-  it("gemini: --model 不补 [1m]", async () => {
+  it("gemini: --model 不补 [1m]，且不在危险白名单内不补任何 flag", async () => {
     expect(
       await buildPassthroughArgs(
         "gemini",
@@ -132,6 +132,7 @@ describe("buildPassthroughArgs", () => {
         noInherit,
       ),
     ).toEqual([
+      "--dangerously-skip-permissions",
       "--model",
       "claude-opus-4-7[1m]",
       "--resume",
@@ -140,7 +141,23 @@ describe("buildPassthroughArgs", () => {
     ]);
   });
 
-  describe("继承 panel 上次勾选的危险跳过开关", () => {
+  describe("继承 panel 的危险跳过开关", () => {
+    it("claude-code: 无记忆 → 默认补 --dangerously-skip-permissions", async () => {
+      expect(
+        await buildPassthroughArgs("claude-code", ["--claude"], "--claude", {
+          getLastSelectedOptionIds: async () => [],
+        }),
+      ).toEqual(["--dangerously-skip-permissions"]);
+    });
+
+    it("codex: 无记忆 → 默认补 --dangerously-bypass-approvals-and-sandbox", async () => {
+      expect(
+        await buildPassthroughArgs("codex", ["--codex"], "--codex", {
+          getLastSelectedOptionIds: async () => [],
+        }),
+      ).toEqual(["--dangerously-bypass-approvals-and-sandbox"]);
+    });
+
     it("claude-code: 上次勾了 skip-permissions → 自动补 --dangerously-skip-permissions", async () => {
       expect(
         await buildPassthroughArgs("claude-code", ["--claude"], "--claude", {
@@ -171,7 +188,7 @@ describe("buildPassthroughArgs", () => {
       ).toEqual(["--dangerously-skip-permissions"]);
     });
 
-    it("claude-code: 上次没勾 skip-permissions → 不补", async () => {
+    it("claude-code: 有记忆但没勾 skip-permissions → 尊重记忆，不补", async () => {
       expect(
         await buildPassthroughArgs("claude-code", ["--claude"], "--claude", {
           getLastSelectedOptionIds: async () => ["worktree", "model-claude-opus-4-7"],
@@ -196,6 +213,14 @@ describe("buildPassthroughArgs", () => {
           { getLastSelectedOptionIds: async () => ["bypass-sandbox"] },
         ),
       ).toEqual(["--dangerously-bypass-approvals-and-sandbox"]);
+    });
+
+    it("codex: 有记忆但没勾 bypass-sandbox → 尊重记忆，不补", async () => {
+      expect(
+        await buildPassthroughArgs("codex", ["--codex"], "--codex", {
+          getLastSelectedOptionIds: async () => ["search"],
+        }),
+      ).toEqual([]);
     });
 
     it("gemini: 不在白名单内 → 不继承任何 flag", async () => {

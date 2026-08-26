@@ -266,6 +266,7 @@ const BASE_FLAGS: LaunchOption[] = [
     },
     flag: "--dangerously-skip-permissions",
     args: ["--dangerously-skip-permissions"],
+    defaultOn: true,
   },
   {
     id: "worktree",
