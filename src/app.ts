@@ -38,6 +38,7 @@ ${t("cli.shortcutClaude")}
 ${t("cli.shortcutCodex")}
 ${t("cli.shortcutPi")}
 ${t("cli.shortcutPiWeb")}
+${t("cli.shortcutGrok")}
 ${t("cli.shortcutGemini")}
 
 Commands:
@@ -57,6 +58,7 @@ ${t("cli.exampleClaudeModel")}
 ${t("cli.exampleCodex")}
 ${t("cli.examplePi")}
 ${t("cli.examplePiWeb")}
+${t("cli.exampleGrok")}
 ${t("cli.exampleGemini")}
 `);
 }
@@ -78,6 +80,27 @@ async function runInstallCommand(rest: string[]): Promise<void> {
   if (!client) {
     console.error(`未知 client: ${clientId}`);
     process.exit(1);
+  }
+
+  if (client.install === "system") {
+    if (!version) {
+      const current = await getInstalledVersion(client);
+      console.log(`${client.name} 使用官方系统安装，不走 npm。`);
+      console.log(current ? `当前版本: ${current}` : "未安装");
+      console.log(`安装/更新最新: tako install ${clientId} latest`);
+      console.log(`安装指定版本: tako install ${clientId} 0.2.93`);
+      return;
+    }
+    console.log(`正在安装 ${client.name}${version === "latest" ? "" : `@${version}`}...`);
+    try {
+      await installAtVersion(client, version);
+      const current = await getInstalledVersion(client);
+      console.log(`✓ ${client.name} 已就绪${current ? `（${current}）` : ""}`);
+    } catch (e) {
+      console.error("安装失败:", (e as Error).message);
+      process.exit(1);
+    }
+    return;
   }
 
   if (!version) {
@@ -110,7 +133,7 @@ async function runInstallCommand(rest: string[]): Promise<void> {
 }
 
 /**
- * 快捷启动（--claude, --codex, --pi, --pi-web, --gemini）
+ * 快捷启动（--claude, --codex, --pi, --pi-web, --gemini, --grok）
  * 自动选 Provider，不弹交互式菜单
  */
 async function quickLaunch(
@@ -255,6 +278,11 @@ export async function runCli(main: UiMain): Promise<void> {
   if (args.includes("--pi-web")) {
     if (shouldRunStartupUpdate(isDev)) await checkAndUpdate();
     await quickLaunch("pi-web", "Pi Web", await buildPassthroughArgs("pi-web", args, "--pi-web"));
+    return;
+  }
+  if (args.includes("--grok")) {
+    if (shouldRunStartupUpdate(isDev)) await checkAndUpdate();
+    await quickLaunch("grok", "Grok Build", await buildPassthroughArgs("grok", args, "--grok"));
     return;
   }
 

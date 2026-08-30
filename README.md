@@ -7,8 +7,8 @@
 <h1 align="center">🐙 Tako CLI</h1>
 
 <p align="center">
-  <b>AI Coding Tools Launcher</b> — unified interface for Claude Code, Codex, Gemini & more<br/>
-  <b>AI 编码工具启动器</b> — 统一管理 Claude Code、Codex、Gemini 等 AI 开发工具
+  <b>AI Coding Tools Launcher</b> — unified interface for Claude Code, Codex, Gemini, Grok Build & more<br/>
+  <b>AI 编码工具启动器</b> — 统一管理 Claude Code、Codex、Gemini、Grok Build 等 AI 开发工具
 </p>
 
 ---
@@ -78,6 +78,7 @@ tako                          # Interactive TUI launcher / 交互式启动器
 tako --claude                 # Quick-launch Claude Code / 快速启动 Claude Code
 tako --codex                  # Quick-launch Codex / 快速启动 Codex
 tako --gemini                 # Quick-launch Gemini CLI / 快速启动 Gemini
+tako --grok                   # Quick-launch Grok Build / 快速启动 Grok Build
 ```
 
 ### TUI Shortcuts / TUI 快捷键
@@ -101,7 +102,7 @@ Manage persistent AI agent sessions from CLI or TUI. Sessions survive shell rest
 
 ### Native Session Search / 原生会话搜索
 
-Launcher 项目列表第一项按 `↑` 即可进入历史会话搜索，统一检索 Claude Code、Codex 和 Gemini 的本地 session。搜索框留空时直接浏览最近会话，Claude/Codex 按 `Enter` 续接，Gemini 按 `Enter` 查看详情，按 `→` 均可查看最近对话。
+Launcher 项目列表第一项按 `↑` 即可进入历史会话搜索，统一检索 Claude Code、Codex、Grok Build、Pi 和 Gemini 的本地 session。搜索框留空时直接浏览最近会话，Claude/Codex/Grok/Pi 按 `Enter` 续接，Gemini 按 `Enter` 查看详情，按 `→` 均可查看最近对话。
 
 ```bash
 tako sessions search "支付回调"
@@ -112,7 +113,7 @@ tako sessions index --rebuild
 tako sessions index --clear
 ```
 
-索引完全保存在本机 `~/.tako/session-index/`，目录权限为 `0700`、数据库文件权限为 `0600`。默认搜索排除 system/developer prompt；`--deep` 才包含工具输出和 reasoning。当前 Gemini 历史仅支持搜索和查看，不会伪装成可续接会话。
+索引完全保存在本机 `~/.tako/session-index/`，目录权限为 `0700`、数据库文件权限为 `0600`。默认搜索排除 system/developer prompt；`--deep` 才包含工具输出和 reasoning。当前 Gemini 历史仅支持搜索和查看，不会伪装成可续接会话。Grok 会话来自 `~/.grok/sessions/<cwd>/<id>/updates.jsonl`，续接走 `grok --resume <id>`。
 
 ```bash
 tako agent run claude --prompt "fix the failing tests" --json  # One-shot task / 一次性任务

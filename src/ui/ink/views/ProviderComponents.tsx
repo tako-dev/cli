@@ -22,6 +22,7 @@ export const PROV_STYLE: Record<ProviderType, { icon: string; color: string }> =
 export const TAB_STYLE: Record<string, { icon: string; color: string }> = {
   "claude-code": { icon: "✦", color: "yellow" },
   codex:         { icon: "◈", color: "blue" },
+  grok:          { icon: "✶", color: "white" },
   gemini:        { icon: "◆", color: "cyan" },
   pi:            { icon: "π", color: "magenta" },
   "pi-web":      { icon: "◎", color: "magenta" },

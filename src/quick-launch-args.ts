@@ -15,6 +15,7 @@
  * `getLastSelectedOptionIds` 通过参数注入，让单测无需读真实 config。
  */
 import { appendOneMTagIfNeeded } from "./clients/claude-code";
+import { GROK_DEFAULT_MODEL, mapGrokPassthroughModel, takoGrokModelId } from "./clients/grok";
 import { getLastSelectedOptionsForClient } from "./project-history";
 
 const INHERITED_DANGEROUS_FLAGS: Record<string, { optionId: string; flag: string }> = {
@@ -36,6 +37,34 @@ export async function buildPassthroughArgs(
   const rest = allArgs.filter((a) => a !== shortcutFlag);
 
   const inherited = await resolveInheritedFlag(clientId, rest, opts);
+
+  if (clientId === "grok") {
+    const out: string[] = [];
+    if (inherited) out.push(inherited);
+    let hasModel = false;
+    for (let i = 0; i < rest.length; i++) {
+      const a = rest[i];
+      if ((a === "--model" || a === "-m") && i + 1 < rest.length) {
+        if (hasModel) {
+          i++;
+          continue;
+        }
+        out.push("-m", mapGrokPassthroughModel(rest[i + 1]));
+        hasModel = true;
+        i++;
+        continue;
+      }
+      if (a.startsWith("--model=")) {
+        if (hasModel) continue;
+        out.push("-m", mapGrokPassthroughModel(a.slice("--model=".length)));
+        hasModel = true;
+        continue;
+      }
+      out.push(a);
+    }
+    if (!hasModel) out.unshift("-m", takoGrokModelId(GROK_DEFAULT_MODEL));
+    return out;
+  }
 
   if (clientId !== "claude-code") {
     return inherited ? [inherited, ...rest] : rest;

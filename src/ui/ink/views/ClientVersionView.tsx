@@ -22,6 +22,7 @@ const TAB_STYLE: Record<string, { icon: string; color: string }> = {
   "claude-code": { icon: "✦", color: "yellow" },
   codex:         { icon: "◈", color: "blue" },
   gemini:        { icon: "◆", color: "cyan" },
+  grok:          { icon: "✶", color: "white" },
   pi:            { icon: "π", color: "magenta" },
   "pi-web":      { icon: "◎", color: "magenta" },
 };
@@ -53,6 +54,18 @@ export function ClientVersionView({ onDone }: { onDone: () => void }) {
     const client = clients.find((c) => c.id === clientId);
     if (!client) return;
     try {
+      if (client.install === "system") {
+        const installed = await getInstalledVersion(client);
+        setStateByClient((prev) => ({
+          ...prev,
+          [clientId]: {
+            loading: false,
+            versions: installed ? [{ version: installed, isCurrent: true }] : [],
+            current: installed,
+          },
+        }));
+        return;
+      }
       const [versions, installed] = await Promise.all([
         listAvailableVersions(client.package),
         getInstalledVersion(client),

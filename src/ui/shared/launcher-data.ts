@@ -1,5 +1,6 @@
 import { getAllClients } from "../../clients";
 import { getClientLaunchOptions } from "../../clients/base";
+import { GROK_DEFAULT_MODEL } from "../../clients/grok";
 import { PI_DEFAULT_MODEL } from "../../clients/pi";
 import { enabledWithProviderDefaultModel } from "./launch-options";
 import { getLocale } from "../../i18n";
@@ -67,7 +68,9 @@ export async function loadLauncherData(projectPathWidth = 45): Promise<LauncherL
       new Set(savedIds.filter((id) => validIds.has(id))),
       launchOptions,
       activeProvider?.model,
-      client.id === "pi" ? `model-${PI_DEFAULT_MODEL}` : undefined,
+      client.id === "pi" ? `model-${PI_DEFAULT_MODEL}`
+        : client.id === "grok" ? `model-${GROK_DEFAULT_MODEL}`
+        : undefined,
     )];
 
     clients.push({

@@ -10,6 +10,7 @@ import {
   claudeCodeClient,
 } from "../src/clients/claude-code";
 import { codexClient } from "../src/clients/codex";
+import { grokClient } from "../src/clients/grok";
 import { piClient } from "../src/clients/pi";
 import type { Provider } from "../src/providers/types";
 import {
@@ -185,6 +186,16 @@ describe("dynamic model launch options", () => {
     ]);
   });
 
+  it("Grok picker falls back to grok-family whitelist when catalog has no grok slugs", () => {
+    const ids = getClientLaunchOptions(grokClient, provider("grok"))
+      .filter((o) => o.group === "model").map((o) => o.id);
+    expect(ids).toEqual([
+      "model-grok-4.6",
+      "model-grok-4.5",
+      "model-composer-2.5",
+    ]);
+  });
+
   it("filters out non-chat models (image/video/audio) from both pickers", () => {
     const codexIds = getClientLaunchOptions(codexClient, provider("codex"))
       .filter((o) => o.group === "model").map((o) => o.id);
@@ -192,11 +203,14 @@ describe("dynamic model launch options", () => {
       .filter((o) => o.group === "model").map((o) => o.id);
     const piIds = getClientLaunchOptions(piClient, provider("pi"))
       .filter((o) => o.group === "model").map((o) => o.id);
+    const grokIds = getClientLaunchOptions(grokClient, provider("grok"))
+      .filter((o) => o.group === "model").map((o) => o.id);
 
     for (const id of ["model-gpt-image-2", "model-sora-2", "model-tts-1"]) {
       expect(codexIds).not.toContain(id);
       expect(claudeIds).not.toContain(id);
       expect(piIds).not.toContain(id);
+      expect(grokIds).not.toContain(id);
     }
   });
 });

@@ -10,6 +10,13 @@ import { getDefaultSupportedClients, isProviderCompatible } from "./types";
 
 export * from "./types";
 
+export function insertSupportedClient(clients: string[], clientId: string, before?: string): string[] {
+  if (clients.includes(clientId)) return clients;
+  const index = before ? clients.indexOf(before) : -1;
+  if (index >= 0) return [...clients.slice(0, index), clientId, ...clients.slice(index)];
+  return [...clients, clientId];
+}
+
 // --- CRUD ---
 
 export async function getProviders(): Promise<Provider[]> {
@@ -339,6 +346,15 @@ export async function fixupProviders(): Promise<void> {
   for (const p of providers) {
     if (p.type === "tako" && !p.builtin) {
       p.builtin = true;
+      changed = true;
+    }
+    if (
+      (p.type === "tako" || p.type === "custom")
+      && Array.isArray(p.supportedClients)
+      && p.supportedClients.length > 0
+      && !p.supportedClients.includes("grok")
+    ) {
+      p.supportedClients = insertSupportedClient(p.supportedClients, "grok", "gemini");
       changed = true;
     }
   }

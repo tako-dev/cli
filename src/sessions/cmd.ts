@@ -1,7 +1,7 @@
 import { clearSessionIndex, openSessionDatabase, rebuildSessionIndex, refreshSessionIndex } from "./index";
 import { searchSessions } from "./search";
 import { resumeNativeSession } from "./resume";
-import type { NativeSessionSource } from "./types";
+import { isNativeSessionSource, type NativeSessionSource } from "./types";
 
 function flag(args: string[], name: string): string | undefined { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; }
 
@@ -75,7 +75,7 @@ export async function runSessionsCommand(args: string[]): Promise<void> {
       return;
     }
     const query = searchQuery(args, command);
-    const sources = flag(args, "--source")?.split(",").filter((source): source is NativeSessionSource => source === "claude" || source === "codex" || source === "gemini" || source === "pi");
+    const sources = flag(args, "--source")?.split(",").filter((source): source is NativeSessionSource => isNativeSessionSource(source));
     const limit = Number(flag(args, "--limit") ?? 50);
     const results = searchSessions(db, query, { deep: args.includes("--deep"), sources, cwd: flag(args, "--cwd"), project: flag(args, "--project"), after: afterTimestamp(flag(args, "--after")), limit: Number.isFinite(limit) && limit > 0 ? limit : 50, currentCwd: process.cwd() });
     if (args.includes("--json")) console.log(JSON.stringify(results, null, 2));

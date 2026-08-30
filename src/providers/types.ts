@@ -84,7 +84,7 @@ export function getDefaultSupportedClients(type: ProviderType): string[] | undef
     case "xiaomi":
       return ["claude-code"];
     case "custom":
-      return ["claude-code", "codex"];
+      return ["claude-code", "codex", "grok"];
     case "tako":
     default:
       return undefined; // 全部

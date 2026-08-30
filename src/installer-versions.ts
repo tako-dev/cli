@@ -73,6 +73,13 @@ export async function listAvailableVersions(packageName: string): Promise<Versio
  *   4. 更新 ~/.tako/config.json 的 installedClients[client.id]
  */
 export async function installAtVersion(client: ClientConfig, version: string): Promise<void> {
+  if (client.install === "system") {
+    if (!client.installSystem) throw new Error(`${client.name} 不支持 tako install 切换版本`);
+    const result = await client.installSystem(version === "latest" ? undefined : version);
+    if (!result.success) throw new Error(result.error ?? "安装失败");
+    return;
+  }
+
   const fs = await import("node:fs/promises");
   const clientDir = getClientDir(client.id);
 
@@ -128,6 +135,10 @@ export async function installAtVersion(client: ClientConfig, version: string): P
  * 获取本地当前安装的版本（从配置读）。
  */
 export async function getInstalledVersion(client: ClientConfig): Promise<string | null> {
+  if (client.install === "system") {
+    return client.readSystemVersion ? client.readSystemVersion() : null;
+  }
+
   // 优先读实际 node_modules 里的版本（真实安装状态）
   const clientDir = getClientDir(client.id);
   const pkgPath = join(clientDir, "node_modules", client.package, "package.json");

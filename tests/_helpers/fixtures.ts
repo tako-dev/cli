@@ -52,6 +52,7 @@ export const clientModules = [
   "pi.ts",
   "pi-web.ts",
   "pi-settings.ts",
+  "grok.ts",
 ];
 
 /** Required Tako subdirectories */

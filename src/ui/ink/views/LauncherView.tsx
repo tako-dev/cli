@@ -7,6 +7,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import { getClientLaunchOptions } from "../../../clients/base";
+import { GROK_DEFAULT_MODEL } from "../../../clients/grok";
 import { PI_DEFAULT_MODEL } from "../../../clients/pi";
 import { setClientProvider, resolveProviderContext } from "../../../providers";
 import type { Provider } from "../../../providers/types";
@@ -62,6 +63,7 @@ const CLIENT_STYLE: Record<string, { icon: string; color: string }> = {
   "claude-code": { icon: "✦", color: "yellow" },
   codex:         { icon: "◈", color: "blue" },
   gemini:        { icon: "◆", color: "cyan" },
+  grok:          { icon: "✶", color: "white" },
   pi:            { icon: "π", color: "magenta" },
   "pi-web":      { icon: "◎", color: "magenta" },
 };
@@ -81,6 +83,7 @@ function sessionAge(timestamp: number, zh: boolean): string {
 function sessionSourceLabel(source: UnifiedSession["source"]): string {
   if (source === "claude") return "Claude";
   if (source === "codex") return "Codex";
+  if (source === "grok") return "Grok";
   if (source === "pi") return "Pi";
   return "Gemini";
 }
@@ -88,6 +91,7 @@ function sessionSourceLabel(source: UnifiedSession["source"]): string {
 function sessionSourceColor(source: UnifiedSession["source"]): string {
   if (source === "claude") return "magenta";
   if (source === "codex") return "blue";
+  if (source === "grok") return "white";
   if (source === "pi") return "magenta";
   return "cyan";
 }
@@ -357,7 +361,9 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, init
       prev,
       options,
       currentProv?.model,
-      current.client.id === "pi" ? `model-${PI_DEFAULT_MODEL}` : undefined,
+      current.client.id === "pi" ? `model-${PI_DEFAULT_MODEL}`
+        : current.client.id === "grok" ? `model-${GROK_DEFAULT_MODEL}`
+        : undefined,
     ));
   }, [options, currentProv?.model]);
 

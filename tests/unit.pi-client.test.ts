@@ -22,6 +22,7 @@ describe("Pi launcher placement", () => {
   it("keeps Pi visible and hides Pi Web from tabs", () => {
     const ids = getAllClients().map((c) => c.id);
     expect(ids).toContain("pi");
+    expect(ids).toContain("grok");
     expect(ids).not.toContain("pi-web");
     expect(getClient("pi-web")?.hidden).toBe(true);
   });

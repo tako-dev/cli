@@ -658,6 +658,9 @@ export async function isPackageInstalledAt(
  * 检查客户端是否已安装
  */
 export async function isClientInstalled(client: ClientConfig): Promise<boolean> {
+  if (client.install === "system") {
+    return !!(await client.resolveBin?.());
+  }
   const clientDir = getClientDir(client.id);
   return isPackageInstalledAt(clientDir, client.package);
 }
@@ -666,6 +669,8 @@ export async function isClientInstalled(client: ClientConfig): Promise<boolean> 
  * 检查是否需要更新
  */
 export async function needsUpdate(client: ClientConfig): Promise<boolean> {
+  if (client.install === "system") return false;
+
   const localVersion = await getLocalVersion(client);
   if (!localVersion) return true;
 
@@ -925,6 +930,11 @@ export async function installClient(
   client: ClientConfig,
   forceUpdate = false
 ): Promise<{ success: boolean; error?: string; skippedUpdate?: boolean }> {
+  if (client.install === "system") {
+    if (client.installSystem) return client.installSystem();
+    return { success: false, error: `${client.name} 需要系统安装，未提供安装器` };
+  }
+
   const s = createSpinner();
   const clientDir = getClientDir(client.id);
 
@@ -1155,6 +1165,12 @@ export async function ensureNativeBinary(
 export async function ensureClientReady(
   client: ClientConfig
 ): Promise<{ success: boolean; error?: string; skippedUpdate?: boolean }> {
+  if (client.install === "system") {
+    if (await isClientInstalled(client)) return { success: true };
+    if (client.installSystem) return client.installSystem();
+    return { success: false, error: `${client.name} 未安装。请先安装官方 Grok Build CLI` };
+  }
+
   const isInstalled = await isClientInstalled(client);
 
   if (!isInstalled) {

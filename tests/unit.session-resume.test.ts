@@ -10,11 +10,28 @@ function session(source: UnifiedSession["source"]): UnifiedSession {
 }
 
 describe("native session resume", () => {
-  it("builds native Claude, Codex, and Pi resume commands", () => {
+  it("builds native Claude, Codex, Grok, and Pi resume commands", () => {
     expect(resumeArgs(session("claude"))).toEqual({ clientId: "claude-code", args: ["--resume", "id"] });
     expect(resumeArgs(session("codex"))).toEqual({ clientId: "codex", args: ["resume", "id", "-C", "/work/app"] });
+    expect(resumeArgs(session("grok"))).toEqual({ clientId: "grok", args: ["--resume", "id"] });
     expect(resumeArgs(session("pi"))).toEqual({ clientId: "pi", args: ["--session", "id"] });
     expect(() => resumeArgs(session("gemini"))).toThrow("does not support resuming Gemini");
+  });
+
+  it("prepares a Grok resume in the original project directory", () => {
+    const root = join(tmpdir(), `resume-${crypto.randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    const sourcePath = join(root, "updates.jsonl");
+    writeFileSync(sourcePath, "{}");
+    const value = session("grok");
+    value.sourcePath = sourcePath;
+    value.cwd = root;
+    expect(prepareResume(value)).toMatchObject({
+      clientId: "grok",
+      args: ["--resume", "id"],
+      projectPath: root,
+    });
+    rmSync(root, { recursive: true, force: true });
   });
 
   it("falls back to an existing current directory and rejects stale source files", () => {

@@ -21,6 +21,17 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.3.40",
+    date: "2026-08-30",
+    changes: [
+      "接入 Grok Build：启动器新标签、tako --grok、官方二进制安装",
+      "启动时写入 ~/.grok/config.toml 的 tako-* 模型，走 Tako Responses 上游",
+      "默认模型 grok-4.6；composer-2.5 段名带点会加引号",
+      "Grok 会话进入 tako sessions 搜索，Enter 用 grok --resume 续接",
+      "启动器标签顺序改为 Codex / Claude / Pi / Grok / Gemini",
+    ],
+  },
+  {
     version: "0.3.38",
     date: "2026-08-24",
     changes: [

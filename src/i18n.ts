@@ -270,6 +270,10 @@ const translations = {
       en: "  --gemini [args...]   Launch Gemini CLI (passes extra args through)",
       zh: "  --gemini [参数...]   启动 Gemini CLI（额外参数透传给 gemini）",
     },
+    shortcutGrok: {
+      en: "  --grok [args...]     Launch Grok Build (passes extra args through)",
+      zh: "  --grok [参数...]     启动 Grok Build（额外参数透传给 grok）",
+    },
     shortcutPi: {
       en: "  --pi [args...]       Launch Pi (passes extra args through)",
       zh: "  --pi [参数...]       启动 Pi（额外参数透传给 pi）",
@@ -301,6 +305,10 @@ const translations = {
     exampleGemini: {
       en: "  tako --gemini     Launch Gemini CLI directly",
       zh: "  tako --gemini     直接启动 Gemini CLI",
+    },
+    exampleGrok: {
+      en: "  tako --grok       Launch Grok Build directly",
+      zh: "  tako --grok       直接启动 Grok Build",
     },
     examplePi: {
       en: "  tako --pi         Launch Pi directly",

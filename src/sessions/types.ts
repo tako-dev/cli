@@ -1,4 +1,10 @@
-export type NativeSessionSource = "claude" | "codex" | "gemini" | "pi";
+export type NativeSessionSource = "claude" | "codex" | "gemini" | "grok" | "pi";
+
+export const NATIVE_SESSION_SOURCES: NativeSessionSource[] = ["claude", "codex", "gemini", "grok", "pi"];
+
+export function isNativeSessionSource(value: string): value is NativeSessionSource {
+  return (NATIVE_SESSION_SOURCES as string[]).includes(value);
+}
 
 export type ResumeCapability = "direct" | "partial" | "unsupported";
 

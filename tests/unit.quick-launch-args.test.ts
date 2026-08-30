@@ -231,4 +231,45 @@ describe("buildPassthroughArgs", () => {
       ).toEqual([]);
     });
   });
+
+  describe("grok model remapping", () => {
+    it("grok: --model grok-4.6 → 只带一次 -m tako-grok-4.6", async () => {
+      expect(
+        await buildPassthroughArgs(
+          "grok",
+          ["--grok", "--model", "grok-4.6"],
+          "--grok",
+          noInherit,
+        ),
+      ).toEqual(["-m", "tako-grok-4.6"]);
+    });
+
+    it("grok: -m composer-2.5 → tako-composer-2.5", async () => {
+      expect(
+        await buildPassthroughArgs(
+          "grok",
+          ["--grok", "-m", "composer-2.5"],
+          "--grok",
+          noInherit,
+        ),
+      ).toEqual(["-m", "tako-composer-2.5"]);
+    });
+
+    it("grok: 没传模型 → 默认 -m tako-grok-4.6", async () => {
+      expect(
+        await buildPassthroughArgs("grok", ["--grok"], "--grok", noInherit),
+      ).toEqual(["-m", "tako-grok-4.6"]);
+    });
+
+    it("grok: --model 和 -m 同时出现 → 只保留第一次", async () => {
+      expect(
+        await buildPassthroughArgs(
+          "grok",
+          ["--grok", "--model", "grok-4.6", "-m", "composer-2.5"],
+          "--grok",
+          noInherit,
+        ),
+      ).toEqual(["-m", "tako-grok-4.6"]);
+    });
+  });
 });

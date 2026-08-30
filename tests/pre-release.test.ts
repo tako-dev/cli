@@ -4,6 +4,7 @@ import { getTakoDir, getTakoCliDir, getProjectRoot, getSrcDir, getDistDir } from
 import { expectFileExists, expectValidPackageJson, expectHasShebang } from "./_helpers/assertions";
 import { coreModules, clientModules, requiredConfigFields } from "./_helpers/fixtures";
 import { buildCliUpdateCommand } from "../src/updater";
+import { grokClient } from "../src/clients/grok";
 import { piClient } from "../src/clients/pi";
 import { piWebClient } from "../src/clients/pi-web";
 
@@ -212,5 +213,13 @@ describe("Pre-Release - Client Registry", () => {
     expect(piWebClient.package).toBe("@agegr/pi-web");
     expect(piWebClient.runtime).toBe("node");
     expect(piWebClient.hidden).toBe(true);
+  });
+
+  it("Grok Build client configuration should be complete", () => {
+    expect(grokClient.id).toBe("grok");
+    expect(grokClient.command).toBe("grok");
+    expect(grokClient.runtime).toBe("native");
+    expect(grokClient.install).toBe("system");
+    expect(grokClient.package).toBe("system:grok");
   });
 });

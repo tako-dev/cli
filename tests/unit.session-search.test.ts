@@ -54,6 +54,8 @@ describe("native session search", () => {
       db.replaceSession({ parserVersion: 1, session: { key: `${source}:${index}`, nativeId: String(index), source, title: "needle", cwd: index === 0 ? "/wanted/project" : "/other", updatedAt: index, userMessageCount: 1, assistantMessageCount: 0, preview: "needle", sourcePath: `/${index}`, resumeCapability: "direct" }, messages: [{ ordinal: 0, role: "user", text: "needle", defaultSearchable: true, deepSearchable: true }] }, { size: 1, mtimeMs: index });
     }
     expect(searchSessions(db, "needle", { sources: ["claude"], cwd: "/wanted", limit: 1 }).map((result) => result.session.source)).toEqual(["claude"]);
+    db.replaceSession({ parserVersion: 1, session: { key: "grok:g1", nativeId: "g1", source: "grok", title: "needle", cwd: "/wanted/project", updatedAt: 99, userMessageCount: 1, assistantMessageCount: 0, preview: "needle", sourcePath: "/g1", resumeCapability: "direct" }, messages: [{ ordinal: 0, role: "user", text: "needle", defaultSearchable: true, deepSearchable: true }] }, { size: 1, mtimeMs: 99 });
+    expect(searchSessions(db, "needle", { sources: ["grok"], limit: 5 }).map((result) => result.session.key)).toEqual(["grok:g1"]);
     db.close();
   });
 

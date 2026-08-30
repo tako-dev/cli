@@ -63,6 +63,14 @@ export interface ClientConfig {
   command: string;
   /** 运行时: native=直接执行, bun=用 Tako Bun 运行, node=用 Tako 专属 Node 跑（Pi / Next.js 不能走 bun） */
   runtime?: "native" | "bun" | "node";
+  /** 安装方式。默认 npm（bun add）。system = 官方二进制 / PATH，不走 npm。 */
+  install?: "npm" | "system";
+  /** system 客户端解析真实二进制。返回值可以在 TAKO_DIR 外（如 ~/.grok/bin/grok）。 */
+  resolveBin?: () => Promise<string | null>;
+  /** system 客户端安装 / 切换版本。version 缺省或 latest 表示官方 latest。 */
+  installSystem?: (version?: string) => Promise<{ success: boolean; error?: string }>;
+  /** system 客户端读取当前版本号。 */
+  readSystemVersion?: () => Promise<string | null>;
   /** 生成环境变量（根据 Provider 上下文） */
   getEnvVars: (provider: ProviderContext) => Record<string, string>;
   /** 生成配置文件（可选），可返回需要附加到客户端命令行的启动参数 */
@@ -98,6 +106,10 @@ export function getClientDir(clientId: string): string {
  * 这是跨平台兼容的方式，避免依赖 .bin 目录的符号链接
  */
 export async function getClientEntryPath(client: ClientConfig): Promise<string | null> {
+  if (client.resolveBin) {
+    return client.resolveBin();
+  }
+
   const clientDir = getClientDir(client.id);
   const packageJsonPath = join(clientDir, "node_modules", client.package, "package.json");
 
