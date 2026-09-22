@@ -109,10 +109,12 @@ describe("Grok model id helpers", () => {
   it("lists official and Tako-managed binary locations", () => {
     expect(grokBinaryName("darwin")).toBe("grok");
     expect(grokBinaryName("win32")).toBe("grok.exe");
-    expect(grokBinCandidates("/Users/me", "/Users/me/.tako/tools", "darwin")).toEqual([
-      "/Users/me/.tako/tools/grok/bin/grok",
-      "/Users/me/.grok/bin/grok",
-      "/Users/me/.local/bin/grok",
+    const home = "/Users/me";
+    const toolsDir = "/Users/me/.tako/tools";
+    expect(grokBinCandidates(home, toolsDir, "darwin")).toEqual([
+      join(toolsDir, "grok", "bin", "grok"),
+      join(home, ".grok", "bin", "grok"),
+      join(home, ".local", "bin", "grok"),
     ]);
   });
 });
