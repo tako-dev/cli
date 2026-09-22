@@ -8,12 +8,11 @@ import React from "react";
 import { Box, Text } from "ink";
 import type { LaunchOption } from "../../../clients";
 import type { Provider } from "../../../providers/types";
-import { visibleModelOptions } from "../../shared/model-picker";
+import { listedModelOptions, MODEL_PAGE_SIZE, modelPickerWindow } from "../../shared/model-picker";
 
 const PICKER_FOOTER_HINTS = [
   ["↑↓", "选择", "select"],
   ["Enter", "确认", "confirm"],
-  ["m", "当前目录启动", "launch cwd"],
   ["Esc", "取消", "cancel"],
 ] as const;
 
@@ -87,7 +86,7 @@ export function ProviderPicker({
 // ─── 模型 group picker ──────────────────────────────────────
 
 export function GroupPicker({
-  group, options, enabled, pickerIdx, color, zh, pickCounts = {},
+  group, options, enabled, pickerIdx, color, zh, pickCounts = {}, query = "",
 }: {
   group: string;
   options: LaunchOption[];
@@ -96,20 +95,33 @@ export function GroupPicker({
   color: string;
   zh: boolean;
   pickCounts?: Record<string, number>;
+  query?: string;
 }) {
   const groupOpts = options.filter((o) => o.group === group);
-  const visible =
-    group === "model"
-      ? visibleModelOptions(groupOpts, enabled, pickCounts)
-      : { list: groupOpts, hiddenCount: 0 };
-  const title = group === "model" ? (zh ? "选择模型" : "Pick Model") : group;
+  const isModelGroup = group === "model";
+  const list = isModelGroup
+    ? listedModelOptions(groupOpts, pickCounts, query, zh)
+    : groupOpts;
+  const window = isModelGroup
+    ? modelPickerWindow(pickerIdx, list.length)
+    : { start: 0, end: list.length };
+  const page = list.slice(window.start, window.end);
+  const title = isModelGroup ? (zh ? "选择模型" : "Pick Model") : group;
   const isDefaultCur = !groupOpts.some((o) => enabled.has(o.id));
   return (
     <Box flexDirection="column" marginTop={0} borderStyle="round" borderColor={color} paddingX={1} paddingY={0}>
       <Text bold color={color}>▣ {title}</Text>
+      {isModelGroup && (
+        <Box paddingLeft={1}>
+          <Text color={color} bold>› </Text>
+          <Text bold={!!query} dimColor={!query}>
+            {query || (zh ? "输入字母筛选" : "Type to filter")}
+          </Text>
+          <Text inverse> </Text>
+        </Box>
+      )}
       <Box flexDirection="column" marginTop={0}>
-        {/* 默认（清空） */}
-        {(() => {
+        {!isModelGroup && (() => {
           const focused = pickerIdx === 0;
           return (
             <Box paddingLeft={1}>
@@ -123,8 +135,9 @@ export function GroupPicker({
             </Box>
           );
         })()}
-        {visible.list.map((opt, i) => {
-          const focused = pickerIdx === i + 1;
+        {page.map((opt, i) => {
+          const idx = window.start + i;
+          const focused = pickerIdx === (isModelGroup ? idx : idx + 1);
           const isCur = enabled.has(opt.id);
           return (
             <Box key={opt.id} paddingLeft={1} flexDirection="column">
@@ -146,15 +159,14 @@ export function GroupPicker({
             </Box>
           );
         })}
-        {visible.hiddenCount > 0 && (
+        {isModelGroup && list.length === 0 && (
           <Box paddingLeft={1}>
-            <Text color={pickerIdx === visible.list.length + 1 ? color : undefined} bold={pickerIdx === visible.list.length + 1}>
-              {pickerIdx === visible.list.length + 1 ? "▸" : " "}
-            </Text>
-            <Text bold={pickerIdx === visible.list.length + 1} color={pickerIdx === visible.list.length + 1 ? color : undefined}>
-              {" "}{zh ? `▾ 显示全部 (${visible.hiddenCount})` : `▾ Show all (${visible.hiddenCount})`}
-            </Text>
-            <Text dimColor> ›</Text>
+            <Text dimColor>{zh ? "无匹配模型" : "No matching models"}</Text>
+          </Box>
+        )}
+        {isModelGroup && list.length > MODEL_PAGE_SIZE && (
+          <Box paddingLeft={1}>
+            <Text dimColor>{pickerIdx + 1}/{list.length}</Text>
           </Box>
         )}
       </Box>

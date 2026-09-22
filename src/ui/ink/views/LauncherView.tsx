@@ -19,20 +19,10 @@ import {
   enabledWithProviderDefaultModel,
   getGroupSelection,
   selectedArgs,
-  selectedArgsWithGroupOverride,
 } from "../../shared/launch-options";
-import {
-  buildGroupedGrid,
-  getGridColumnCountForOptions,
-  gridIndexOf,
-  initialModelPickerMode,
-  modelPickerRowsInOrder,
-  visibleModelOptions,
-  type ModelPickerMode,
-} from "../../shared/model-picker";
+import { listedModelOptions } from "../../shared/model-picker";
 import type { LauncherClientData, LauncherLoadResult, LauncherResult } from "../../shared/types";
 import { ProviderPicker, GroupPicker } from "./LauncherPickers";
-import { ModelGridPicker } from "./ModelGridPicker";
 import { openSessionDatabase, refreshSessionIndex } from "../../../sessions";
 import { searchSessions } from "../../../sessions/search";
 import { prepareResume } from "../../../sessions/resume";
@@ -230,7 +220,7 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, init
   const [provMsg, setProvMsg] = useState("");
   /** 当前正在打开的 group picker（null = 主界面） */
   const [pickingGroup, setPickingGroup] = useState<string | null>(null);
-  const [modelPickerMode, setModelPickerMode] = useState<ModelPickerMode>("collapsed");
+  const [modelQuery, setModelQuery] = useState("");
   /** true = 服务商 picker（与 pickingGroup 互斥） */
   const [pickingProvider, setPickingProvider] = useState(false);
   const [pickerIdx, setPickerIdx] = useState(0);
@@ -346,7 +336,7 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, init
     setProjectIdx(0); setOptionIdx(0); setFocus("projects");
     setProvIdx(clients[clientIdx]?.activeProvIdx || 0);
     setPickingGroup(null);
-    setModelPickerMode("collapsed");
+    setModelQuery("");
     setPickingProvider(false);
     // 勾选状态也随工具切换：有记忆则恢复到该工具上次的选择，无记忆则默认全放行
     setEnabled(buildInitialEnabled(clients[clientIdx]?.launchOptions ?? [], clients[clientIdx]?.lastSelectedOptionIds ?? []));
@@ -368,39 +358,12 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, init
   }, [options, currentProv?.model]);
 
   const openGroupPicker = useCallback((group: string) => {
-    const cur = getGroupSelection(options, enabled, group);
     const groupOpts = options.filter((o) => o.group === group);
     if (groupOpts.length === 0) return;
-
-    const mode = group === "model" ? initialModelPickerMode(groupOpts, pickCounts) : "collapsed";
-    let initIdx = 0;
-    if (cur) {
-      if (group === "model" && mode === "grid") {
-        const ids = groupOpts.map((o) => o.id);
-        const columnCount = getGridColumnCountForOptions(groupOpts, stdout.columns || 80, zh);
-        initIdx = gridIndexOf(ids, cur.id, columnCount);
-      } else {
-        const visible = group === "model"
-          ? visibleModelOptions(groupOpts, enabled, pickCounts).list
-          : groupOpts;
-        initIdx = visible.findIndex((o) => o.id === cur.id) + 1;
-      }
-    }
-
-    setPickerIdx(Math.max(0, initIdx));
-    setModelPickerMode(mode);
+    setModelQuery("");
+    setPickerIdx(0);
     setPickingGroup(group);
-  }, [enabled, options, pickCounts, stdout.columns, zh]);
-
-  const launchCurrentDirWithModel = useCallback((forcedOptionId?: string) => {
-    const selected = selectedArgsWithGroupOverride({ launchOptions: options, enabled }, "model", forcedOptionId);
-    onResult({
-      type: "launch",
-      clientId: current.client.id,
-      projectPath: projects[0]?.path,
-      ...selected,
-    });
-  }, [options, enabled, onResult, current.client.id, projects]);
+  }, [options]);
 
   useInput(useCallback((input: string, key: any) => {
     // ─── 服务商 picker 模式 ───
@@ -446,108 +409,44 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, init
     if (pickingGroup) {
       const groupOpts = options.filter((o) => o.group === pickingGroup);
       const isModelGroup = pickingGroup === "model";
+      const list = isModelGroup
+        ? listedModelOptions(groupOpts, pickCounts, modelQuery, zh)
+        : groupOpts;
+      const pickerLen = isModelGroup ? list.length : list.length + 1;
 
-      if (isModelGroup && modelPickerMode === "grid") {
-        const ids = groupOpts.map((o) => o.id);
-        const columnCount = getGridColumnCountForOptions(groupOpts, stdout.columns || 80, zh);
-        const grid = buildGroupedGrid(ids, columnCount);
-        const rowsInOrder = modelPickerRowsInOrder(ids, columnCount);
-        const pickerLen = grid.flat.length;
-        if (input === "q") { setPickingGroup(null); setModelPickerMode("collapsed"); return; }
-        if (input === "m") {
-          const pickedId = grid.flat[pickerIdx];
-          launchCurrentDirWithModel(pickedId);
-          return;
-        }
-        if (key.escape) {
-          if (initialModelPickerMode(groupOpts, pickCounts) === "grid") {
-            setPickingGroup(null);
-          } else {
-            setModelPickerMode("collapsed");
-            // 回到折叠态时把焦点还原到当前选中项（没有选中则落到「默认/清空」），
-            // 而不是无脑跳回第一行。
-            const cur = getGroupSelection(options, enabled, pickingGroup);
-            const visibleList = visibleModelOptions(groupOpts, enabled, pickCounts).list;
-            setPickerIdx(cur ? Math.max(0, visibleList.findIndex((o) => o.id === cur.id) + 1) : 0);
-          }
-          return;
-        }
+      if (key.escape || (!isModelGroup && input === "q")) {
+        setPickingGroup(null);
+        setModelQuery("");
+        return;
+      }
+      if (key.upArrow) {
         if (pickerLen === 0) return;
-        if (key.leftArrow) { setPickerIdx((p) => (p > 0 ? p - 1 : pickerLen - 1)); return; }
-        if (key.rightArrow) { setPickerIdx((p) => (p < pickerLen - 1 ? p + 1 : 0)); return; }
-        if (key.upArrow || key.downArrow) {
-          setPickerIdx((p) => {
-            let row = 0;
-            let col = 0;
-            let offset = 0;
-            for (let i = 0; i < rowsInOrder.length; i++) {
-              const rowLen = rowsInOrder[i].length;
-              if (p < offset + rowLen) {
-                row = i;
-                col = p - offset;
-                break;
-              }
-              offset += rowLen;
-            }
-            const nextRow = key.upArrow
-              ? (row > 0 ? row - 1 : rowsInOrder.length - 1)
-              : (row < rowsInOrder.length - 1 ? row + 1 : 0);
-            const nextCol = Math.min(col, rowsInOrder[nextRow].length - 1);
-            return rowsInOrder.slice(0, nextRow).reduce((sum, r) => sum + r.length, 0) + nextCol;
-          });
-          return;
-        }
-        if (key.return) {
-          const pickedId = grid.flat[pickerIdx];
-          const picked = groupOpts.find((o) => o.id === pickedId);
-          if (picked) {
-            setEnabled((prev) => {
-              const next = new Set(prev);
-              for (const o of groupOpts) next.delete(o.id);
-              next.add(picked.id);
-              return next;
-            });
-          }
-          setPickingGroup(null);
-          setModelPickerMode("collapsed");
-        }
+        setPickerIdx((p) => (p > 0 ? p - 1 : pickerLen - 1));
         return;
       }
-
-      const visible = isModelGroup
-        ? visibleModelOptions(groupOpts, enabled, pickCounts)
-        : { list: groupOpts, hiddenCount: 0 };
-      const pickerLen = visible.list.length + 1 + (visible.hiddenCount > 0 ? 1 : 0);
-      if (key.escape || input === "q") { setPickingGroup(null); setModelPickerMode("collapsed"); return; }
-      if (isModelGroup && input === "m") {
-        if (pickerIdx === 0) {
-          launchCurrentDirWithModel();
-          return;
-        }
-        if (visible.hiddenCount > 0 && pickerIdx === visible.list.length + 1) return;
-        const picked = visible.list[pickerIdx - 1];
-        launchCurrentDirWithModel(picked?.id);
+      if (key.downArrow) {
+        if (pickerLen === 0) return;
+        setPickerIdx((p) => (p < pickerLen - 1 ? p + 1 : 0));
         return;
       }
-      if (key.upArrow) { setPickerIdx((p) => (p > 0 ? p - 1 : pickerLen - 1)); return; }
-      if (key.downArrow) { setPickerIdx((p) => (p < pickerLen - 1 ? p + 1 : 0)); return; }
       if (key.return) {
-        if (pickerIdx === 0) {
+        if (isModelGroup) {
+          const picked = list[pickerIdx];
+          if (!picked) return;
+          setEnabled((prev) => {
+            const next = new Set(prev);
+            for (const o of groupOpts) next.delete(o.id);
+            next.add(picked.id);
+            return next;
+          });
+        } else if (pickerIdx === 0) {
           setEnabled((prev) => {
             const next = new Set(prev);
             for (const o of groupOpts) next.delete(o.id);
             return next;
           });
-        } else if (isModelGroup && visible.hiddenCount > 0 && pickerIdx === visible.list.length + 1) {
-          const cur = getGroupSelection(options, enabled, pickingGroup);
-          const ids = groupOpts.map((o) => o.id);
-          const columnCount = getGridColumnCountForOptions(groupOpts, stdout.columns || 80, zh);
-          const initIdx = cur ? gridIndexOf(ids, cur.id, columnCount) : 0;
-          setPickerIdx(Math.max(0, initIdx));
-          setModelPickerMode("grid");
-          return;
         } else {
-          const picked = visible.list[pickerIdx - 1];
+          const picked = list[pickerIdx - 1];
           setEnabled((prev) => {
             const next = new Set(prev);
             for (const o of groupOpts) next.delete(o.id);
@@ -556,7 +455,20 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, init
           });
         }
         setPickingGroup(null);
-        setModelPickerMode("collapsed");
+        setModelQuery("");
+        return;
+      }
+      if (isModelGroup) {
+        if (key.backspace || key.delete) {
+          setModelQuery((value) => value.slice(0, -1));
+          setPickerIdx(0);
+          return;
+        }
+        const searchInput = normalizeSessionSearchInput(input, key);
+        if (searchInput) {
+          setModelQuery((value) => value + searchInput);
+          setPickerIdx(0);
+        }
       }
       return;
     }
@@ -686,7 +598,7 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, init
       const selected = selectedArgs({ launchOptions: options, enabled });
       onResult({ type: "launch", clientId: current.client.id, projectPath: project.path, ...selected });
     }
-  }, [focus, clientIdx, projectIdx, optionIdx, provIdx, provs, currentProv, current, projects, options, optionRows, enabled, clients, onResult, zh, pickingGroup, pickingProvider, pickerIdx, pickCounts, modelPickerMode, stdout.columns, openGroupPicker, launchCurrentDirWithModel, sessionQuery, sessionIdx, selectedSessionKey, sessionResults, sessionDetailKey, sessionVisibleLimit, sessionPageSize, sessionHasMore]));
+  }, [focus, clientIdx, projectIdx, optionIdx, provIdx, provs, currentProv, current, projects, options, optionRows, enabled, clients, onResult, zh, pickingGroup, pickingProvider, pickerIdx, pickCounts, modelQuery, openGroupPicker, sessionQuery, sessionIdx, selectedSessionKey, sessionResults, sessionDetailKey, sessionVisibleLimit, sessionPageSize, sessionHasMore]));
 
   return (
     <Box flexDirection="column" paddingX={0} paddingY={0}>
@@ -743,14 +655,6 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, init
 
         {pickingProvider ? (
           <ProviderPicker provs={provs} provIdx={provIdx} pickerIdx={pickerIdx} color={cs.color} zh={zh} />
-        ) : pickingGroup === "model" && modelPickerMode === "grid" ? (
-          <ModelGridPicker
-            options={options.filter((o) => o.group === "model")}
-            enabled={enabled}
-            pickerIdx={pickerIdx}
-            color={cs.color}
-            zh={zh}
-          />
         ) : pickingGroup ? (
           <GroupPicker
             group={pickingGroup}
@@ -760,6 +664,7 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, init
             color={cs.color}
             zh={zh}
             pickCounts={pickCounts}
+            query={modelQuery}
           />
         ) : (
           <>
