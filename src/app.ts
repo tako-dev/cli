@@ -23,6 +23,17 @@ export function shouldRunStartupUpdate(isDev: boolean): boolean {
   return STARTUP_AUTO_UPDATE_ENABLED && !isDev;
 }
 
+/** Official install lives at ~/.tako/cli/node_modules/tako-cli/. Sidecars like tako2 must not self-update. */
+export function isOfficialCliEntry(entryPath: string): boolean {
+  return entryPath.replace(/\\/g, "/").includes("/cli/node_modules/tako-cli/");
+}
+
+async function maybeStartupUpdate(isDev: boolean): Promise<void> {
+  if (!shouldRunStartupUpdate(isDev)) return;
+  if (!isOfficialCliEntry(process.argv[1] ?? "")) return;
+  await checkAndUpdate();
+}
+
 function showHelp() {
   console.log(`
 ${t("cli.version", { version: VERSION })}
@@ -256,38 +267,37 @@ export async function runCli(main: UiMain): Promise<void> {
 
   // 快捷启动命令
   if (args.includes("--claude")) {
-    if (shouldRunStartupUpdate(isDev)) await checkAndUpdate();
+    await maybeStartupUpdate(isDev);
     await quickLaunch("claude-code", "Claude Code", await buildPassthroughArgs("claude-code", args, "--claude"));
     return;
   }
   if (args.includes("--codex")) {
-    if (shouldRunStartupUpdate(isDev)) await checkAndUpdate();
+    await maybeStartupUpdate(isDev);
     await quickLaunch("codex", "Codex", await buildPassthroughArgs("codex", args, "--codex"));
     return;
   }
   if (args.includes("--gemini")) {
-    if (shouldRunStartupUpdate(isDev)) await checkAndUpdate();
+    await maybeStartupUpdate(isDev);
     await quickLaunch("gemini", "Gemini CLI", await buildPassthroughArgs("gemini", args, "--gemini"));
     return;
   }
   if (args.includes("--pi")) {
-    if (shouldRunStartupUpdate(isDev)) await checkAndUpdate();
+    await maybeStartupUpdate(isDev);
     await quickLaunch("pi", "Pi", await buildPassthroughArgs("pi", args, "--pi"));
     return;
   }
   if (args.includes("--pi-web")) {
-    if (shouldRunStartupUpdate(isDev)) await checkAndUpdate();
+    await maybeStartupUpdate(isDev);
     await quickLaunch("pi-web", "Pi Web", await buildPassthroughArgs("pi-web", args, "--pi-web"));
     return;
   }
   if (args.includes("--grok")) {
-    if (shouldRunStartupUpdate(isDev)) await checkAndUpdate();
+    await maybeStartupUpdate(isDev);
     await quickLaunch("grok", "Grok Build", await buildPassthroughArgs("grok", args, "--grok"));
     return;
   }
 
-  // 检查自动更新
-  if (shouldRunStartupUpdate(isDev)) await checkAndUpdate();
+  await maybeStartupUpdate(isDev);
 
   // 注入 statusline 配置到 Claude Code
   injectStatusLineConfig().catch(() => {});

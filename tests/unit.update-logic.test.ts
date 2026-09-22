@@ -1,7 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import { getTakoDir, getTakoCliDir, getBunBin, isWindows } from "./_helpers/paths";
 import { expectInTakoDir } from "./_helpers/assertions";
-import { shouldRunStartupUpdate } from "../src/app";
+import { isOfficialCliEntry, shouldRunStartupUpdate } from "../src/app";
 import { buildCliUpdateCommand } from "../src/updater";
 
 describe("Update Logic - path configuration", () => {
@@ -54,5 +54,15 @@ describe("Update Logic - path configuration", () => {
 
   it("startup auto update remains disabled in dev mode", () => {
     expect(shouldRunStartupUpdate(true)).toBe(false);
+  });
+
+  it("treats the local ~/.tako/cli install as official", () => {
+    expect(isOfficialCliEntry("/home/u/.tako/cli/node_modules/tako-cli/dist/index.js")).toBe(true);
+    expect(isOfficialCliEntry("C:\\Users\\u\\.tako\\cli\\node_modules\\tako-cli\\dist\\index.js")).toBe(true);
+  });
+
+  it("does not treat sidecar tako2 or source trees as official", () => {
+    expect(isOfficialCliEntry("/home/u/.tako/tako2/dist/index.js")).toBe(false);
+    expect(isOfficialCliEntry("/home/u/develop/tako-cli/dist/index.js")).toBe(false);
   });
 });
