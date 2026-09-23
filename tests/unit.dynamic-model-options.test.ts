@@ -8,6 +8,7 @@ import {
   CLAUDE_MAX_CONTEXT_ENV_KEY,
   TAKO_CONTEXT_WINDOW_ENV_KEY,
   claudeCodeClient,
+  claudeModelPinEnv,
 } from "../src/clients/claude-code";
 import { codexClient } from "../src/clients/codex";
 import { grokClient } from "../src/clients/grok";
@@ -134,19 +135,19 @@ describe("dynamic model launch options", () => {
     const gpt = opts.find((o) => o.id === "model-gpt-5.5");
 
     expect(opus?.envVars).toEqual({
-      ANTHROPIC_MODEL: "claude-opus-4-8[1m]",
+      ...claudeModelPinEnv("claude-opus-4-8[1m]"),
       [CLAUDE_CONTEXT_WINDOW_ENV_KEY]: "950000",
       [CLAUDE_MAX_CONTEXT_ENV_KEY]: "950000",
       [TAKO_CONTEXT_WINDOW_ENV_KEY]: "950000",
     });
     expect(fullOpus?.envVars).toEqual({
-      ANTHROPIC_MODEL: "full-claude-opus-4-8[1m]",
+      ...claudeModelPinEnv("full-claude-opus-4-8[1m]"),
       [CLAUDE_CONTEXT_WINDOW_ENV_KEY]: "950000",
       [CLAUDE_MAX_CONTEXT_ENV_KEY]: "950000",
       [TAKO_CONTEXT_WINDOW_ENV_KEY]: "950000",
     });
     expect(gpt?.envVars).toEqual({
-      ANTHROPIC_MODEL: "gpt-5.5",
+      ...claudeModelPinEnv("gpt-5.5"),
       [CLAUDE_CONTEXT_WINDOW_ENV_KEY]: "272000",
       [CLAUDE_MAX_CONTEXT_ENV_KEY]: "272000",
       [TAKO_CONTEXT_WINDOW_ENV_KEY]: "272000",
@@ -171,7 +172,7 @@ describe("dynamic model launch options", () => {
 
     const option = getClientLaunchOptions(claudeCodeClient, provider("claude-code"))
       .find((o) => o.id === "model-unknown-chat-model");
-    expect(option?.envVars).toEqual({ ANTHROPIC_MODEL: "unknown-chat-model" });
+    expect(option?.envVars).toEqual(claudeModelPinEnv("unknown-chat-model"));
   });
 
   it("Pi model picker lists chat models in order", () => {

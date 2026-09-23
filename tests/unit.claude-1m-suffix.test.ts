@@ -12,7 +12,7 @@
  *  - 其他原样返回
  */
 import { describe, it, expect } from "bun:test";
-import { appendOneMTagIfNeeded, claudeCodeClient } from "../src/clients/claude-code";
+import { appendOneMTagIfNeeded, claudeCodeClient, claudeModelPinEnv } from "../src/clients/claude-code";
 import { getClient, getClientLaunchOptions } from "../src/clients/base";
 import type { Provider } from "../src/providers/types";
 import {
@@ -92,7 +92,7 @@ describe("Claude Code launchOptions 自动带 [1m]", () => {
     expect(opus47!.id).toBe("model-claude-opus-4-7");
     // 模型通过环境变量传递，不用 --model 参数（避免 Claude Code 持久化到全局设置）
     expect(opus47!.envVars).toEqual({
-      ANTHROPIC_MODEL: "claude-opus-4-7[1m]",
+      ...claudeModelPinEnv("claude-opus-4-7[1m]"),
       CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
       CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1000000",
       TAKO_MODEL_CONTEXT_WINDOW: "1000000",
@@ -106,7 +106,7 @@ describe("Claude Code launchOptions 自动带 [1m]", () => {
     const flash = opts.find((o) => o.id === "model-deepseek-v4-flash");
     expect(flash).toBeDefined();
     expect(flash!.envVars).toEqual({
-      ANTHROPIC_MODEL: "deepseek-v4-flash[1m]",
+      ...claudeModelPinEnv("deepseek-v4-flash[1m]"),
       CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
       CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1000000",
       TAKO_MODEL_CONTEXT_WINDOW: "1000000",
@@ -118,7 +118,7 @@ describe("Claude Code launchOptions 自动带 [1m]", () => {
     const pro = opts.find((o) => o.id === "model-mimo-v2.5-pro");
     expect(pro).toBeDefined();
     expect(pro!.envVars).toEqual({
-      ANTHROPIC_MODEL: "mimo-v2.5-pro[1m]",
+      ...claudeModelPinEnv("mimo-v2.5-pro[1m]"),
       CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
       CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1000000",
       TAKO_MODEL_CONTEXT_WINDOW: "1000000",

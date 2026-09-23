@@ -20,11 +20,42 @@ const CLAUDE_PROVIDER_ENV_KEYS = [
 ] as const;
 
 const CLAUDE_MODEL_ENV_KEY = "ANTHROPIC_MODEL";
+// subagent、内置别名（opus/sonnet/haiku/fable）、标题/压缩等 utility 调用各自
+// 走独立的模型解析路径，只钉 ANTHROPIC_MODEL 会让没钉的路径漏回 CC 内置默认
+// 模型（用户选了 mimo/glm 却走成 opus 计费）。Kimi/DeepSeek 官方接入文档的
+// 同款全家桶：选定模型后把全部解析路径钉到同一模型。
+// 不开 CLAUDE_CODE_SUBAGENT_MODEL_FORCE：全家桶已覆盖内置默认漏出，FORCE 连
+// 用户 agent 包 frontmatter 的显式选择也压掉，留作仍见漏时的后手。
+// 旧版 CC 对不认识的 env 无害忽略；ANTHROPIC_SMALL_FAST_MODEL 自 CC v2.1.2
+// 弃用，由 ANTHROPIC_DEFAULT_HAIKU_MODEL 取代，不再下发。
+export const CLAUDE_SUBAGENT_MODEL_ENV_KEY = "CLAUDE_CODE_SUBAGENT_MODEL";
+export const CLAUDE_DEFAULT_OPUS_MODEL_ENV_KEY = "ANTHROPIC_DEFAULT_OPUS_MODEL";
+export const CLAUDE_DEFAULT_SONNET_MODEL_ENV_KEY = "ANTHROPIC_DEFAULT_SONNET_MODEL";
+export const CLAUDE_DEFAULT_HAIKU_MODEL_ENV_KEY = "ANTHROPIC_DEFAULT_HAIKU_MODEL";
+export const CLAUDE_DEFAULT_FABLE_MODEL_ENV_KEY = "ANTHROPIC_DEFAULT_FABLE_MODEL";
+
+/** 把主模型 + subagent/别名/utility 的全部解析路径钉到同一模型 */
+export function claudeModelPinEnv(model: string): Record<string, string> {
+  return {
+    [CLAUDE_MODEL_ENV_KEY]: model,
+    [CLAUDE_SUBAGENT_MODEL_ENV_KEY]: model,
+    [CLAUDE_DEFAULT_OPUS_MODEL_ENV_KEY]: model,
+    [CLAUDE_DEFAULT_SONNET_MODEL_ENV_KEY]: model,
+    [CLAUDE_DEFAULT_HAIKU_MODEL_ENV_KEY]: model,
+    [CLAUDE_DEFAULT_FABLE_MODEL_ENV_KEY]: model,
+  };
+}
+
 export const CLAUDE_CONTEXT_WINDOW_ENV_KEY = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
 export const CLAUDE_MAX_CONTEXT_ENV_KEY = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
 export const TAKO_CONTEXT_WINDOW_ENV_KEY = "TAKO_MODEL_CONTEXT_WINDOW";
 const CLAUDE_OPTION_ENV_KEYS = [
   CLAUDE_MODEL_ENV_KEY,
+  CLAUDE_SUBAGENT_MODEL_ENV_KEY,
+  CLAUDE_DEFAULT_OPUS_MODEL_ENV_KEY,
+  CLAUDE_DEFAULT_SONNET_MODEL_ENV_KEY,
+  CLAUDE_DEFAULT_HAIKU_MODEL_ENV_KEY,
+  CLAUDE_DEFAULT_FABLE_MODEL_ENV_KEY,
   CLAUDE_CONTEXT_WINDOW_ENV_KEY,
   CLAUDE_MAX_CONTEXT_ENV_KEY,
   TAKO_CONTEXT_WINDOW_ENV_KEY,
@@ -191,14 +222,14 @@ export const claudeCodeClient: ClientConfig = {
           ...common,
           ANTHROPIC_BASE_URL: `${provider.baseUrl}/api`,
           ANTHROPIC_AUTH_TOKEN: provider.apiKey!,
-          ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
+          ...(tagged ? claudeModelPinEnv(tagged) : {}),
         };
 
       case "anthropic":
         return {
           ...common,
           ANTHROPIC_API_KEY: provider.apiKey!,
-          ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
+          ...(tagged ? claudeModelPinEnv(tagged) : {}),
         };
 
       case "deepseek":
@@ -206,7 +237,7 @@ export const claudeCodeClient: ClientConfig = {
           ...common,
           ANTHROPIC_BASE_URL: DEEPSEEK_ANTHROPIC_URL,
           ANTHROPIC_AUTH_TOKEN: provider.apiKey!,
-          ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
+          ...(tagged ? claudeModelPinEnv(tagged) : {}),
         };
 
       case "xiaomi":
@@ -215,7 +246,7 @@ export const claudeCodeClient: ClientConfig = {
           ...common,
           ANTHROPIC_BASE_URL: resolveXiaomiBaseUrl(provider.apiKey),
           ANTHROPIC_AUTH_TOKEN: provider.apiKey!,
-          ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
+          ...(tagged ? claudeModelPinEnv(tagged) : {}),
         };
 
       case "custom":
@@ -223,7 +254,7 @@ export const claudeCodeClient: ClientConfig = {
           ...common,
           ANTHROPIC_BASE_URL: provider.baseUrl!,
           ANTHROPIC_AUTH_TOKEN: provider.apiKey!,
-          ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
+          ...(tagged ? claudeModelPinEnv(tagged) : {}),
         };
 
       default:
@@ -367,7 +398,7 @@ function buildDynamicClaudeModels(provider: Provider): LaunchOption[] | null {
       flag: `--model ${modelArg}`,
       args: [],
       envVars: {
-        ANTHROPIC_MODEL: modelArg,
+        ...claudeModelPinEnv(modelArg),
         ...claudeContextEnv(e.contextWindow),
       },
       group: "model",
@@ -408,7 +439,7 @@ function buildModelOptions(provider?: Provider): LaunchOption[] {
       flag: `--model ${modelArg}`,
       args: [],
       envVars: {
-        ANTHROPIC_MODEL: modelArg,
+        ...claudeModelPinEnv(modelArg),
         ...claudeContextEnv(ctx),
       },
       group: "model",
