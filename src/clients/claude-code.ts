@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "path";
 import { ClientConfig, LaunchOption, registerClient } from "./base";
 import type { ProviderContext, Provider } from "../providers/types";
-import { DEEPSEEK_ANTHROPIC_URL, resolveXiaomiBaseUrl } from "../providers/types";
+import { DEEPSEEK_ANTHROPIC_URL, resolveXiaomiBaseUrl, SUBAGENT_MODEL_CC_DEFAULT } from "../providers/types";
 import { log } from "../logger";
 import { t } from "../i18n";
 import { loadCatalog, getTakoModels, filterChatModels } from "../models";
@@ -34,16 +34,37 @@ export const CLAUDE_DEFAULT_SONNET_MODEL_ENV_KEY = "ANTHROPIC_DEFAULT_SONNET_MOD
 export const CLAUDE_DEFAULT_HAIKU_MODEL_ENV_KEY = "ANTHROPIC_DEFAULT_HAIKU_MODEL";
 export const CLAUDE_DEFAULT_FABLE_MODEL_ENV_KEY = "ANTHROPIC_DEFAULT_FABLE_MODEL";
 
-/** 把主模型 + subagent/别名/utility 的全部解析路径钉到同一模型 */
-export function claudeModelPinEnv(model: string): Record<string, string> {
+/** subagent/别名/utility 五条解析路径（不含主模型 ANTHROPIC_MODEL 本身） */
+function claudeSubagentPinEnvFor(model: string): Record<string, string> {
   return {
-    [CLAUDE_MODEL_ENV_KEY]: model,
     [CLAUDE_SUBAGENT_MODEL_ENV_KEY]: model,
     [CLAUDE_DEFAULT_OPUS_MODEL_ENV_KEY]: model,
     [CLAUDE_DEFAULT_SONNET_MODEL_ENV_KEY]: model,
     [CLAUDE_DEFAULT_HAIKU_MODEL_ENV_KEY]: model,
     [CLAUDE_DEFAULT_FABLE_MODEL_ENV_KEY]: model,
   };
+}
+
+/** 把主模型 + subagent/别名/utility 的全部解析路径钉到同一模型 */
+export function claudeModelPinEnv(model: string): Record<string, string> {
+  return { [CLAUDE_MODEL_ENV_KEY]: model, ...claudeSubagentPinEnvFor(model) };
+}
+
+/**
+ * 子代理模型三态（provider.subagentModel）：
+ *  - undefined ＝ 跟随主模型：五条路径钉到主模型（mainTagged，默认）
+ *  - "cc-default" ＝ 不钉：Claude Code 按自己的规则解析（用户 settings.json / shell env 可接管）
+ *  - 其他 ＝ 钉到指定模型 ID（自动补 [1m] 逻辑同主模型）
+ * 主模型未设置且未指定子代理模型时无可钉，返回 {}。
+ */
+export function claudeSubagentPinEnv(
+  provider: { subagentModel?: string },
+  mainTagged?: string,
+): Record<string, string> {
+  const custom = provider.subagentModel?.trim();
+  if (custom === SUBAGENT_MODEL_CC_DEFAULT) return {};
+  if (custom) return claudeSubagentPinEnvFor(appendOneMTagIfNeeded(custom));
+  return mainTagged ? claudeSubagentPinEnvFor(mainTagged) : {};
 }
 
 export const CLAUDE_CONTEXT_WINDOW_ENV_KEY = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
@@ -222,14 +243,16 @@ export const claudeCodeClient: ClientConfig = {
           ...common,
           ANTHROPIC_BASE_URL: `${provider.baseUrl}/api`,
           ANTHROPIC_AUTH_TOKEN: provider.apiKey!,
-          ...(tagged ? claudeModelPinEnv(tagged) : {}),
+          ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
+          ...claudeSubagentPinEnv(provider, tagged),
         };
 
       case "anthropic":
         return {
           ...common,
           ANTHROPIC_API_KEY: provider.apiKey!,
-          ...(tagged ? claudeModelPinEnv(tagged) : {}),
+          ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
+          ...claudeSubagentPinEnv(provider, tagged),
         };
 
       case "deepseek":
@@ -237,7 +260,8 @@ export const claudeCodeClient: ClientConfig = {
           ...common,
           ANTHROPIC_BASE_URL: DEEPSEEK_ANTHROPIC_URL,
           ANTHROPIC_AUTH_TOKEN: provider.apiKey!,
-          ...(tagged ? claudeModelPinEnv(tagged) : {}),
+          ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
+          ...claudeSubagentPinEnv(provider, tagged),
         };
 
       case "xiaomi":
@@ -246,7 +270,8 @@ export const claudeCodeClient: ClientConfig = {
           ...common,
           ANTHROPIC_BASE_URL: resolveXiaomiBaseUrl(provider.apiKey),
           ANTHROPIC_AUTH_TOKEN: provider.apiKey!,
-          ...(tagged ? claudeModelPinEnv(tagged) : {}),
+          ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
+          ...claudeSubagentPinEnv(provider, tagged),
         };
 
       case "custom":
@@ -254,7 +279,8 @@ export const claudeCodeClient: ClientConfig = {
           ...common,
           ANTHROPIC_BASE_URL: provider.baseUrl!,
           ANTHROPIC_AUTH_TOKEN: provider.apiKey!,
-          ...(tagged ? claudeModelPinEnv(tagged) : {}),
+          ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
+          ...claudeSubagentPinEnv(provider, tagged),
         };
 
       default:
@@ -398,7 +424,8 @@ function buildDynamicClaudeModels(provider: Provider): LaunchOption[] | null {
       flag: `--model ${modelArg}`,
       args: [],
       envVars: {
-        ...claudeModelPinEnv(modelArg),
+        ANTHROPIC_MODEL: modelArg,
+        ...claudeSubagentPinEnv(provider, modelArg),
         ...claudeContextEnv(e.contextWindow),
       },
       group: "model",
@@ -439,7 +466,8 @@ function buildModelOptions(provider?: Provider): LaunchOption[] {
       flag: `--model ${modelArg}`,
       args: [],
       envVars: {
-        ...claudeModelPinEnv(modelArg),
+        ANTHROPIC_MODEL: modelArg,
+        ...claudeSubagentPinEnv(provider ?? {}, modelArg),
         ...claudeContextEnv(ctx),
       },
       group: "model",

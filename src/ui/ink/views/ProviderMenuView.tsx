@@ -12,14 +12,14 @@ import {
   detectProviders, mergeDetectedProviders,
 } from "../../../providers";
 import { getAllClients } from "../../../clients";
-import { isProviderCompatible } from "../../../providers/types";
+import { isProviderCompatible, SUBAGENT_MODEL_CC_DEFAULT } from "../../../providers/types";
 import type { Provider, ProviderType } from "../../../providers/types";
 import { PROVIDER_TYPE_NAMES, getDefaultSupportedClients, getDefaultModel, getDefaultBaseUrl, getModelChoices } from "../../../providers/types";
 import { BUNDLED_ENTRIES } from "../../../models/bundled";
 import { track, identify, reset as resetAnalytics } from "../../../analytics";
 import { PROV_STYLE, TAB_STYLE, ADD_TYPES, ProviderCard, InputScreen, DetailScreen } from "./ProviderComponents";
 
-type Screen = "list" | "detail" | "add-type" | "add-key" | "add-url" | "add-model" | "add-ctx" | "scanning" | "logging-in";
+type Screen = "list" | "detail" | "add-type" | "add-key" | "add-url" | "add-model" | "add-ctx" | "submodel" | "submodel-custom" | "scanning" | "logging-in";
 
 // ─── Main Component ─────────────────────────────────
 
@@ -40,6 +40,7 @@ function ProviderMenuComponent({ onDone }: { onDone: (action?: DoneAction) => vo
   const [addUrl, setAddUrl] = useState("");
   const [addModel, setAddModel] = useState("");
   const [addCtx, setAddCtx] = useState("");
+  const [subModelInput, setSubModelInput] = useState("");
   const zh = getLocale() === "zh";
 
   const clients = getAllClients();
@@ -57,6 +58,8 @@ function ProviderMenuComponent({ onDone }: { onDone: (action?: DoneAction) => vo
   const detailActions = selectedProv ? [
     ...(selectedProv.id !== defaultId ? ["default"] as const : []),
     ...(isSubscription ? ["relogin"] as const : []),
+    // Claude Code 子代理模型三态（跟随主模型 / CC 默认 / 指定模型）只对 API key 类 provider 有意义
+    ...(!isSubscription ? ["submodel"] as const : []),
     ...(selectedProv.builtin ? ["rekey"] as const : ["delete"] as const),
     "back" as const,
   ] : ["back" as const];
@@ -210,6 +213,12 @@ function ProviderMenuComponent({ onDone }: { onDone: (action?: DoneAction) => vo
         if (a === "default") { setDefaultProvider(selectedId).then(() => { setMessage(zh ? "已设为默认" : "Set as default"); refresh(); setScreen("list"); setRowIdx(0); }); }
         if (a === "delete") { deleteProvider(selectedId).then(() => { setMessage(zh ? "已删除" : "Deleted"); refresh(); setScreen("list"); setRowIdx(0); }); }
         if (a === "rekey") { setAddType(selectedProv?.type || "tako"); setAddKey(""); setScreen("add-key"); setRowIdx(0); }
+        if (a === "submodel") {
+          const cur = selectedProv?.subagentModel;
+          setRowIdx(cur === SUBAGENT_MODEL_CC_DEFAULT ? 1 : cur ? 2 : 0);
+          setSubModelInput(cur && cur !== SUBAGENT_MODEL_CC_DEFAULT ? cur : "");
+          setScreen("submodel");
+        }
         if (a === "relogin") {
           // 重跑订阅登录流程；登录成功后 doLogin 内部会更新 authData
           const tool = selectedProv?.type === "codex-subscription" ? "codex" : "claude";
@@ -217,6 +226,42 @@ function ProviderMenuComponent({ onDone }: { onDone: (action?: DoneAction) => vo
           doLogin(tool);
         }
       }
+      return;
+    }
+    if (screen === "submodel") {
+      if (key.escape) { setScreen("detail"); setDetailIdx(0); return; }
+      if (key.upArrow) { setRowIdx((p) => (p > 0 ? p - 1 : 2)); return; }
+      if (key.downArrow) { setRowIdx((p) => (p < 2 ? p + 1 : 0)); return; }
+      if (key.return) {
+        const done = (msg: string) => { setMessage(msg); refresh(); setScreen("detail"); setDetailIdx(0); };
+        if (rowIdx === 0) {
+          updateProvider(selectedId, { subagentModel: undefined })
+            .then(() => done(zh ? "子代理模型：跟随主模型" : "Subagent: follow main"));
+        } else if (rowIdx === 1) {
+          updateProvider(selectedId, { subagentModel: SUBAGENT_MODEL_CC_DEFAULT })
+            .then(() => done(zh ? "子代理模型：Claude Code 默认" : "Subagent: CC default"));
+        } else {
+          setScreen("submodel-custom");
+        }
+        return;
+      }
+      return;
+    }
+    if (screen === "submodel-custom") {
+      if (key.escape) { setScreen("submodel"); return; }
+      if (key.return) {
+        const v = subModelInput.trim();
+        updateProvider(selectedId, { subagentModel: v || undefined })
+          .then(() => {
+            setMessage(v
+              ? (zh ? `子代理模型：${v}` : `Subagent: ${v}`)
+              : (zh ? "子代理模型：跟随主模型" : "Subagent: follow main"));
+            refresh(); setScreen("detail"); setDetailIdx(0);
+          });
+        return;
+      }
+      if (key.backspace || key.delete) { setSubModelInput((p) => p.slice(0, -1)); return; }
+      if (input && !key.ctrl) { setSubModelInput((p) => p + input); }
       return;
     }
     if (screen === "add-type") {
@@ -284,7 +329,7 @@ function ProviderMenuComponent({ onDone }: { onDone: (action?: DoneAction) => vo
       if (input && !key.ctrl && /^[0-9]$/.test(input)) { setAddCtx((p) => p + input); }
       return;
     }
-  }, [screen, rowIdx, detailIdx, compatible, totalRows, clients.length, currentClient, selectedId, selectedProv, detailActions, addType, addKey, addUrl, addModel, addCtx, onDone, doScan, doLogin, finishAdd, refresh, zh]));
+  }, [screen, rowIdx, detailIdx, compatible, totalRows, clients.length, currentClient, selectedId, selectedProv, detailActions, addType, addKey, addUrl, addModel, addCtx, subModelInput, onDone, doScan, doLogin, finishAdd, refresh, zh]));
 
   // ═══════════════════════════════════════
   // Render
@@ -345,6 +390,86 @@ function ProviderMenuComponent({ onDone }: { onDone: (action?: DoneAction) => vo
           <Text dimColor bold>↑↓</Text><Text dimColor>{zh ? "选择" : "select"}</Text>
           <Text dimColor>│</Text>
           <Text dimColor bold>Enter</Text><Text dimColor>{zh ? "确认" : "confirm"}</Text>
+          <Text dimColor>│</Text>
+          <Text dimColor bold>Esc</Text><Text dimColor>{zh ? "返回" : "back"}</Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  if (screen === "submodel" && selectedProv) {
+    const cur = selectedProv.subagentModel;
+    const curIdx = cur === SUBAGENT_MODEL_CC_DEFAULT ? 1 : cur ? 2 : 0;
+    const items = [
+      {
+        key: "follow",
+        label: zh ? "跟随主模型" : "Follow main model",
+        desc: zh ? "subagent / 别名 / utility 全部锁定到主模型（推荐）" : "Pin subagent / alias / utility to main model (recommended)",
+      },
+      {
+        key: "cc-default",
+        label: zh ? "Claude Code 默认" : "Claude Code default",
+        desc: zh ? "不锁定，由 Claude Code 自己解析（settings.json / 环境变量可接管）" : "No pinning; Claude Code resolves on its own (settings.json / env can take over)",
+      },
+      {
+        key: "custom",
+        label: zh ? "指定模型…" : "Custom model…",
+        desc: zh ? "锁定到你填写的模型 ID（如主模型便宜 + subagent 强力）" : "Pin to a model ID you enter (e.g. cheap main + strong subagent)",
+      },
+    ];
+    return (
+      <Box flexDirection="column" paddingX={2} paddingY={1}>
+        <Box borderStyle="bold" borderColor="cyan" paddingX={3} paddingY={1} flexDirection="column">
+          <Box gap={1} marginBottom={1}>
+            <Text bold color="cyan">🧩 {zh ? "子代理模型" : "Subagent Model"}</Text>
+            <Text dimColor>— Claude Code</Text>
+          </Box>
+          {items.map((it, i) => {
+            const focused = rowIdx === i;
+            return (
+              <Box key={it.key} flexDirection="column" paddingLeft={1}>
+                <Box gap={1}>
+                  <Text color={focused ? "cyan" : undefined} bold={focused}>{focused ? "▸" : " "}</Text>
+                  <Text bold={focused} color={focused ? "cyan" : undefined}>
+                    {it.label}{i === curIdx ? (zh ? "（当前）" : " (current)") : ""}
+                  </Text>
+                </Box>
+                {focused && <Text dimColor>  {it.desc}</Text>}
+              </Box>
+            );
+          })}
+          {curIdx === 2 && (
+            <Box marginTop={1}><Text dimColor>{zh ? "当前指定" : "Current"}: {cur}</Text></Box>
+          )}
+        </Box>
+        <Box marginTop={1} borderStyle="round" borderColor="gray" paddingX={2} justifyContent="center" gap={2}>
+          <Text dimColor bold>↑↓</Text><Text dimColor>{zh ? "选择" : "select"}</Text>
+          <Text dimColor>│</Text>
+          <Text dimColor bold>Enter</Text><Text dimColor>{zh ? "确认" : "confirm"}</Text>
+          <Text dimColor>│</Text>
+          <Text dimColor bold>Esc</Text><Text dimColor>{zh ? "返回" : "back"}</Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  if (screen === "submodel-custom" && selectedProv) {
+    return (
+      <Box flexDirection="column" paddingX={2} paddingY={1}>
+        <Box borderStyle="bold" borderColor="cyan" paddingX={3} paddingY={1} flexDirection="column">
+          <Box gap={1} marginBottom={1}>
+            <Text bold color="cyan">🧩 {zh ? "指定子代理模型" : "Custom Subagent Model"}</Text>
+            <Text dimColor>— Claude Code</Text>
+          </Box>
+          <Text dimColor>  {zh ? "输入模型 ID；留空保存 = 恢复跟随主模型" : "Enter a model ID; save empty = follow main model"}</Text>
+          <Box marginTop={1}>
+            <Text color="cyan" bold>{"›"} </Text>
+            <Text>{subModelInput}</Text>
+            <Text color="cyan">█</Text>
+          </Box>
+        </Box>
+        <Box marginTop={1} borderStyle="round" borderColor="gray" paddingX={2} justifyContent="center" gap={2}>
+          <Text dimColor bold>Enter</Text><Text dimColor>{zh ? "保存" : "save"}</Text>
           <Text dimColor>│</Text>
           <Text dimColor bold>Esc</Text><Text dimColor>{zh ? "返回" : "back"}</Text>
         </Box>

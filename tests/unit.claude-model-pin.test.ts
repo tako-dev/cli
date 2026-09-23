@@ -20,7 +20,9 @@ import {
   buildTakoClaudeSettingsOverlay,
   claudeCodeClient,
   claudeModelPinEnv,
+  claudeSubagentPinEnv,
 } from "../src/clients/claude-code";
+import { SUBAGENT_MODEL_CC_DEFAULT } from "../src/providers/types";
 import { getClientLaunchOptions } from "../src/clients/base";
 
 import "../src/clients";
@@ -33,6 +35,9 @@ const PIN_KEYS = [
   CLAUDE_DEFAULT_HAIKU_MODEL_ENV_KEY,
   CLAUDE_DEFAULT_FABLE_MODEL_ENV_KEY,
 ] as const;
+
+/** 五条子代理/别名/utility 路径（不含 ANTHROPIC_MODEL 本身） */
+const SUBAGENT_PIN_KEYS = PIN_KEYS.slice(1);
 
 describe("claudeModelPinEnv", () => {
   it("六个解析路径全部钉到同一模型", () => {
@@ -126,6 +131,94 @@ describe("getEnvVars 模型全家桶", () => {
       model: "mimo-v2.6-pro",
     });
     expect(env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE).toBeUndefined();
+  });
+});
+
+describe("子代理模型三态（provider.subagentModel）", () => {
+  const takoCtx = {
+    type: "tako",
+    apiKey: "sk",
+    baseUrl: "https://x",
+    model: "mimo-v2.5-pro",
+  } as const;
+
+  it("cc-default：主模型照发，五条子代理路径全不钉", () => {
+    const env = claudeCodeClient.getEnvVars({ ...takoCtx, subagentModel: SUBAGENT_MODEL_CC_DEFAULT });
+    expect(env.ANTHROPIC_MODEL).toBe("mimo-v2.5-pro[1m]");
+    for (const key of SUBAGENT_PIN_KEYS) {
+      expect(env[key]).toBeUndefined();
+    }
+  });
+
+  it("指定模型：主模型不变，五条路径钉到指定模型（[1m] 逻辑同主模型）", () => {
+    const env = claudeCodeClient.getEnvVars({ ...takoCtx, subagentModel: "claude-opus-4-7" });
+    expect(env.ANTHROPIC_MODEL).toBe("mimo-v2.5-pro[1m]");
+    for (const key of SUBAGENT_PIN_KEYS) {
+      expect(env[key]).toBe("claude-opus-4-7[1m]");
+    }
+  });
+
+  it("指定非 claude 系模型：pins 原样跟随不加 [1m]", () => {
+    const env = claudeCodeClient.getEnvVars({ ...takoCtx, subagentModel: "glm-5.3" });
+    expect(env[CLAUDE_SUBAGENT_MODEL_ENV_KEY]).toBe("glm-5.3");
+    expect(env[CLAUDE_DEFAULT_HAIKU_MODEL_ENV_KEY]).toBe("glm-5.3");
+  });
+
+  it("指定模型 + 主模型未设：只发五条 pins，不发 ANTHROPIC_MODEL", () => {
+    const env = claudeCodeClient.getEnvVars({
+      type: "tako",
+      apiKey: "sk",
+      baseUrl: "https://x",
+      subagentModel: "glm-5.3",
+    });
+    expect(env.ANTHROPIC_MODEL).toBeUndefined();
+    for (const key of SUBAGENT_PIN_KEYS) {
+      expect(env[key]).toBe("glm-5.3");
+    }
+  });
+
+  it("claudeSubagentPinEnv：cc-default → {}；空白字符串 → 按跟随主模型处理", () => {
+    expect(claudeSubagentPinEnv({ subagentModel: SUBAGENT_MODEL_CC_DEFAULT }, "m[1m]")).toEqual({});
+    expect(claudeSubagentPinEnv({ subagentModel: "  " }, "m[1m]")).toEqual({
+      CLAUDE_CODE_SUBAGENT_MODEL: "m[1m]",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "m[1m]",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "m[1m]",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "m[1m]",
+      ANTHROPIC_DEFAULT_FABLE_MODEL: "m[1m]",
+    });
+    expect(claudeSubagentPinEnv({}, undefined)).toEqual({});
+  });
+
+  it("静态模型选项：cc-default 时选项 envVars 也不钉", () => {
+    const opts = getClientLaunchOptions(claudeCodeClient, {
+      id: "p",
+      name: "P",
+      type: "anthropic",
+      apiKey: "sk",
+      subagentModel: SUBAGENT_MODEL_CC_DEFAULT,
+      createdAt: new Date().toISOString(),
+    });
+    const opus = opts.find((o) => o.id === "model-claude-opus-4-7");
+    expect(opus?.envVars?.ANTHROPIC_MODEL).toBe("claude-opus-4-7[1m]");
+    for (const key of SUBAGENT_PIN_KEYS) {
+      expect(opus?.envVars?.[key]).toBeUndefined();
+    }
+  });
+
+  it("静态模型选项：指定模型时选项 envVars 钉到指定模型", () => {
+    const opts = getClientLaunchOptions(claudeCodeClient, {
+      id: "p",
+      name: "P",
+      type: "anthropic",
+      apiKey: "sk",
+      subagentModel: "glm-5.3",
+      createdAt: new Date().toISOString(),
+    });
+    const opus = opts.find((o) => o.id === "model-claude-opus-4-7");
+    expect(opus?.envVars?.ANTHROPIC_MODEL).toBe("claude-opus-4-7[1m]");
+    for (const key of SUBAGENT_PIN_KEYS) {
+      expect(opus?.envVars?.[key]).toBe("glm-5.3");
+    }
   });
 });
 

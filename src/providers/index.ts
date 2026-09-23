@@ -144,6 +144,7 @@ export function resolveProviderContext(provider: Provider): ProviderContext {
     baseUrl: provider.baseUrl,
     authData: provider.authData,
     model: provider.model,
+    subagentModel: provider.subagentModel,
     modelContextWindow: provider.modelContextWindow,
   };
 }

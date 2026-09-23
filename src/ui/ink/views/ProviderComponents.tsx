@@ -5,7 +5,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { Provider, ProviderType } from "../../../providers/types";
-import { PROVIDER_TYPE_NAMES, getDefaultModel, getModelChoices } from "../../../providers/types";
+import { PROVIDER_TYPE_NAMES, getDefaultModel, getModelChoices, SUBAGENT_MODEL_CC_DEFAULT } from "../../../providers/types";
 
 // ─── Style constants ────────────────────────────────
 
@@ -188,6 +188,18 @@ export function DetailScreen({ provider, defaultId, detailActions, detailIdx, zh
           {provider.model && (
             <Box gap={1}><Text dimColor>{zh ? "模型" : "Model"}:</Text><Text>{provider.model}</Text></Box>
           )}
+          {provider.type !== "claude-subscription" && provider.type !== "codex-subscription" && (
+            <Box gap={1}>
+              <Text dimColor>{zh ? "子代理" : "Subagent"}:</Text>
+              <Text>
+                {provider.subagentModel === SUBAGENT_MODEL_CC_DEFAULT
+                  ? (zh ? "Claude Code 默认" : "CC default")
+                  : provider.subagentModel
+                    ? provider.subagentModel
+                    : (zh ? "跟随主模型" : "follow main")}
+              </Text>
+            </Box>
+          )}
           {provider.email && (
             <Box gap={1}><Text dimColor>Email:</Text><Text>{provider.email}</Text></Box>
           )}
@@ -203,6 +215,7 @@ export function DetailScreen({ provider, defaultId, detailActions, detailIdx, zh
         {detailActions.map((a, i) => {
           const label = a === "default" ? `⭐ ${zh ? "设为默认" : "Set Default"}`
             : a === "rekey" ? `🔑 ${zh ? "修改 Key" : "Change Key"}`
+            : a === "submodel" ? `🧩 ${zh ? "子代理模型" : "Subagent Model"}`
             : a === "relogin" ? `🔄 ${zh ? "重新登录" : "Re-login"}`
             : a === "delete" ? `🗑️  ${zh ? "删除" : "Delete"}`
             : `← ${zh ? "返回" : "Back"}`;

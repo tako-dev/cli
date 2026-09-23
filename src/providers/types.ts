@@ -32,6 +32,11 @@ export interface Provider {
   authData?: Record<string, any>;
   /** 指定使用的模型（不同服务商有不同默认模型） */
   model?: string;
+  /** Claude Code 子代理模型三态：
+   *  undefined = 跟随主模型（subagent/别名/utility 全钉到主模型，默认）
+   *  "cc-default" = 不钉，Claude Code 按自己的规则解析（用户 settings.json / shell env 可接管）
+   *  其他字符串 = 钉到指定模型 ID（主模型便宜 + subagent 强力的混合玩法） */
+  subagentModel?: string;
   /** 当 model 不在内置 catalog 时，由用户提供的 context window（单位 token），
    *  用于 Codex 等需要 metadata 的客户端，避免 fallback metadata 警告 */
   modelContextWindow?: number;
@@ -50,9 +55,14 @@ export interface ProviderContext {
   authData?: Record<string, any>;
   /** 指定模型 */
   model?: string;
+  /** Claude Code 子代理模型三态（见 Provider.subagentModel） */
+  subagentModel?: string;
   /** 用户为自定义 model 录入的 context window（catalog 没有时用） */
   modelContextWindow?: number;
 }
+
+/** Provider.subagentModel 的哨兵值：不钉子代理模型，走 Claude Code 自己的解析 */
+export const SUBAGENT_MODEL_CC_DEFAULT = "cc-default";
 
 /**
  * Provider 类型显示名称
