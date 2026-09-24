@@ -67,6 +67,64 @@ export function claudeSubagentPinEnv(
   return mainTagged ? claudeSubagentPinEnvFor(mainTagged) : {};
 }
 
+// ─── 子代理模型：启动选项组 + 合并后单点钉 ────────────────────────────
+// 启动选项组只是「模式标记」（不带 envVars）：钉值依赖最终生效的主模型，而
+// 主模型可能被同屏的模型选项覆盖，静态 envVars 表达不了「跟随最终模型」；且
+// env 合并且增不删，「CC 默认」要撤掉已注入的钉也只能在合并后统一不算。
+// 所以钉收敛到 setupConfigFiles（launchEnvVars 已是 getEnvVars+选项合并后的
+// 终值）；tako agent 后台会话绕过 setupConfigFiles，由 agent/manager 用
+// claudeCodeSessionPinEnv 单独补钉。
+export const SUBAGENT_OPTION_GROUP = "subagent-model";
+export const SUBAGENT_OPTION_FOLLOW_ID = "subagent-follow";
+export const SUBAGENT_OPTION_CC_DEFAULT_ID = "subagent-cc-default";
+export const SUBAGENT_OPTION_CUSTOM_ID = "subagent-custom";
+
+type SubagentMode = "follow" | "cc-default" | "custom";
+
+/** 启动选项选中优先，provider.subagentModel 是默认值来源。 */
+function resolveSubagentMode(
+  provider: { subagentModel?: string },
+  selectedOptionIds?: string[],
+): SubagentMode {
+  if (selectedOptionIds?.includes(SUBAGENT_OPTION_CC_DEFAULT_ID)) return "cc-default";
+  if (selectedOptionIds?.includes(SUBAGENT_OPTION_FOLLOW_ID)) return "follow";
+  if (selectedOptionIds?.includes(SUBAGENT_OPTION_CUSTOM_ID)) {
+    // 指定项只在 provider 配了指定模型时出现在选项里；配置被清掉则回退跟随（钉比漏安全）
+    const custom = provider.subagentModel?.trim();
+    return custom && custom !== SUBAGENT_MODEL_CC_DEFAULT ? "custom" : "follow";
+  }
+  const custom = provider.subagentModel?.trim();
+  if (custom === SUBAGENT_MODEL_CC_DEFAULT) return "cc-default";
+  if (custom) return "custom";
+  return "follow";
+}
+
+/**
+ * 启动合并后的单点钉计算。launchEnvVars 是 getEnvVars+选项 envVars 合并终值，
+ * 跟随模式直接钉其 ANTHROPIC_MODEL（下发处已含 [1m] 后缀，不再二次补）。
+ */
+export function resolveLaunchPinEnv(
+  provider: { subagentModel?: string },
+  selectedOptionIds: string[] | undefined,
+  launchEnvVars: Record<string, string>,
+): Record<string, string> {
+  const mode = resolveSubagentMode(provider, selectedOptionIds);
+  if (mode === "cc-default") return {};
+  if (mode === "custom") {
+    return claudeSubagentPinEnvFor(appendOneMTagIfNeeded(provider.subagentModel!.trim()));
+  }
+  const main = launchEnvVars[CLAUDE_MODEL_ENV_KEY];
+  return main ? claudeSubagentPinEnvFor(main) : {};
+}
+
+/** tako agent 后台会话的钉（该 spawn 路径绕过 setupConfigFiles），按 provider 三态。 */
+export function claudeCodeSessionPinEnv(provider: ProviderContext): Record<string, string> {
+  return claudeSubagentPinEnv(
+    provider,
+    provider.model ? appendOneMTagIfNeeded(provider.model) : undefined,
+  );
+}
+
 export const CLAUDE_CONTEXT_WINDOW_ENV_KEY = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
 export const CLAUDE_MAX_CONTEXT_ENV_KEY = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
 export const TAKO_CONTEXT_WINDOW_ENV_KEY = "TAKO_MODEL_CONTEXT_WINDOW";
@@ -232,6 +290,10 @@ export const claudeCodeClient: ClientConfig = {
 
     // 1M 后缀：claude/deepseek/kimi 系列且 catalog >= 1M 的自动补 [1m]
     const tagged = provider.model ? appendOneMTagIfNeeded(provider.model) : undefined;
+    // 注意：subagent/别名/utility 五条路径的钉不在此处下发——静态 getEnvVars
+    // 无法支持启动选项的「CC 默认」撤钉（env 合并只增不删），钉收敛到
+    // setupConfigFiles 合并后单点（resolveLaunchPinEnv）+ agent 会话的
+    // claudeCodeSessionPinEnv，详见 SUBAGENT_OPTION_GROUP 上方注释。
 
     switch (provider.type) {
       case "claude-subscription":
@@ -244,7 +306,6 @@ export const claudeCodeClient: ClientConfig = {
           ANTHROPIC_BASE_URL: `${provider.baseUrl}/api`,
           ANTHROPIC_AUTH_TOKEN: provider.apiKey!,
           ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
-          ...claudeSubagentPinEnv(provider, tagged),
         };
 
       case "anthropic":
@@ -252,7 +313,6 @@ export const claudeCodeClient: ClientConfig = {
           ...common,
           ANTHROPIC_API_KEY: provider.apiKey!,
           ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
-          ...claudeSubagentPinEnv(provider, tagged),
         };
 
       case "deepseek":
@@ -261,7 +321,6 @@ export const claudeCodeClient: ClientConfig = {
           ANTHROPIC_BASE_URL: DEEPSEEK_ANTHROPIC_URL,
           ANTHROPIC_AUTH_TOKEN: provider.apiKey!,
           ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
-          ...claudeSubagentPinEnv(provider, tagged),
         };
 
       case "xiaomi":
@@ -271,7 +330,6 @@ export const claudeCodeClient: ClientConfig = {
           ANTHROPIC_BASE_URL: resolveXiaomiBaseUrl(provider.apiKey),
           ANTHROPIC_AUTH_TOKEN: provider.apiKey!,
           ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
-          ...claudeSubagentPinEnv(provider, tagged),
         };
 
       case "custom":
@@ -280,7 +338,6 @@ export const claudeCodeClient: ClientConfig = {
           ANTHROPIC_BASE_URL: provider.baseUrl!,
           ANTHROPIC_AUTH_TOKEN: provider.apiKey!,
           ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
-          ...claudeSubagentPinEnv(provider, tagged),
         };
 
       default:
@@ -288,7 +345,7 @@ export const claudeCodeClient: ClientConfig = {
     }
   },
 
-  async setupConfigFiles(provider: ProviderContext, _selectedOptionIds?: string[], context?: { forLaunch?: boolean; launchEnvVars?: Record<string, string> }) {
+  async setupConfigFiles(provider: ProviderContext, selectedOptionIds?: string[], context?: { forLaunch?: boolean; launchEnvVars?: Record<string, string> }) {
     // 多账号切换：把目标账号的 OAuth tokens 还原到 Claude Code 的存储位置
     if (provider.type === "claude-subscription") {
       await syncClaudeSubscription(provider);
@@ -296,14 +353,20 @@ export const claudeCodeClient: ClientConfig = {
 
     if (!context?.forLaunch) return undefined;
 
+    // 钉在 env 合并后单点计算（launchEnvVars 已是 getEnvVars+选项合并终值），
+    // 跟随模式钉最终主模型；「CC 默认」不下发任何钉，让 CC/用户配置接管。
+    const baseEnv = context.launchEnvVars ?? claudeCodeClient.getEnvVars(provider);
+    const pinEnv = resolveLaunchPinEnv(provider, selectedOptionIds, baseEnv);
+
     // Keep all normal Claude configuration sources enabled. The CLI overlay has
     // higher precedence but contains only provider-owned env keys.
     const launchSettings = await prepareTakoClaudeSettingsForLaunch({
-      launchEnvVars: context.launchEnvVars ?? claudeCodeClient.getEnvVars(provider),
+      launchEnvVars: { ...baseEnv, ...pinEnv },
     });
     return {
       args: launchSettings.args,
       cleanupFiles: launchSettings.cleanupFiles,
+      envVars: pinEnv,
     };
   },
 
@@ -425,7 +488,6 @@ function buildDynamicClaudeModels(provider: Provider): LaunchOption[] | null {
       args: [],
       envVars: {
         ANTHROPIC_MODEL: modelArg,
-        ...claudeSubagentPinEnv(provider, modelArg),
         ...claudeContextEnv(e.contextWindow),
       },
       group: "model",
@@ -467,7 +529,6 @@ function buildModelOptions(provider?: Provider): LaunchOption[] {
       args: [],
       envVars: {
         ANTHROPIC_MODEL: modelArg,
-        ...claudeSubagentPinEnv(provider ?? {}, modelArg),
         ...claudeContextEnv(ctx),
       },
       group: "model",
@@ -476,8 +537,65 @@ function buildModelOptions(provider?: Provider): LaunchOption[] {
   return out;
 }
 
+/**
+ * 「子代理模型」启动选项组（互斥，与模型组并排）。
+ * 选项只是模式标记、不带 envVars——真正的钉在 setupConfigFiles 合并后单点
+ * 计算（resolveLaunchPinEnv）。defaultOn 镜像 provider.subagentModel 默认值，
+ * 用户单次启动可偏离；项目记忆会记住选择。
+ * 订阅 provider 不钉也不提供该组（走 OAuth + CC 自己的解析）。
+ */
+function buildSubagentModelOptions(provider?: Provider): LaunchOption[] {
+  if (!provider || provider.type === "claude-subscription") return [];
+  const custom = provider.subagentModel?.trim();
+  const isCustom = !!custom && custom !== SUBAGENT_MODEL_CC_DEFAULT;
+  const options: LaunchOption[] = [
+    {
+      id: SUBAGENT_OPTION_FOLLOW_ID,
+      label: { en: "Subagent follows main model", zh: "子代理跟随主模型" },
+      shortLabel: "子代理跟随",
+      description: {
+        en: "Pin subagent / builtin-alias / title & compaction calls to the selected main model",
+        zh: "子代理、内置别名、标题/压缩等调用全部钉到选定的主模型",
+      },
+      flag: "",
+      args: [],
+      group: SUBAGENT_OPTION_GROUP,
+      ...(!custom ? { defaultOn: true } : {}),
+    },
+    {
+      id: SUBAGENT_OPTION_CC_DEFAULT_ID,
+      label: { en: "Subagent uses Claude Code default", zh: "子代理用 Claude Code 默认" },
+      shortLabel: "子代理 CC 默认",
+      description: {
+        en: "Don't pin; Claude Code resolves subagents by its own rules (your settings.json / shell env can take over)",
+        zh: "不钉：Claude Code 按自己的规则解析（用户 settings.json / shell env 可接管）",
+      },
+      flag: "",
+      args: [],
+      group: SUBAGENT_OPTION_GROUP,
+      ...(custom === SUBAGENT_MODEL_CC_DEFAULT ? { defaultOn: true } : {}),
+    },
+  ];
+  if (isCustom) {
+    options.push({
+      id: SUBAGENT_OPTION_CUSTOM_ID,
+      label: { en: `Subagent: ${custom}`, zh: `子代理指定：${custom}` },
+      shortLabel: `子代理 ${custom}`,
+      description: {
+        en: `Pin subagent paths to ${custom} (configured in provider details)`,
+        zh: `子代理等路径钉到 ${custom}（在服务商详情页配置）`,
+      },
+      flag: "",
+      args: [],
+      group: SUBAGENT_OPTION_GROUP,
+      defaultOn: true,
+    });
+  }
+  return options;
+}
+
 function buildClaudeCodeLaunchOptions(provider?: Provider): LaunchOption[] {
-  return [...BASE_FLAGS, ...buildModelOptions(provider)];
+  return [...BASE_FLAGS, ...buildModelOptions(provider), ...buildSubagentModelOptions(provider)];
 }
 
 registerClient(claudeCodeClient);

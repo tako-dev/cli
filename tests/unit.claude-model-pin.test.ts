@@ -6,9 +6,13 @@
  * 时，没钉的路径会漏回 CC 内置默认模型（生产实锤：用户选 mimo/glm，
  * subagent 请求走成 claude-opus-5 / claude-opus-4-6 计费）。
  *
- * 修复（Kimi/DeepSeek 官方接入文档同款）：凡下发 ANTHROPIC_MODEL 的地方，
- * 同步把 CLAUDE_CODE_SUBAGENT_MODEL 与 ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU,FABLE}_MODEL
- * 钉成同一个模型值（含 [1m] 后缀逻辑）。刻意不开 CLAUDE_CODE_SUBAGENT_MODEL_FORCE。
+ * 架构（0.3.44 起）：钉不在 getEnvVars/选项 envVars 里静态下发——env 合并
+ * 只增不删，「CC 默认」启动选项无法撤掉已注入的钉。钉收敛到两处：
+ *  - 交互启动：setupConfigFiles 在 env 合并后单点计算（resolveLaunchPinEnv），
+ *    模式 = 启动选项组选中 > provider.subagentModel 默认；
+ *  - tako agent 后台会话（绕过 setupConfigFiles）：agent/manager 用
+ *    claudeCodeSessionPinEnv 按 provider 三态补钉。
+ * 刻意不开 CLAUDE_CODE_SUBAGENT_MODEL_FORCE。
  */
 import { describe, it, expect } from "bun:test";
 import {
@@ -17,10 +21,15 @@ import {
   CLAUDE_DEFAULT_SONNET_MODEL_ENV_KEY,
   CLAUDE_DEFAULT_HAIKU_MODEL_ENV_KEY,
   CLAUDE_DEFAULT_FABLE_MODEL_ENV_KEY,
+  SUBAGENT_OPTION_GROUP,
+  SUBAGENT_OPTION_FOLLOW_ID,
+  SUBAGENT_OPTION_CC_DEFAULT_ID,
+  SUBAGENT_OPTION_CUSTOM_ID,
   buildTakoClaudeSettingsOverlay,
   claudeCodeClient,
+  claudeCodeSessionPinEnv,
   claudeModelPinEnv,
-  claudeSubagentPinEnv,
+  resolveLaunchPinEnv,
 } from "../src/clients/claude-code";
 import { SUBAGENT_MODEL_CC_DEFAULT } from "../src/providers/types";
 import { getClientLaunchOptions } from "../src/clients/base";
@@ -39,24 +48,30 @@ const PIN_KEYS = [
 /** 五条子代理/别名/utility 路径（不含 ANTHROPIC_MODEL 本身） */
 const SUBAGENT_PIN_KEYS = PIN_KEYS.slice(1);
 
+function pinEnvOf(model: string): Record<string, string> {
+  return {
+    [CLAUDE_SUBAGENT_MODEL_ENV_KEY]: model,
+    [CLAUDE_DEFAULT_OPUS_MODEL_ENV_KEY]: model,
+    [CLAUDE_DEFAULT_SONNET_MODEL_ENV_KEY]: model,
+    [CLAUDE_DEFAULT_HAIKU_MODEL_ENV_KEY]: model,
+    [CLAUDE_DEFAULT_FABLE_MODEL_ENV_KEY]: model,
+  };
+}
+
 describe("claudeModelPinEnv", () => {
   it("六个解析路径全部钉到同一模型", () => {
     expect(claudeModelPinEnv("mimo-v2.6-pro[1m]")).toEqual({
       ANTHROPIC_MODEL: "mimo-v2.6-pro[1m]",
-      CLAUDE_CODE_SUBAGENT_MODEL: "mimo-v2.6-pro[1m]",
-      ANTHROPIC_DEFAULT_OPUS_MODEL: "mimo-v2.6-pro[1m]",
-      ANTHROPIC_DEFAULT_SONNET_MODEL: "mimo-v2.6-pro[1m]",
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: "mimo-v2.6-pro[1m]",
-      ANTHROPIC_DEFAULT_FABLE_MODEL: "mimo-v2.6-pro[1m]",
+      ...pinEnvOf("mimo-v2.6-pro[1m]"),
     });
   });
 });
 
-describe("getEnvVars 模型全家桶", () => {
-  const pinCases: Array<{
+describe("getEnvVars 只下发主模型（钉子不在此处）", () => {
+  const cases: Array<{
     name: string;
     ctx: Parameters<typeof claudeCodeClient.getEnvVars>[0];
-    tagged: string;
+    tagged?: string;
   }> = [
     {
       name: "tako",
@@ -85,24 +100,27 @@ describe("getEnvVars 模型全家桶", () => {
     },
   ];
 
-  for (const { name, ctx, tagged } of pinCases) {
-    it(`${name} 分支：六键全钉成 tagged 值（含 [1m] 逻辑）`, () => {
+  for (const { name, ctx, tagged } of cases) {
+    it(`${name} 分支：ANTHROPIC_MODEL=tagged，五条子代理路径一律不钉`, () => {
       const env = claudeCodeClient.getEnvVars(ctx);
-      for (const key of PIN_KEYS) {
-        expect(env[key]).toBe(tagged);
+      expect(env.ANTHROPIC_MODEL).toBe(tagged);
+      for (const key of SUBAGENT_PIN_KEYS) {
+        expect(env[key]).toBeUndefined();
       }
     });
   }
 
-  it("非 claude 系模型（glm-5.3 不加 [1m]）pins 原样跟随", () => {
-    const env = claudeCodeClient.getEnvVars({
-      type: "custom",
-      apiKey: "sk",
-      baseUrl: "https://proxy",
-      model: "glm-5.3",
-    });
-    expect(env[CLAUDE_SUBAGENT_MODEL_ENV_KEY]).toBe("glm-5.3");
-    expect(env[CLAUDE_DEFAULT_HAIKU_MODEL_ENV_KEY]).toBe("glm-5.3");
+  it("provider 配了 cc-default/指定模型时 getEnvVars 同样不钉（钉在合并后单点）", () => {
+    for (const subagentModel of [SUBAGENT_MODEL_CC_DEFAULT, "glm-5.3"]) {
+      const env = claudeCodeClient.getEnvVars({
+        type: "tako", apiKey: "sk", baseUrl: "https://x",
+        model: "mimo-v2.5-pro", subagentModel,
+      });
+      expect(env.ANTHROPIC_MODEL).toBe("mimo-v2.5-pro[1m]");
+      for (const key of SUBAGENT_PIN_KEYS) {
+        expect(env[key]).toBeUndefined();
+      }
+    }
   });
 
   it("claude-subscription 不下发任何 pin（走 OAuth + CC 自己的默认）", () => {
@@ -112,7 +130,7 @@ describe("getEnvVars 模型全家桶", () => {
     }
   });
 
-  it("provider 没设 model → 六个键都不下发", () => {
+  it("provider 没设 model → ANTHROPIC_MODEL 也不下发", () => {
     const env = claudeCodeClient.getEnvVars({
       type: "tako",
       apiKey: "sk",
@@ -134,105 +152,142 @@ describe("getEnvVars 模型全家桶", () => {
   });
 });
 
-describe("子代理模型三态（provider.subagentModel）", () => {
-  const takoCtx = {
-    type: "tako",
+describe("resolveLaunchPinEnv：合并后单点钉（provider 三态默认）", () => {
+  const launchEnv = { ANTHROPIC_MODEL: "mimo-v2.5-pro[1m]" };
+
+  it("跟随主模型（默认）：五条路径钉到合并后的最终主模型（含选项覆盖的值）", () => {
+    // 模型选项覆盖过 ANTHROPIC_MODEL 时，钉必须跟随最终值而非 provider.model
+    expect(resolveLaunchPinEnv({}, undefined, launchEnv)).toEqual(pinEnvOf("mimo-v2.5-pro[1m]"));
+    expect(resolveLaunchPinEnv({}, ["model-glm-5.3"], { ANTHROPIC_MODEL: "glm-5.3" }))
+      .toEqual(pinEnvOf("glm-5.3"));
+  });
+
+  it("跟随但主模型未设：无可钉返回 {}", () => {
+    expect(resolveLaunchPinEnv({}, undefined, {})).toEqual({});
+  });
+
+  it("provider cc-default：不钉（用户 settings.json / shell env 可接管）", () => {
+    expect(resolveLaunchPinEnv({ subagentModel: SUBAGENT_MODEL_CC_DEFAULT }, undefined, launchEnv))
+      .toEqual({});
+  });
+
+  it("provider 指定模型：钉到指定模型（自动补 [1m] 逻辑同主模型）", () => {
+    expect(resolveLaunchPinEnv({ subagentModel: "claude-opus-4-7" }, undefined, launchEnv))
+      .toEqual(pinEnvOf("claude-opus-4-7[1m]"));
+    expect(resolveLaunchPinEnv({ subagentModel: "glm-5.3" }, undefined, launchEnv))
+      .toEqual(pinEnvOf("glm-5.3"));
+  });
+});
+
+describe("resolveLaunchPinEnv：启动选项组单次覆盖 provider 默认", () => {
+  const launchEnv = { ANTHROPIC_MODEL: "mimo-v2.5-pro[1m]" };
+
+  it("选「CC 默认」压过 provider 跟随/指定 → 不钉", () => {
+    expect(resolveLaunchPinEnv({}, [SUBAGENT_OPTION_CC_DEFAULT_ID], launchEnv)).toEqual({});
+    expect(resolveLaunchPinEnv(
+      { subagentModel: "glm-5.3" }, [SUBAGENT_OPTION_CC_DEFAULT_ID], launchEnv,
+    )).toEqual({});
+  });
+
+  it("选「跟随主模型」压过 provider cc-default/指定 → 钉最终主模型", () => {
+    expect(resolveLaunchPinEnv(
+      { subagentModel: SUBAGENT_MODEL_CC_DEFAULT }, [SUBAGENT_OPTION_FOLLOW_ID], launchEnv,
+    )).toEqual(pinEnvOf("mimo-v2.5-pro[1m]"));
+    expect(resolveLaunchPinEnv(
+      { subagentModel: "glm-5.3" }, [SUBAGENT_OPTION_FOLLOW_ID], launchEnv,
+    )).toEqual(pinEnvOf("mimo-v2.5-pro[1m]"));
+  });
+
+  it("选「指定」且 provider 配有指定模型 → 钉指定模型", () => {
+    expect(resolveLaunchPinEnv(
+      { subagentModel: "glm-5.3" }, [SUBAGENT_OPTION_CUSTOM_ID], launchEnv,
+    )).toEqual(pinEnvOf("glm-5.3"));
+  });
+
+  it("选「指定」但 provider 配置已被清掉 → 回退跟随（钉比漏安全）", () => {
+    expect(resolveLaunchPinEnv({}, [SUBAGENT_OPTION_CUSTOM_ID], launchEnv))
+      .toEqual(pinEnvOf("mimo-v2.5-pro[1m]"));
+    expect(resolveLaunchPinEnv(
+      { subagentModel: SUBAGENT_MODEL_CC_DEFAULT }, [SUBAGENT_OPTION_CUSTOM_ID], launchEnv,
+    )).toEqual(pinEnvOf("mimo-v2.5-pro[1m]"));
+  });
+});
+
+describe("claudeCodeSessionPinEnv：tako agent 后台会话补钉", () => {
+  const base = { type: "tako", apiKey: "sk", baseUrl: "https://x" } as const;
+
+  it("默认跟随：钉到 ctx.model（内部补 [1m]）", () => {
+    expect(claudeCodeSessionPinEnv({ ...base, model: "mimo-v2.5-pro" }))
+      .toEqual(pinEnvOf("mimo-v2.5-pro[1m]"));
+  });
+
+  it("cc-default：不钉", () => {
+    expect(claudeCodeSessionPinEnv({ ...base, model: "mimo-v2.5-pro", subagentModel: SUBAGENT_MODEL_CC_DEFAULT }))
+      .toEqual({});
+  });
+
+  it("指定模型：钉指定（[1m] 逻辑同主模型）", () => {
+    expect(claudeCodeSessionPinEnv({ ...base, model: "mimo-v2.5-pro", subagentModel: "claude-opus-4-7" }))
+      .toEqual(pinEnvOf("claude-opus-4-7[1m]"));
+  });
+
+  it("主模型未设且未指定：无可钉返回 {}", () => {
+    expect(claudeCodeSessionPinEnv({ ...base })).toEqual({});
+  });
+});
+
+describe("「子代理模型」启动选项组", () => {
+  const mkProvider = (subagentModel?: string) => ({
+    id: "p",
+    name: "P",
+    type: "anthropic",
     apiKey: "sk",
-    baseUrl: "https://x",
-    model: "mimo-v2.5-pro",
-  } as const;
+    ...(subagentModel ? { subagentModel } : {}),
+    createdAt: new Date().toISOString(),
+  });
 
-  it("cc-default：主模型照发，五条子代理路径全不钉", () => {
-    const env = claudeCodeClient.getEnvVars({ ...takoCtx, subagentModel: SUBAGENT_MODEL_CC_DEFAULT });
-    expect(env.ANTHROPIC_MODEL).toBe("mimo-v2.5-pro[1m]");
-    for (const key of SUBAGENT_PIN_KEYS) {
-      expect(env[key]).toBeUndefined();
+  it("默认 provider：组内两项，「跟随主模型」defaultOn，选项只是标记不带 envVars", () => {
+    const opts = getClientLaunchOptions(claudeCodeClient, mkProvider());
+    const group = opts.filter((o) => o.group === SUBAGENT_OPTION_GROUP);
+    expect(group.map((o) => o.id)).toEqual([SUBAGENT_OPTION_FOLLOW_ID, SUBAGENT_OPTION_CC_DEFAULT_ID]);
+    expect(group.find((o) => o.id === SUBAGENT_OPTION_FOLLOW_ID)?.defaultOn).toBe(true);
+    expect(group.find((o) => o.id === SUBAGENT_OPTION_CC_DEFAULT_ID)?.defaultOn).toBeUndefined();
+    for (const o of group) {
+      expect(o.envVars).toBeUndefined();
+      expect(o.args).toEqual([]);
     }
   });
 
-  it("指定模型：主模型不变，五条路径钉到指定模型（[1m] 逻辑同主模型）", () => {
-    const env = claudeCodeClient.getEnvVars({ ...takoCtx, subagentModel: "claude-opus-4-7" });
-    expect(env.ANTHROPIC_MODEL).toBe("mimo-v2.5-pro[1m]");
-    for (const key of SUBAGENT_PIN_KEYS) {
-      expect(env[key]).toBe("claude-opus-4-7[1m]");
-    }
+  it("provider cc-default：「CC 默认」defaultOn", () => {
+    const opts = getClientLaunchOptions(claudeCodeClient, mkProvider(SUBAGENT_MODEL_CC_DEFAULT));
+    const group = opts.filter((o) => o.group === SUBAGENT_OPTION_GROUP);
+    expect(group.map((o) => o.id)).toEqual([SUBAGENT_OPTION_FOLLOW_ID, SUBAGENT_OPTION_CC_DEFAULT_ID]);
+    expect(group.find((o) => o.id === SUBAGENT_OPTION_CC_DEFAULT_ID)?.defaultOn).toBe(true);
   });
 
-  it("指定非 claude 系模型：pins 原样跟随不加 [1m]", () => {
-    const env = claudeCodeClient.getEnvVars({ ...takoCtx, subagentModel: "glm-5.3" });
-    expect(env[CLAUDE_SUBAGENT_MODEL_ENV_KEY]).toBe("glm-5.3");
-    expect(env[CLAUDE_DEFAULT_HAIKU_MODEL_ENV_KEY]).toBe("glm-5.3");
+  it("provider 指定模型：多出「指定：<id>」项且 defaultOn", () => {
+    const opts = getClientLaunchOptions(claudeCodeClient, mkProvider("glm-5.3"));
+    const group = opts.filter((o) => o.group === SUBAGENT_OPTION_GROUP);
+    expect(group.map((o) => o.id)).toEqual([
+      SUBAGENT_OPTION_FOLLOW_ID, SUBAGENT_OPTION_CC_DEFAULT_ID, SUBAGENT_OPTION_CUSTOM_ID,
+    ]);
+    expect(group.find((o) => o.id === SUBAGENT_OPTION_CUSTOM_ID)?.defaultOn).toBe(true);
   });
 
-  it("指定模型 + 主模型未设：只发五条 pins，不发 ANTHROPIC_MODEL", () => {
-    const env = claudeCodeClient.getEnvVars({
-      type: "tako",
-      apiKey: "sk",
-      baseUrl: "https://x",
-      subagentModel: "glm-5.3",
-    });
-    expect(env.ANTHROPIC_MODEL).toBeUndefined();
-    for (const key of SUBAGENT_PIN_KEYS) {
-      expect(env[key]).toBe("glm-5.3");
-    }
-  });
-
-  it("claudeSubagentPinEnv：cc-default → {}；空白字符串 → 按跟随主模型处理", () => {
-    expect(claudeSubagentPinEnv({ subagentModel: SUBAGENT_MODEL_CC_DEFAULT }, "m[1m]")).toEqual({});
-    expect(claudeSubagentPinEnv({ subagentModel: "  " }, "m[1m]")).toEqual({
-      CLAUDE_CODE_SUBAGENT_MODEL: "m[1m]",
-      ANTHROPIC_DEFAULT_OPUS_MODEL: "m[1m]",
-      ANTHROPIC_DEFAULT_SONNET_MODEL: "m[1m]",
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: "m[1m]",
-      ANTHROPIC_DEFAULT_FABLE_MODEL: "m[1m]",
-    });
-    expect(claudeSubagentPinEnv({}, undefined)).toEqual({});
-  });
-
-  it("静态模型选项：cc-default 时选项 envVars 也不钉", () => {
+  it("订阅 provider：不提供该组（不钉，走 OAuth + CC 自己的解析）", () => {
     const opts = getClientLaunchOptions(claudeCodeClient, {
-      id: "p",
-      name: "P",
-      type: "anthropic",
-      apiKey: "sk",
-      subagentModel: SUBAGENT_MODEL_CC_DEFAULT,
-      createdAt: new Date().toISOString(),
+      id: "p", name: "P", type: "claude-subscription", createdAt: new Date().toISOString(),
     });
+    expect(opts.some((o) => o.group === SUBAGENT_OPTION_GROUP)).toBe(false);
+  });
+
+  it("模型选项 envVars 不再携带钉（钉在合并后单点计算）", () => {
+    const opts = getClientLaunchOptions(claudeCodeClient, mkProvider());
     const opus = opts.find((o) => o.id === "model-claude-opus-4-7");
     expect(opus?.envVars?.ANTHROPIC_MODEL).toBe("claude-opus-4-7[1m]");
     for (const key of SUBAGENT_PIN_KEYS) {
       expect(opus?.envVars?.[key]).toBeUndefined();
     }
-  });
-
-  it("静态模型选项：指定模型时选项 envVars 钉到指定模型", () => {
-    const opts = getClientLaunchOptions(claudeCodeClient, {
-      id: "p",
-      name: "P",
-      type: "anthropic",
-      apiKey: "sk",
-      subagentModel: "glm-5.3",
-      createdAt: new Date().toISOString(),
-    });
-    const opus = opts.find((o) => o.id === "model-claude-opus-4-7");
-    expect(opus?.envVars?.ANTHROPIC_MODEL).toBe("claude-opus-4-7[1m]");
-    for (const key of SUBAGENT_PIN_KEYS) {
-      expect(opus?.envVars?.[key]).toBe("glm-5.3");
-    }
-  });
-});
-
-describe("静态模型选项 envVars 同步钉全家桶", () => {
-  it("内置 whitelist 选项（anthropic provider）六键 = modelArg", () => {
-    const opts = getClientLaunchOptions(claudeCodeClient, {
-      id: "p",
-      name: "P",
-      type: "anthropic",
-      apiKey: "sk",
-      createdAt: new Date().toISOString(),
-    });
-    const opus = opts.find((o) => o.id === "model-claude-opus-4-7");
-    expect(opus?.envVars).toMatchObject(claudeModelPinEnv("claude-opus-4-7[1m]"));
   });
 });
 

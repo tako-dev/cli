@@ -19,7 +19,11 @@ export function buildOptionRows(options: LaunchOption[], zh: boolean): OptionRow
       rows.push({
         kind: "group",
         group: option.group,
-        title: option.group === "model" ? (zh ? "模型" : "Model") : option.group,
+        title: option.group === "model"
+          ? (zh ? "模型" : "Model")
+          : option.group === "subagent-model"
+            ? (zh ? "子代理模型" : "Subagent Model")
+            : option.group,
       });
     }
   }

@@ -106,7 +106,11 @@ export function GroupPicker({
     ? modelPickerWindow(pickerIdx, list.length)
     : { start: 0, end: list.length };
   const page = list.slice(window.start, window.end);
-  const title = isModelGroup ? (zh ? "选择模型" : "Pick Model") : group;
+  const title = isModelGroup
+    ? (zh ? "选择模型" : "Pick Model")
+    : group === "subagent-model"
+      ? (zh ? "子代理模型" : "Subagent Model")
+      : group;
   const isDefaultCur = !groupOpts.some((o) => enabled.has(o.id));
   return (
     <Box flexDirection="column" marginTop={0} borderStyle="round" borderColor={color} paddingX={1} paddingY={0}>

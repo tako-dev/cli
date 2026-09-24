@@ -6,6 +6,7 @@ import { initSession, listSessions, readMeta, removeSession, writeMeta, tailLog 
 import { loadConfig } from "../config";
 import { getProviders, getProvidersForClient, resolveProviderContext } from "../providers";
 import { getClient, getClientLaunchOptions } from "../clients/base";
+import { claudeCodeSessionPinEnv } from "../clients/claude-code";
 import type { ProviderContext, Provider } from "../providers/types";
 
 const DRIVERS: Record<Backend, Driver> = { claude: claudeDriver, codex: codexDriver };
@@ -30,7 +31,12 @@ export async function startSession(args: StartArgs): Promise<SessionMeta> {
   if (!provider) throw new Error(`没找到 ${args.backend} 可用的 provider${args.model ? `（含模型 ${args.model}）` : ""}`);
   const providerCtx: ProviderContext = resolveProviderContext(provider);
   if (args.model) (providerCtx as any).model = args.model;
-  const env = client.getEnvVars(providerCtx);
+  // claude-code 的 subagent/别名钉不走 getEnvVars（启动选项要能撤钉），
+  // 该 spawn 路径绕过 setupConfigFiles，这里按 provider 三态单独补钉。
+  const env = {
+    ...client.getEnvVars(providerCtx),
+    ...(clientId === "claude-code" ? claudeCodeSessionPinEnv(providerCtx) : {}),
+  };
 
   const sid = randomUUID();
   const placeholder: SessionMeta = {
@@ -178,7 +184,11 @@ async function rebuildEnv(meta: SessionMeta): Promise<Record<string, string>> {
   const ctx = resolveProviderContext(provider);
   if (meta.model) (ctx as any).model = meta.model;
   (meta as any).__providerHint = { type: provider.type, apiKey: provider.apiKey, baseUrl: provider.baseUrl };
-  return client.getEnvVars(ctx) as Record<string, string>;
+  // 同 startSession：claude-code 的钉在此路径单独补（见该处注释）。
+  return {
+    ...client.getEnvVars(ctx),
+    ...(clientId === "claude-code" ? claudeCodeSessionPinEnv(ctx) : {}),
+  } as Record<string, string>;
 }
 
 export async function setAgentDefault(backend: Backend, providerId: string): Promise<void> {
