@@ -1,3 +1,4 @@
+import { apiErrorText } from "./api-error";
 import { PROXY_BASE_URL, loadConfig } from "./config";
 import { resolveTakoApiId } from "./quota/tako";
 
@@ -113,7 +114,7 @@ export async function getUserStats(): Promise<{
     const modelData: ModelStatsResponse = await modelResponse.json();
 
     if (!statsData.success) {
-      return { success: false, error: statsData.error || statsData.message || "获取统计失败" };
+      return { success: false, error: apiErrorText(statsData, "获取统计失败") };
     }
 
     // 解析模型统计

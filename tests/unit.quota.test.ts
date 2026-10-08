@@ -154,6 +154,31 @@ describe("TP-QUOTA-12 Tako 错误分类", () => {
     const q = await fetchTakoQuotaByApiId("123");
     expect(q.error).toBe("bad_payload");
   });
+
+  it("OpenAI 形态 error 对象收成字符串，不把 object 交给 Ink", async () => {
+    mockFetch(() => jsonResponse({
+      error: {
+        message: "Invalid URL (POST /apiStats/api/get-key-id)",
+        type: "invalid_request_error",
+        param: "",
+        code: "",
+      },
+    }, 404));
+    const result = await resolveTakoApiId("cr_provider");
+    expect(result.valid).toBe(false);
+    if (result.valid) return;
+    expect(result.error).toBe("http_404");
+    expect(result.message).toBe("Invalid URL (POST /apiStats/api/get-key-id)");
+    expect(typeof result.message).toBe("string");
+
+    const q = await fetchTakoQuota({
+      id: "p-tako", name: "Tako", type: "tako", apiKey: "cr_provider",
+      createdAt: new Date().toISOString(),
+    });
+    expect(q.status).toBe("error");
+    expect(q.hint).toBe("Invalid URL (POST /apiStats/api/get-key-id)");
+    expect(typeof q.hint).toBe("string");
+  });
 });
 
 // ─── Claude ─────────────────────────────────────────────────────────
