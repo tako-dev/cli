@@ -13,6 +13,7 @@ import { TAKO_DIR, TOOLS_DIR, TAKO_BUN_CACHE_DIR } from "../../src/config";
 import { installClient, isClientInstalled, ensureBunInstalled, ensureNodeInstalled, getBunPath, getNodePath } from "../../src/installer";
 import { buildClientLaunchCommand, getClient, getClientEntryPath } from "../../src/clients/base";
 import { installAtVersion, getInstalledVersion } from "../../src/installer-versions";
+import { looksLikeVersion } from "./spawn-output";
 
 import "../../src/clients/codex";
 import "../../src/clients/pi";
@@ -27,13 +28,6 @@ function check(key: string, pass: boolean, detail?: string) {
   checks.push({ key, pass, detail });
   const status = pass ? "PASS" : "FAIL";
   console.log(`CHECK:${key}=${status}${detail ? ` (${detail})` : ""}`);
-}
-
-function looksLikeVersion(text: string, clientId: string): boolean {
-  const lower = text.toLowerCase();
-  if (clientId === "codex") return lower.includes("codex");
-  if (clientId === "pi") return /pi|0\.\d+/.test(lower);
-  return /ready|started|listening|localhost|127\.0\.0\.1|pi[ -]?web/.test(lower);
 }
 
 function spawnTimeoutMs(clientId: string): number {
