@@ -1,3 +1,4 @@
+import { apiErrorText } from "../api-error";
 import { PROXY_BASE_URL } from "../config";
 import type { Provider } from "../providers/types";
 import type { OfficialQuota, QuotaSlot } from "./types";
@@ -100,7 +101,7 @@ export async function resolveTakoApiId(apiKey: string): Promise<ApiIdResult> {
       return {
         valid: false,
         error: `http_${response.status}`,
-        message: json?.error || json?.message || "Tako key validation request failed",
+        message: apiErrorText(json, "Tako key validation request failed"),
       };
     }
 
@@ -109,7 +110,7 @@ export async function resolveTakoApiId(apiKey: string): Promise<ApiIdResult> {
     }
 
     if (!json.success) {
-      const message = json.error || json.message || "Tako key validation failed";
+      const message = apiErrorText(json, "Tako key validation failed");
       return { valid: false, error: apiErrorCode(message), message };
     }
 
@@ -177,13 +178,13 @@ export async function fetchTakoQuotaByApiId(apiId: string): Promise<OfficialQuot
     if (!response.ok) {
       return errorQuota(
         `http_${response.status}`,
-        json?.error || json?.message || "Tako 用量接口不可用",
+        apiErrorText(json, "Tako 用量接口不可用"),
         fetchedAt,
       );
     }
     if (!json) return errorQuota("invalid_json", "Tako 用量接口返回了无效 JSON", fetchedAt);
     if (!json.success) {
-      const message = json.error || json.message;
+      const message = apiErrorText(json, "");
       if (message) return errorQuota(apiErrorCode(message), message, fetchedAt);
       return errorQuota("bad_payload", "Tako 用量数据格式异常", fetchedAt);
     }

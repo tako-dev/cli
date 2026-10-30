@@ -11,6 +11,7 @@ import { GROK_DEFAULT_MODEL } from "../../../clients/grok";
 import { PI_DEFAULT_MODEL } from "../../../clients/pi";
 import { setClientProvider, resolveProviderContext } from "../../../providers";
 import type { Provider } from "../../../providers/types";
+import { apiErrorText } from "../../../api-error";
 import { getLocale } from "../../../i18n";
 import { getOfficialQuota, type OfficialQuota } from "../../../quota";
 import { loadLauncherData } from "../../shared/launcher-data";
@@ -148,7 +149,7 @@ function QuotaLine({ quota, zh }: { quota: OfficialQuota; zh: boolean }) {
   if (quota.status === "unsupported") return null;
 
   if (quota.status === "error") {
-    return <Text dimColor>💰 {quota.hint || (zh ? "用量获取失败" : "quota unavailable")}</Text>;
+    return <Text dimColor>💰 {apiErrorText(quota.hint, zh ? "用量获取失败" : "quota unavailable")}</Text>;
   }
 
   // Tako 订阅模式（任意窗口有 costLimit）→ 走"剩余 %"展示，跟订阅类一致；

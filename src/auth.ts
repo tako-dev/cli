@@ -1,3 +1,4 @@
+import { apiErrorText } from "./api-error";
 import { PROXY_BASE_URL, updateConfig } from "./config";
 import { t } from "./i18n";
 import { track, identify, reset as resetAnalytics } from "./analytics";
@@ -45,7 +46,7 @@ export async function validateKeyWithApi(
       return { valid: true, apiId: data.data.id };
     }
 
-    return { valid: false, error: data.error || t("auth.validationFailed") };
+    return { valid: false, error: apiErrorText(data, t("auth.validationFailed")) };
   } catch (error) {
     return {
       valid: false,
