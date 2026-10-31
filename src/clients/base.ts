@@ -39,6 +39,8 @@ export interface ClientLaunchSetupContext {
   forLaunch?: boolean;
   /** Final launch env after provider and selected-option values are merged. */
   launchEnvVars?: Record<string, string>;
+  /** User/selected arguments, before this setup adds its own overrides. */
+  launchArgs?: string[];
 }
 
 export interface ClientLaunchSetup {

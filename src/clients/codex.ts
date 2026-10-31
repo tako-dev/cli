@@ -6,6 +6,7 @@ import type { ProviderContext, Provider } from "../providers/types";
 import { parse, stringify } from "smol-toml";
 import { loadCatalog, getTakoModels, filterChatModels } from "../models";
 import { BUNDLED_ENTRIES } from "../models/bundled";
+import { clientVersionMeets, getInstalledClientVersion } from "../installer";
 
 const CODEX_DIR = join(homedir(), ".codex");
 const CODEX_CONFIG_PATH = join(CODEX_DIR, "config.toml");
@@ -61,10 +62,38 @@ export function resolveCodexModel(
   return optionModel || providerModel || configuredModel || "gpt-5.5";
 }
 
+/** Conservative supported baseline, verified against rust-v0.162.1 config.schema.json. */
+export const CODEX_NATIVE_CATALOG_MIN_VERSION = "0.162.1";
+
+/**
+ * Enable the official authenticated native catalog endpoint for this launch.
+ * Codex appends its actual client_version and validates the complete ModelsResponse;
+ * ordinary OpenAI data[] catalogs cannot supply native picker metadata.
+ * Explicit user catalogs and disabled discovery remain authoritative.
+ */
+export function buildCodexNativeCatalogArgs(
+  provider: ProviderContext,
+  clientVersion: string | null,
+  inferenceBaseUrl: string,
+  existing: Record<string, any>,
+  launchArgs: string[] = [],
+): string[] {
+  if (!clientVersionMeets(clientVersion, CODEX_NATIVE_CATALOG_MIN_VERSION)) return [];
+  // Profiles can supply their own catalog settings; leave their resolution to Codex.
+  if (existing.profile || existing.profiles) return [];
+  if (launchArgs.some((arg) => arg === "-p" || arg === "--profile" || arg.startsWith("--profile=") || /^-p.+/.test(arg))) return [];
+  if ((provider.type !== "tako" && provider.type !== "custom") || !provider.apiKey) return [];
+  if (existing.model_catalog_json || existing.model_providers?.tako?.model_catalog_url) return [];
+  if (existing.features?.api_key_model_discovery === false) return [];
+  const catalogUrl = `${inferenceBaseUrl.replace(/\/+$/, "")}/models?api_type=openai`;
+  return ["-c", `model_providers.tako.model_catalog_url=${JSON.stringify(catalogUrl)}`];
+}
+
 async function setupCodexConfigFiles(
   provider: ProviderContext,
   selectedOptionIds?: string[],
-): Promise<void> {
+  context?: { forLaunch?: boolean; launchArgs?: string[] },
+): Promise<void | { args: string[] }> {
   const fs = await import("fs/promises");
   try { await fs.mkdir(CODEX_DIR, { recursive: true }); } catch { /* exists */ }
 
@@ -72,6 +101,7 @@ async function setupCodexConfigFiles(
   let existing: Record<string, any> = {};
   try { existing = parse(await fs.readFile(CODEX_CONFIG_PATH, "utf-8")); } catch { /* noop */ }
   existing = cleanLegacyConfig(existing);
+  let nativeCatalogArgs: string[] = [];
 
   if (provider.type === "codex-subscription") {
     // ─── 订阅直连：切换 model_provider 到默认，保留所有 provider 定义 ───
@@ -95,6 +125,12 @@ async function setupCodexConfigFiles(
       baseUrl = "https://api.deepseek.com/v1";
     } else {
       baseUrl = `${provider.baseUrl}/v1`;
+    }
+
+    if (context?.forLaunch) {
+      nativeCatalogArgs = buildCodexNativeCatalogArgs(
+        provider, await getInstalledClientVersion(codexClient), baseUrl, existing, context.launchArgs,
+      );
     }
 
     // 优先级：launcher 里勾的 model-* > provider.model > 现有 Codex 配置 > gpt-5.5 默认。
@@ -144,6 +180,7 @@ async function setupCodexConfigFiles(
   }
 
   await Bun.write(CODEX_CONFIG_PATH, stringify(existing));
+  if (nativeCatalogArgs.length > 0) return { args: nativeCatalogArgs };
 }
 
 export const codexClient: ClientConfig = {

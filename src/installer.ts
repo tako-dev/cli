@@ -626,6 +626,25 @@ async function getLocalVersion(client: ClientConfig): Promise<string | null> {
   return config.installedClients[client.id]?.version || null;
 }
 
+/** 从 Tako 管理的真实客户端包读取版本；缺少包或版本时返回 null。 */
+export async function getInstalledClientVersion(client: ClientConfig): Promise<string | null> {
+  const path = join(getClientDir(client.id), "node_modules", client.package, "package.json");
+  try {
+    const pkg = await Bun.file(path).json();
+    return typeof pkg.version === "string" ? pkg.version : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 版本是否达到最低要求；未知或无法解析的版本视为不满足。 */
+export function clientVersionMeets(version: string | null | undefined, minimum: string): boolean {
+  if (!version) return false;
+  const normalized = version.trim().replace(/^v/, "");
+  if (!/^\d+\.\d+\.\d+$/.test(normalized)) return false;
+  return compareVersions(normalized, minimum) >= 0;
+}
+
 /**
  * 判断一个 client 安装目录是否真正装好了包（纯函数，便于测试）。
  *
