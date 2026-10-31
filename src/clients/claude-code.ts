@@ -9,6 +9,7 @@ import { t } from "../i18n";
 import { loadCatalog, getTakoModels, filterChatModels } from "../models";
 import { BUNDLED_ENTRIES } from "../models/bundled";
 import { TAKO_DIR } from "../config";
+import { clientVersionMeets, getInstalledClientVersion } from "../installer";
 
 const CLAUDE_SETTINGS_PATH = join(homedir(), ".claude", "settings.json");
 const TAKO_CLAUDE_SETTINGS_DIR = join(TAKO_DIR, "claude-code", "launch-settings");
@@ -150,8 +151,45 @@ export function claudeContextEnv(contextWindow?: number): Record<string, string>
   };
 }
 
+/** Claude Code 首个支持 `modelPicker` 的版本（官方 settings reference，2026-10-31 核实）。 */
+export const CLAUDE_MODEL_PICKER_MIN_VERSION = "2.1.242";
+
+export interface ClaudeModelPicker {
+  /** `/model` 选择器里的行，按服务端目录顺序排列。 */
+  options: Array<{ model: string; label: string; description?: string }>;
+  /** 是否替换内置模型行；缺省为追加，保留内置行。 */
+  replaceBuiltInOptions?: boolean;
+}
+
+/**
+ * 把当前 Tako / 自定义 provider 的 par 模型目录转换成 Claude Code 原生
+ * `/model` 选择器的行。只使用该 provider 凭据对应的缓存；没有目录时返回
+ * undefined，保留 Claude Code 内置选择器。
+ */
+export function buildClaudeModelPicker(
+  provider: ProviderContext | undefined,
+  clientVersion: string | null,
+): ClaudeModelPicker | undefined {
+  if (!clientVersionMeets(clientVersion, CLAUDE_MODEL_PICKER_MIN_VERSION)) return undefined;
+  if (!provider || (provider.type !== "tako" && provider.type !== "custom") || !provider.baseUrl) {
+    return undefined;
+  }
+  const raw = getTakoModels(provider.baseUrl, "claude", provider.apiKey);
+  if (!raw || raw.length === 0) return undefined;
+  const chat = filterChatModels(raw);
+  if (chat.length === 0) return undefined;
+  return {
+    options: chat.map((entry) => ({
+      model: appendOneMTagIfNeeded(entry.id, entry.contextWindow),
+      label: entry.displayName,
+      ...(entry.description ? { description: entry.description } : {}),
+    })),
+  };
+}
+
 export function buildTakoClaudeSettingsOverlay(
   launchEnvVars: Record<string, string>,
+  modelPicker?: ClaudeModelPicker,
 ): Record<string, unknown> {
   const env: Record<string, string> = {};
   for (const key of CLAUDE_PROVIDER_ENV_KEYS) {
@@ -163,7 +201,11 @@ export function buildTakoClaudeSettingsOverlay(
       env[key] = launchEnvVars[key];
     }
   }
-  return { env };
+  const overlay: Record<string, unknown> = { env };
+  if (modelPicker && modelPicker.options.length > 0) {
+    overlay.modelPicker = modelPicker;
+  }
+  return overlay;
 }
 
 export function findClaudeSettingsConflicts(
@@ -190,6 +232,7 @@ export interface ClaudeSettingsLaunchSetup {
 
 export async function prepareTakoClaudeSettingsForLaunch(opts: {
   launchEnvVars: Record<string, string>;
+  modelPicker?: ClaudeModelPicker;
   sourcePath?: string;
   targetPath?: string;
   logConflicts?: boolean;
@@ -200,13 +243,15 @@ export async function prepareTakoClaudeSettingsForLaunch(opts: {
     TAKO_CLAUDE_SETTINGS_DIR,
     `${process.pid}-${Date.now()}-${randomUUID()}.json`,
   );
-  const overlay = buildTakoClaudeSettingsOverlay(opts.launchEnvVars);
+  const overlay = buildTakoClaudeSettingsOverlay(opts.launchEnvVars, opts.modelPicker);
   let conflictingFields: string[] = [];
 
   try {
     const content = await fs.readFile(sourcePath, "utf-8");
     const settings: Record<string, any> = JSON.parse(content);
     conflictingFields = findClaudeSettingsConflicts(settings, overlay);
+    // A user-authored lineup stays authoritative; never replace its rows or labels.
+    if (Object.hasOwn(settings, "modelPicker")) delete overlay.modelPicker;
   } catch {
     // User settings are diagnostic only. Project/local settings may still conflict,
     // so the launch overlay is always created.
@@ -358,10 +403,14 @@ export const claudeCodeClient: ClientConfig = {
     const baseEnv = context.launchEnvVars ?? claudeCodeClient.getEnvVars(provider);
     const pinEnv = resolveLaunchPinEnv(provider, selectedOptionIds, baseEnv);
 
-    // Keep all normal Claude configuration sources enabled. The CLI overlay has
-    // higher precedence but contains only provider-owned env keys.
+    const version = await getInstalledClientVersion(claudeCodeClient);
+    const modelPicker = buildClaudeModelPicker(provider, version);
+
+    // Keep normal configuration sources enabled. Add the native lineup only on
+    // supported versions and leave a user's own modelPicker untouched.
     const launchSettings = await prepareTakoClaudeSettingsForLaunch({
       launchEnvVars: { ...baseEnv, ...pinEnv },
+      modelPicker,
     });
     return {
       args: launchSettings.args,
