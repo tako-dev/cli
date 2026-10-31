@@ -14,7 +14,7 @@ import { TAKO_DIR } from "../config";
 import { getModelEntry, loadCatalog, LOCAL_MODEL_OVERRIDES } from "./catalog";
 import type { Provider } from "../providers/types";
 
-export type TakoApiType = "openai" | "claude";
+export type TakoApiType = "openai" | "claude" | "gemini";
 
 export interface TakoModelEntry {
   id: string;
@@ -167,6 +167,58 @@ function parseOpenAIResponse(json: unknown, apiType: TakoApiType): TakoModelEntr
   return out;
 }
 
+/** Parse only Gemini-native models that advertise generateContent support. */
+export function parseGeminiModels(json: unknown): TakoModelEntry[] {
+  if (!json || typeof json !== "object" || !Array.isArray((json as { models?: unknown }).models)) return [];
+  const out: TakoModelEntry[] = [];
+  for (const raw of (json as { models: unknown[] }).models) {
+    if (!raw || typeof raw !== "object") continue;
+    const model = raw as Record<string, unknown>;
+    if (typeof model.name !== "string" || !model.name.startsWith("models/")) continue;
+    const id = model.name.slice("models/".length);
+    if (!id || id.includes("/")) continue;
+    if (!Array.isArray(model.supportedGenerationMethods) || !model.supportedGenerationMethods.includes("generateContent")) continue;
+    out.push({
+      id,
+      displayName: typeof model.displayName === "string" && model.displayName ? model.displayName : id,
+      description: typeof model.description === "string" ? model.description : "",
+      contextWindow: typeof model.inputTokenLimit === "number" && Number.isFinite(model.inputTokenLimit) && model.inputTokenLimit > 0
+        ? model.inputTokenLimit : 0,
+      sortOrder: out.length,
+      category: "chat",
+    });
+  }
+  return out;
+}
+
+/** Read every page from the same Gemini endpoint without persisting keys in URLs. */
+async function fetchGeminiModels(baseUrl: string, apiKey: string): Promise<TakoModelEntry[] | null> {
+  const endpoint = `${baseUrl.replace(/\/+$/, "")}/v1beta/models`;
+  const signal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+  const entries = new Map<string, TakoModelEntry>();
+  const seen = new Set<string>();
+  let token: string | undefined;
+  for (let page = 0; page < 100; page++) {
+    const url = new URL(endpoint);
+    url.searchParams.set("pageSize", "1000");
+    if (token) url.searchParams.set("pageToken", token);
+    const response = await fetch(url, {
+      headers: { "x-goog-api-key": apiKey }, signal, redirect: "error",
+    });
+    if (!response.ok) return null;
+    const json: unknown = await response.json();
+    if (!json || typeof json !== "object") return null;
+    const data = json as Record<string, unknown>;
+    if (data.models !== undefined && !Array.isArray(data.models)) return null;
+    for (const entry of parseGeminiModels(json)) entries.set(entry.id, entry);
+    if (data.nextPageToken === undefined || data.nextPageToken === "") return [...entries.values()];
+    if (typeof data.nextPageToken !== "string" || seen.has(data.nextPageToken)) return null;
+    token = data.nextPageToken;
+    seen.add(token);
+  }
+  return null;
+}
+
 /**
  * 只保留 chat 模型，把纯生图/视频/音频模型（par model_category=image|video|audio|…）
  * 从 Claude Code / Codex 的模型下拉里剔除。category 缺省（旧 par/旧缓存）按 chat 放行。
@@ -203,17 +255,19 @@ export async function refreshTakoModels(
 
   const job = (async () => {
     try {
-      const url =
-        baseUrl.replace(/\/+$/, "") +
-        `/v1/models?client_version=tako-cli&api_type=${apiType}`;
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
-      if (!res.ok) return;
-      const json = await res.json();
-      const entries = parseCodexResponse(json, apiType);
-      if (entries.length === 0) return;
+      let entries: TakoModelEntry[] | null;
+      if (apiType === "gemini") {
+        entries = await fetchGeminiModels(baseUrl, apiKey);
+      } else {
+        const url = baseUrl.replace(/\/+$/, "") + `/v1/models?client_version=tako-cli&api_type=${apiType}`;
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        });
+        if (!res.ok) return;
+        entries = parseCodexResponse(await res.json(), apiType);
+      }
+      if (!entries || entries.length === 0) return;
       memory.set(key, { fetchedAt: Date.now(), entries });
       await writeDisk();
     } catch {
@@ -242,7 +296,9 @@ export function refreshAllTakoCatalogs(providers: Provider[]): Promise<void> {
   for (const p of providers) {
     if (p.type !== "tako" && p.type !== "custom") continue;
     if (!p.apiKey || !p.baseUrl) continue;
-    for (const apiType of ["openai", "claude"] as TakoApiType[]) {
+    const apiTypes: TakoApiType[] = ["openai", "claude"];
+    if (!p.supportedClients?.length || p.supportedClients.includes("gemini")) apiTypes.push("gemini");
+    for (const apiType of apiTypes) {
       const bucket = memory.get(bucketKey(p.baseUrl, apiType, p.apiKey));
       if (bucket && now - bucket.fetchedAt < REFRESH_TTL_MS) continue;
       const job = refreshTakoModels(p.baseUrl, p.apiKey, apiType);

@@ -146,6 +146,8 @@ export const BUNDLED_ENTRIES: ModelEntry[] = [
 
 **请求**：`GET {baseUrl}/v1/models?client_version=tako-cli&api_type={claude|openai}`。`client_version` 让 par 走 **Codex 形态**返回（唯一带 `context_window` 的形态），`api_type` 过滤客户端能用的子集。
 
+**Gemini 发现**：兼容 Gemini 的 Tako / custom provider 从 `GET {baseUrl}/v1beta/models` 获取原生列表，用 `x-goog-api-key` 请求头认证，不把 key 放入 URL。只接受原生 `models/{id}` 且 `supportedGenerationMethods` 包含 `generateContent` 的记录，保留完整 ID 和输入窗口。每页最多 1,000 条、最多 100 页，沿 `nextPageToken` 获取完整目录；总请求限时 8 秒，重复 token、分页失败或无效响应不会提交部分目录。明确不支持 Gemini 的 provider 不发该原生请求。Gemini 启动器读取独立 `gemini` 协议桶，原生客户端菜单仍按各自配置机制接入。协议参考：[models.list](https://ai.google.dev/api/models)、[API key 请求头](https://ai.google.dev/gemini-api/docs/api-key)。
+
 **缓存**：内存索引按服务地址、`apiType` 和 API key 的 SHA-256 指纹分桶，磁盘 `~/.tako/tako-models-cache.json` 使用版本 2，只保存指纹而不保存 key。同一地址的不同凭据独立刷新；换 key 后不会复用另一账号的目录。失败保留当前凭据已有的数据，没有数据时由客户端回退。版本 1 缓存没有账号归属，不再复用；首次使用新格式时重新获取目录。TTL 为 1 小时。
 
 **核心类型**：
@@ -175,4 +177,5 @@ export interface TakoModelEntry {
 
 - `tests/unit.models.test.ts` — `normalizeModelId`（`[1m]`/`:1m` 后缀、provider 前缀）
 - `tests/unit.tako-model-cache.test.ts` — 同地址账号隔离、换 key、请求合并、旧缓存处理、磁盘重载与失败回退
+- `tests/unit.gemini-model-discovery.test.ts` — Gemini 原生字段过滤、分页、鉴权隔离、部分失败不提交、启动器原始模型 ID
 - `tests/unit.dynamic-model-options.test.ts` — par 动态目录：chat 模型按序进下拉、非 chat（image/video/audio）被 `filterChatModels` 剔除、`parseCodexResponse` 读 `model_category` 且缺省归一化为 `'chat'`

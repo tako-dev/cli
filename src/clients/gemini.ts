@@ -1,7 +1,8 @@
 import { homedir } from "os";
 import { join } from "path";
-import { ClientConfig, registerClient } from "./base";
-import type { ProviderContext } from "../providers/types";
+import { ClientConfig, registerClient, type LaunchOption } from "./base";
+import type { ProviderContext, Provider } from "../providers/types";
+import { getTakoModels } from "../models/tako";
 
 const GEMINI_DIR = join(homedir(), ".gemini");
 const GEMINI_SETTINGS_PATH = join(GEMINI_DIR, "settings.json");
@@ -40,6 +41,22 @@ async function setupGeminiConfigFiles(): Promise<void> {
   await Bun.write(GEMINI_SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n");
 }
 
+/** Launcher models come only from this credential's Gemini-native generateContent catalog. */
+export function buildGeminiModelOptions(provider?: Provider): LaunchOption[] {
+  if (!provider || (provider.type !== "tako" && provider.type !== "custom") || !provider.baseUrl) return [];
+  const models = getTakoModels(provider.baseUrl, "gemini", provider.apiKey);
+  if (!models) return [];
+  return models.map((entry) => ({
+    id: `model-${entry.id}`,
+    label: { en: entry.displayName, zh: entry.displayName },
+    shortLabel: entry.displayName,
+    description: { en: entry.description || `Use ${entry.displayName}`, zh: entry.description || `使用 ${entry.displayName}` },
+    flag: `--model ${entry.id}`,
+    args: ["--model", entry.id],
+    group: "model",
+  }));
+}
+
 export const geminiClient: ClientConfig = {
   id: "gemini",
   name: "Gemini CLI",
@@ -56,6 +73,7 @@ export const geminiClient: ClientConfig = {
   },
 
   setupConfigFiles: setupGeminiConfigFiles,
+  launchOptions: buildGeminiModelOptions,
 };
 
 // 自动注册

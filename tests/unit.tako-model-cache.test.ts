@@ -14,7 +14,7 @@ const KEY_B = "fake-model-account-b";
 const originalFetch = globalThis.fetch;
 
 function provider(apiKey: string): Provider {
-  return { id: "provider", name: "Provider", type: "custom", baseUrl: URL, apiKey, createdAt: "2026-10-31" };
+  return { id: "provider", name: "Provider", type: "custom", baseUrl: URL, apiKey, createdAt: "2026-10-31", supportedClients: ["claude-code", "codex"] };
 }
 
 function response(model: string): Response {

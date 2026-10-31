@@ -22,7 +22,7 @@ Claude Code 2.1.242 及以上支持 [`modelPicker`](https://code.claude.com/docs
 
 Grok 已通过现有 `tako-*` 模型块接入原生菜单；个人模型和菜单过滤策略需要保留。Pi / Pi Web 的模型注册由现有 `tako-pi` 扩展提供，不在本次修改中新增第二个目录写入器。该外部扩展的账号隔离与配置保留需另行核验，CLI 的缓存修复不代表扩展缓存已修复。
 
-Gemini 使用不同的原生配置和线协议，当前不注入任意 OpenAI / Messages 模型。后续接入需要核实兼容模型和版本，不能仅添加显示行就声称推理可用。
+Gemini 启动器从当前账号的 Gemini 原生 `/v1beta/models` 目录选择模型，只列出宣告 `generateContent` 的模型并传递原始 `--model` ID，不混用 OpenAI / Messages 目录。Gemini 内部菜单接入尚未完成；不使用系统设置覆盖或替换用户 HOME 来冒充临时配置，也不覆盖个人模型定义。发现和启动参数测试不代表真实服务上的模型推理已经验证。
 
 ## 验证
 
