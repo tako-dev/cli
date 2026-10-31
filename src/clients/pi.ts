@@ -17,7 +17,7 @@ function ctxStrOf(ctx: number): string {
 
 function buildDynamicPiModels(provider: Provider): LaunchOption[] | null {
   if (!provider.baseUrl) return null;
-  const raw = getTakoModels(provider.baseUrl, "claude") ?? getTakoModels(provider.baseUrl, "openai");
+  const raw = getTakoModels(provider.baseUrl, "claude", provider.apiKey) ?? getTakoModels(provider.baseUrl, "openai", provider.apiKey);
   if (!raw || raw.length === 0) return null;
   const chat = filterChatModels(raw);
   if (chat.length === 0) return null;

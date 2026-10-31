@@ -146,7 +146,7 @@ export const BUNDLED_ENTRIES: ModelEntry[] = [
 
 **请求**：`GET {baseUrl}/v1/models?client_version=tako-cli&api_type={claude|openai}`。`client_version` 让 par 走 **Codex 形态**返回（唯一带 `context_window` 的形态），`api_type` 过滤客户端能用的子集。
 
-**缓存**：内存索引按 `baseUrl#apiType` 分桶 + 磁盘缓存 `~/.tako/tako-models-cache.json` + 1h TTL 后台刷新。失败静默保留旧数据。
+**缓存**：内存索引按服务地址、`apiType` 和 API key 的 SHA-256 指纹分桶，磁盘 `~/.tako/tako-models-cache.json` 使用版本 2，只保存指纹而不保存 key。同一地址的不同凭据独立刷新；换 key 后不会复用另一账号的目录。失败保留当前凭据已有的数据，没有数据时由客户端回退。版本 1 缓存没有账号归属，不再复用；首次使用新格式时重新获取目录。TTL 为 1 小时。
 
 **核心类型**：
 
@@ -163,7 +163,7 @@ export interface TakoModelEntry {
 
 **非 chat 模型过滤**：par 给每个模型标 `model_category`（chat/image/video/audio）。纯生图/视频/音频模型不能在 Claude Code / Codex 里跑 chat，`filterChatModels()` 在 `buildDynamicClaudeModels` / `buildDynamicCodexModels` 里把它们剔除。`category` 缺省（旧 par / 旧缓存）按 `'chat'` 放行——向后兼容。
 
-**对外 API**：`getTakoModels(baseUrl, apiType)` 同步读缓存；`refreshTakoModels` / `refreshAllTakoCatalogs` 异步刷新；`filterChatModels` 过滤非 chat；`parseCodexResponse` 解析 par 响应（导出供测试）。
+**对外 API**：`getTakoModels(baseUrl, apiType, apiKey)` 同步读取当前凭据的缓存，没有凭据时返回 `null`；`refreshTakoModels` / `refreshAllTakoCatalogs` 异步刷新；`filterChatModels` 过滤非 chat；`parseCodexResponse` 解析 par 响应（导出供测试）。
 
 ## 不做的事
 
@@ -174,4 +174,5 @@ export interface TakoModelEntry {
 ## 已有测试
 
 - `tests/unit.models.test.ts` — `normalizeModelId`（`[1m]`/`:1m` 后缀、provider 前缀）
+- `tests/unit.tako-model-cache.test.ts` — 同地址账号隔离、换 key、请求合并、旧缓存处理、磁盘重载与失败回退
 - `tests/unit.dynamic-model-options.test.ts` — par 动态目录：chat 模型按序进下拉、非 chat（image/video/audio）被 `filterChatModels` 剔除、`parseCodexResponse` 读 `model_category` 且缺省归一化为 `'chat'`

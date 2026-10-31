@@ -109,7 +109,7 @@ async function setupCodexConfigFiles(
       const meta = BUNDLED_ENTRIES.find((e) => e.id === model);
       ctxWindow = meta?.contextWindow;
       if (!ctxWindow && (provider.type === "tako" || provider.type === "custom") && provider.baseUrl) {
-        const par = getTakoModels(provider.baseUrl, "openai")?.find((e) => e.id === model);
+        const par = getTakoModels(provider.baseUrl, "openai", provider.apiKey)?.find((e) => e.id === model);
         if (par && par.contextWindow > 0) ctxWindow = par.contextWindow;
       }
       if (!ctxWindow) ctxWindow = provider.modelContextWindow;
@@ -222,7 +222,7 @@ function ctxStrOf(ctx: number): string {
  */
 function buildDynamicCodexModels(provider: Provider): LaunchOption[] | null {
   if (!provider.baseUrl) return null;
-  const raw = getTakoModels(provider.baseUrl, "openai");
+  const raw = getTakoModels(provider.baseUrl, "openai", provider.apiKey);
   if (!raw || raw.length === 0) return null;
   const chat = filterChatModels(raw);
   if (chat.length === 0) return null;

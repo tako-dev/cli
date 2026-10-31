@@ -117,7 +117,7 @@ export function collectGrokCatalogModels(provider?: Provider): Array<{
 }> {
   loadCatalog();
   if (provider && (provider.type === "tako" || provider.type === "custom") && provider.baseUrl) {
-    const raw = getTakoModels(provider.baseUrl, "openai") ?? getTakoModels(provider.baseUrl, "claude");
+    const raw = getTakoModels(provider.baseUrl, "openai", provider.apiKey) ?? getTakoModels(provider.baseUrl, "claude", provider.apiKey);
     const chat = raw ? filterChatModels(raw).filter((entry) => isGrokFamilyModel(entry.id)) : [];
     if (chat.length > 0) {
       return chat.map((entry) => ({

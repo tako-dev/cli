@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { getClientLaunchOptions } from "../src/clients/base";
 import {
@@ -21,6 +22,7 @@ import {
 } from "../src/models/tako";
 
 const BASE_URL = "https://models.example.test";
+const CACHE_FINGERPRINT = createHash("sha256").update("sk-test").digest("hex");
 
 function provider(clientId: string): Provider {
   return {
@@ -62,9 +64,9 @@ describe("dynamic model launch options", () => {
     writeFileSync(
       cachePath,
       JSON.stringify({
-        version: 1,
+        version: 2,
         buckets: {
-          [`${BASE_URL}#openai`]: {
+          [`${BASE_URL}#openai#${CACHE_FINGERPRINT}`]: {
             fetchedAt: Date.now(),
             entries: [
               entry("gpt-5.5", "chat", 272000),
@@ -76,7 +78,7 @@ describe("dynamic model launch options", () => {
               AUDIO_ENTRY,
             ],
           },
-          [`${BASE_URL}#claude`]: {
+          [`${BASE_URL}#claude#${CACHE_FINGERPRINT}`]: {
             fetchedAt: Date.now(),
             entries: [
               entry("claude-opus-4-8", "chat", 950000),
@@ -158,9 +160,9 @@ describe("dynamic model launch options", () => {
     writeFileSync(
       cachePath,
       JSON.stringify({
-        version: 1,
+        version: 2,
         buckets: {
-          [`${BASE_URL}#claude`]: {
+          [`${BASE_URL}#claude#${CACHE_FINGERPRINT}`]: {
             fetchedAt: Date.now(),
             entries: [entry("unknown-chat-model", "chat", 0)],
           },
