@@ -108,9 +108,45 @@ describe("Codex native catalog launch override", () => {
     expect(buildCodexNativeCatalogArgs({ ...provider, apiKey: undefined }, "0.166.0", URL, {})).toEqual([]);
   });
 
+  it("does not override catalogs supplied by a configured or selected profile", () => {
+    for (const existing of [{ profile: "personal" }, { profiles: { personal: { model_catalog_json: "/fixture/models.json" } } }]) {
+      expect(buildCodexNativeCatalogArgs(provider, "0.166.0", URL, existing)).toEqual([]);
+    }
+    for (const args of [["-p", "personal"], ["--profile", "personal"], ["--profile=personal"], ["-ppersonal"]]) {
+      expect(buildCodexNativeCatalogArgs(provider, "0.166.0", URL, {}, args)).toEqual([]);
+    }
+  });
+
   it("does not send unsupported or unknown versions a new config field", () => {
     for (const version of [null, "latest", "0.162.0", "0.100.0"]) {
       expect(buildCodexNativeCatalogArgs(provider, version, URL, {})).toEqual([]);
+    }
+  });
+});
+
+describe("real adapter setup in an isolated home", () => {
+  it("reads real managed package versions and returns launch-only menu settings", async () => {
+    const home = mkdtempSync(join(tmpdir(), "tako-native-setup-"));
+    try {
+      const proc = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/native-menu-setup.ts")], {
+        env: { ...process.env, HOME: home, TAKO_HOME: join(home, "tako"), XDG_CONFIG_HOME: join(home, "config") },
+        stdout: "pipe", stderr: "pipe",
+      });
+      const [output, errors, code] = await Promise.all([
+        new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited,
+      ]);
+      expect(errors).toBe("");
+      expect(code).toBe(0);
+      expect(JSON.parse(output)).toEqual({
+        claudeModelPicker: { options: [{ model: "fixture-model", label: "Fixture model", description: "Fixture only" }] },
+        claudeUserUnchanged: true,
+        codexArgs: ["-c", 'model_providers.tako.model_catalog_url="https://fixture.example.test/v1/models?api_type=openai"'],
+        codexCatalogNotPersisted: true,
+        codexModelPreserved: true,
+        profileOverrideAbsent: true,
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });

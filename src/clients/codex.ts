@@ -76,8 +76,12 @@ export function buildCodexNativeCatalogArgs(
   clientVersion: string | null,
   inferenceBaseUrl: string,
   existing: Record<string, any>,
+  launchArgs: string[] = [],
 ): string[] {
   if (!clientVersionMeets(clientVersion, CODEX_NATIVE_CATALOG_MIN_VERSION)) return [];
+  // Profiles can supply their own catalog settings; leave their resolution to Codex.
+  if (existing.profile || existing.profiles) return [];
+  if (launchArgs.some((arg) => arg === "-p" || arg === "--profile" || arg.startsWith("--profile=") || /^-p.+/.test(arg))) return [];
   if ((provider.type !== "tako" && provider.type !== "custom") || !provider.apiKey) return [];
   if (existing.model_catalog_json || existing.model_providers?.tako?.model_catalog_url) return [];
   if (existing.features?.api_key_model_discovery === false) return [];
@@ -88,7 +92,7 @@ export function buildCodexNativeCatalogArgs(
 async function setupCodexConfigFiles(
   provider: ProviderContext,
   selectedOptionIds?: string[],
-  context?: { forLaunch?: boolean },
+  context?: { forLaunch?: boolean; launchArgs?: string[] },
 ): Promise<void | { args: string[] }> {
   const fs = await import("fs/promises");
   try { await fs.mkdir(CODEX_DIR, { recursive: true }); } catch { /* exists */ }
@@ -125,7 +129,7 @@ async function setupCodexConfigFiles(
 
     if (context?.forLaunch) {
       nativeCatalogArgs = buildCodexNativeCatalogArgs(
-        provider, await getInstalledClientVersion(codexClient), baseUrl, existing,
+        provider, await getInstalledClientVersion(codexClient), baseUrl, existing, context.launchArgs,
       );
     }
 

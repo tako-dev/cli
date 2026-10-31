@@ -162,7 +162,7 @@ export async function launchClientUnified(
       const setupResult = await installClient.setupConfigFiles(
         providerContext,
         options?.selectedOptionIds,
-        { forLaunch: true, launchEnvVars },
+        { forLaunch: true, launchEnvVars, launchArgs: options?.args ?? [] },
       );
       if (setupResult && typeof setupResult === "object") {
         setupLaunchArgs = setupResult.args ?? [];

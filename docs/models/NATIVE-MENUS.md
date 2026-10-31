@@ -16,7 +16,7 @@ Claude Code 2.1.242 及以上支持 [`modelPicker`](https://code.claude.com/docs
 
 [Codex 原生目录协议](https://developers.openai.com/codex/model-catalogs)要求服务端返回完整的 `ModelsResponse`，包括模型指令和能力元数据。Codex 自己携带当前账号认证、实际 `client_version` 并验证响应；Tako 不伪造能力、指令或把简化缓存转换成原生目录。只有 OpenAI `data[]` 响应的服务并不满足原生目录协议：启动器仍可显示其模型，但内部菜单需要服务端支持 Codex 原生格式。
 
-用户的 `model_catalog_json`、已有 `model_providers.tako.model_catalog_url` 和显式 `features.api_key_model_discovery = false` 保持优先；订阅直连、未知版本和旧版本不注入此参数。不会移除用户目录文件、启用被用户关闭的发现或切换到其他目录服务。
+用户的 `model_catalog_json`、已有 `model_providers.tako.model_catalog_url` 和显式 `features.api_key_model_discovery = false` 保持优先；配置存在 profile 或启动参数选择 profile 时不注入目录覆盖，让 Codex 自行解析 profile 的目录设置。订阅直连、未知版本和旧版本也不注入此参数。不会移除用户目录文件、启用被用户关闭的发现或切换到其他目录服务。
 
 ## 其余客户端
 
