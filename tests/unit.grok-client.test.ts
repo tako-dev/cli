@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { parse } from "smol-toml";
 import "../src/clients";
@@ -33,6 +34,7 @@ import {
 } from "../src/models/tako";
 
 const BASE_URL = "https://models.example.test";
+const CACHE_FINGERPRINT = createHash("sha256").update("sk-test").digest("hex");
 
 function provider(): Provider {
   return {
@@ -186,9 +188,9 @@ describe("Grok catalog and picker", () => {
     writeFileSync(
       join(tmpDir, "tako-models-cache.json"),
       JSON.stringify({
-        version: 1,
+        version: 2,
         buckets: {
-          [`${BASE_URL}#openai`]: {
+          [`${BASE_URL}#openai#${CACHE_FINGERPRINT}`]: {
             fetchedAt: Date.now(),
             entries: [
               entry("grok-4.6", "chat", 500000),

@@ -29,7 +29,7 @@ interface ProviderView {
 export interface ModelsCommandDeps {
   loadConfig?: () => Promise<TakoConfig>;
   refresh?: (baseUrl: string, apiKey: string, apiType: TakoApiType) => Promise<void>;
-  read?: (baseUrl: string, apiType: TakoApiType) => TakoModelEntry[] | null;
+  read?: (baseUrl: string, apiType: TakoApiType, apiKey?: string) => TakoModelEntry[] | null;
   now?: () => number;
   columns?: () => number;
 }
@@ -75,7 +75,7 @@ function collect(
   const buckets: ApiTypeBucket[] = [];
   let hasAnyCache = false;
   for (const apiType of API_TYPES) {
-    const raw = read(provider.baseUrl as string, apiType);
+    const raw = read(provider.baseUrl as string, apiType, provider.apiKey);
     if (raw === null) {
       buckets.push({ apiType, models: [] });
       continue;
