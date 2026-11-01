@@ -82,6 +82,27 @@ describe("Gemini-native account catalog discovery", () => {
     expect(getTakoModels(BASE_URL, "gemini", KEY)?.[0]?.id).toBe("cached");
   });
 
+  it("does not treat malformed or schema-less successful responses as an empty catalog", async () => {
+    globalThis.fetch = async () => Response.json({ models: [model("retained")] });
+    await refreshTakoModels(BASE_URL, KEY, "gemini");
+    for (const malformed of [{}, [], { models: "invalid" }]) {
+      globalThis.fetch = async () => Response.json(malformed);
+      await refreshTakoModels(BASE_URL, KEY, "gemini");
+      expect(getTakoModels(BASE_URL, "gemini", KEY)?.[0]?.id).toBe("retained");
+    }
+  });
+
+  it("removes revoked Gemini models after a successful complete empty catalog", async () => {
+    globalThis.fetch = async () => Response.json({ models: [model("removed")] });
+    await refreshTakoModels(BASE_URL, KEY, "gemini");
+    globalThis.fetch = async () => Response.json({ models: [] });
+    await refreshTakoModels(BASE_URL, KEY, "gemini");
+    expect(getTakoModels(BASE_URL, "gemini", KEY)).toEqual([]);
+    _resetTakoCatalog();
+    expect(getTakoModels(BASE_URL, "gemini", KEY)).toEqual([]);
+    expect(buildGeminiModelOptions(provider)).toEqual([]);
+  });
+
   it("refreshes compatible provider Gemini buckets with TTL and ignores non-Gemini declarations", async () => {
     const urls: string[] = [];
     globalThis.fetch = async (input) => {

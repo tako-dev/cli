@@ -41,6 +41,8 @@ export interface ClientLaunchSetupContext {
   launchEnvVars?: Record<string, string>;
   /** User/selected arguments, before this setup adds its own overrides. */
   launchArgs?: string[];
+  /** Effective child working directory for workspace settings precedence. */
+  workingDir?: string;
 }
 
 export interface ClientLaunchSetup {

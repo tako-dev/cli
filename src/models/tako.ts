@@ -207,9 +207,10 @@ async function fetchGeminiModels(baseUrl: string, apiKey: string): Promise<TakoM
     });
     if (!response.ok) return null;
     const json: unknown = await response.json();
-    if (!json || typeof json !== "object") return null;
+    if (!json || typeof json !== "object" || Array.isArray(json)) return null;
     const data = json as Record<string, unknown>;
-    if (data.models !== undefined && !Array.isArray(data.models)) return null;
+    // A schema-less response cannot revoke an existing catalog; require an explicit complete list.
+    if (!Array.isArray(data.models)) return null;
     for (const entry of parseGeminiModels(json)) entries.set(entry.id, entry);
     if (data.nextPageToken === undefined || data.nextPageToken === "") return [...entries.values()];
     if (typeof data.nextPageToken !== "string" || seen.has(data.nextPageToken)) return null;
@@ -235,6 +236,16 @@ export function getTakoModels(baseUrl: string, apiType: TakoApiType, apiKey?: st
   if (!apiKey) return null;
   loadDiskOnce();
   return memory.get(bucketKey(baseUrl, apiType, apiKey))?.entries ?? null;
+}
+
+/** Only current, non-future catalog snapshots may populate launch-time native model definitions. */
+export function getFreshTakoModels(baseUrl: string, apiType: TakoApiType, apiKey?: string): TakoModelEntry[] | null {
+  if (!apiKey) return null;
+  loadDiskOnce();
+  const bucket = memory.get(bucketKey(baseUrl, apiType, apiKey));
+  if (!bucket) return null;
+  const age = Date.now() - bucket.fetchedAt;
+  return age >= 0 && age < REFRESH_TTL_MS ? bucket.entries : null;
 }
 
 /**
@@ -267,7 +278,7 @@ export async function refreshTakoModels(
         if (!res.ok) return;
         entries = parseCodexResponse(await res.json(), apiType);
       }
-      if (!entries || entries.length === 0) return;
+      if (!entries || (entries.length === 0 && apiType !== "gemini")) return;
       memory.set(key, { fetchedAt: Date.now(), entries });
       await writeDisk();
     } catch {
