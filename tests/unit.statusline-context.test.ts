@@ -159,6 +159,30 @@ describe("statusline context limit", () => {
     });
   });
 
+  it("renders against a lowered auto-compact window", async () => {
+    const input = {
+      model: { id: "gpt-6.1-sol", display_name: "GPT-6.1 Sol" },
+      workspace: { current_dir: "/tmp" },
+      transcript_path: "/tmp/transcript.jsonl",
+      context_window: {
+        context_window_size: 1_000_000,
+        current_usage: {
+          input_tokens: 300_000,
+          output_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+        used_percentage: 30,
+        remaining_percentage: 70,
+      },
+    } satisfies StatusLineInput;
+
+    await withContextEnv({ tako: "1000000", autoCompact: "450000" }, async () => {
+      // 450K window → threshold 417,000；300K used → 29%
+      expect(await new ContextSegment().render(input)).toContain("29%");
+    });
+  });
+
   it("does not display zero before the auto-compaction threshold", async () => {
     const threshold = resolveAutoCompactThreshold(272_000);
     const input = {

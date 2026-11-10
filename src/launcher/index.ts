@@ -54,13 +54,23 @@ export interface LaunchResult {
 }
 
 /** 从 --model <id> / --model=<id> 里取出显式模型；没有则 undefined。 */
-function modelFromArgs(args: string[]): string | undefined {
+export function modelFromArgs(args: string[]): string | undefined {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === "--model" && i + 1 < args.length) return args[i + 1];
     if (arg.startsWith("--model=")) return arg.slice("--model=".length);
   }
   return undefined;
+}
+
+/**
+ * 解析本次启动实际使用的模型，用于恢复上下文窗口 env。
+ * 优先级：恢复会话的 session.model → 命令行 --model → 面板模型选项 env。
+ */
+export function resolveLaunchModelId(options?: LaunchOptions, args: string[] = []): string | undefined {
+  return options?.resumeModelId
+    ?? modelFromArgs(args)
+    ?? options?.envVars?.ANTHROPIC_MODEL;
 }
 
 /**
@@ -175,9 +185,7 @@ export async function launchClientUnified(
     const effectiveArgs = options?.resume
       ? await withInheritedDangerousFlag(installClient.id, options.args ?? [], { projectPath: workingDir })
       : (options?.args ?? []);
-    const modelId = options?.resumeModelId
-      ?? modelFromArgs(effectiveArgs)
-      ?? options?.envVars?.ANTHROPIC_MODEL;
+    const modelId = resolveLaunchModelId(options, effectiveArgs);
     const modelEnv = modelId
       ? installClient.getModelEnvVars?.(providerContext, modelId) ?? {}
       : {};

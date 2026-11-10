@@ -8,6 +8,7 @@ import {
   withInheritedDangerousFlag,
 } from "../src/clients/dangerous-flags";
 import { claudeCodeClient, resolveClaudeContextWindow } from "../src/clients/claude-code";
+import { resolveLaunchModelId } from "../src/launcher";
 import { _resetTakoCatalog, _setTakoCachePathForTest } from "../src/models";
 import type { ProviderContext } from "../src/providers/types";
 
@@ -163,5 +164,27 @@ describe("resume context window", () => {
       CLAUDE_CODE_MAX_CONTEXT_TOKENS: "",
       TAKO_MODEL_CONTEXT_WINDOW: "",
     });
+  });
+});
+
+describe("launch model resolution", () => {
+  it("prefers the resumed session model", () => {
+    expect(resolveLaunchModelId(
+      { resume: true, resumeModelId: "swe-2", envVars: { ANTHROPIC_MODEL: "other" } },
+      ["--model", "arg-model"],
+    )).toBe("swe-2");
+  });
+
+  it("uses --model from quick launch", () => {
+    expect(resolveLaunchModelId({}, ["--model", "gpt-6.1-sol"])).toBe("gpt-6.1-sol");
+    expect(resolveLaunchModelId({}, ["--model=gpt-6.1-sol"])).toBe("gpt-6.1-sol");
+  });
+
+  it("uses the panel model option env", () => {
+    expect(resolveLaunchModelId({ envVars: { ANTHROPIC_MODEL: "deepseek" } }, [])).toBe("deepseek");
+  });
+
+  it("returns undefined when no model is known", () => {
+    expect(resolveLaunchModelId({}, [])).toBeUndefined();
   });
 });
