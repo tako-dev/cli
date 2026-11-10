@@ -25,6 +25,10 @@ export type LauncherResult =
       args: string[];
       envVars: Record<string, string>;
       selectedOptionIds: string[];
+      /** 从原生会话恢复：launchClientUnified 会补危险跳过 flag 和上下文窗口 env。 */
+      resume?: boolean;
+      /** 被恢复会话的模型 id。 */
+      resumeModelId?: string;
     }
   | { type: "agent" }
   | { type: "stats" }

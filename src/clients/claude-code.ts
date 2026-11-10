@@ -6,7 +6,7 @@ import type { ProviderContext, Provider } from "../providers/types";
 import { DEEPSEEK_ANTHROPIC_URL, resolveXiaomiBaseUrl, SUBAGENT_MODEL_CC_DEFAULT } from "../providers/types";
 import { log } from "../logger";
 import { t } from "../i18n";
-import { loadCatalog, getTakoModels, filterChatModels } from "../models";
+import { loadCatalog, getTakoModels, filterChatModels, getModelEntry } from "../models";
 import { BUNDLED_ENTRIES } from "../models/bundled";
 import { TAKO_DIR } from "../config";
 import { clientVersionMeets, getInstalledClientVersion } from "../installer";
@@ -149,6 +149,37 @@ export function claudeContextEnv(contextWindow?: number): Record<string, string>
     [CLAUDE_MAX_CONTEXT_ENV_KEY]: value,
     [TAKO_CONTEXT_WINDOW_ENV_KEY]: value,
   };
+}
+
+/**
+ * 解析某个模型在 Claude Code 里应使用的上下文窗口。
+ *
+ * 优先用当前 Tako provider 的 /v1/models 目录（恢复会话时 modelId 来自
+ * transcript，可能和 provider.model 不同）；其次用 models.dev / bundled。
+ * 用户为自定义模型录入的 modelContextWindow 只对 provider 自己的 model 生效。
+ */
+export function resolveClaudeContextWindow(
+  provider: ProviderContext,
+  modelId?: string,
+): number | undefined {
+  const id = (modelId ?? provider.model)?.trim();
+  if (!id) return undefined;
+
+  if ((!modelId || modelId === provider.model) && provider.modelContextWindow && provider.modelContextWindow > 0) {
+    return provider.modelContextWindow;
+  }
+
+  if (provider.baseUrl) {
+    const entries = getTakoModels(provider.baseUrl, "claude", provider.apiKey);
+    if (entries) {
+      const baseId = id.replace(/\[1m\]$|:1m$/i, "");
+      const entry = entries.find((e) => e.id === baseId || e.id === id);
+      if (entry?.contextWindow && entry.contextWindow > 0) return entry.contextWindow;
+    }
+  }
+
+  const entry = getModelEntry(id);
+  return entry?.contextWindow && entry.contextWindow > 0 ? entry.contextWindow : undefined;
 }
 
 /** Claude Code 首个支持 `modelPicker` 的版本（官方 settings reference，2026-10-31 核实）。 */
@@ -335,6 +366,12 @@ export const claudeCodeClient: ClientConfig = {
 
     // 1M 后缀：claude/deepseek/kimi 系列且 catalog >= 1M 的自动补 [1m]
     const tagged = provider.model ? appendOneMTagIfNeeded(provider.model) : undefined;
+    // 上下文窗口 env 不能只在「面板选了模型选项」时注入；快捷启动 / 会话恢复
+    // 也要按 provider.model 带上，否则 Claude Code 对未知模型会按 200K 处理，
+    // statusline 也会回落到 models.dev。订阅模式交给 Claude Code 自己的元数据。
+    const contextEnv = provider.type === "claude-subscription"
+      ? {}
+      : claudeContextEnv(resolveClaudeContextWindow(provider));
     // 注意：subagent/别名/utility 五条路径的钉不在此处下发——静态 getEnvVars
     // 无法支持启动选项的「CC 默认」撤钉（env 合并只增不删），钉收敛到
     // setupConfigFiles 合并后单点（resolveLaunchPinEnv）+ agent 会话的
@@ -348,6 +385,7 @@ export const claudeCodeClient: ClientConfig = {
       case "tako":
         return {
           ...common,
+          ...contextEnv,
           ANTHROPIC_BASE_URL: `${provider.baseUrl}/api`,
           ANTHROPIC_AUTH_TOKEN: provider.apiKey!,
           ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
@@ -356,6 +394,7 @@ export const claudeCodeClient: ClientConfig = {
       case "anthropic":
         return {
           ...common,
+          ...contextEnv,
           ANTHROPIC_API_KEY: provider.apiKey!,
           ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
         };
@@ -363,6 +402,7 @@ export const claudeCodeClient: ClientConfig = {
       case "deepseek":
         return {
           ...common,
+          ...contextEnv,
           ANTHROPIC_BASE_URL: DEEPSEEK_ANTHROPIC_URL,
           ANTHROPIC_AUTH_TOKEN: provider.apiKey!,
           ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
@@ -372,6 +412,7 @@ export const claudeCodeClient: ClientConfig = {
         // Base URL 按 key 前缀选（sk- 按量付费 / tp- Token Plan），忽略存储的 baseUrl
         return {
           ...common,
+          ...contextEnv,
           ANTHROPIC_BASE_URL: resolveXiaomiBaseUrl(provider.apiKey),
           ANTHROPIC_AUTH_TOKEN: provider.apiKey!,
           ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
@@ -380,6 +421,7 @@ export const claudeCodeClient: ClientConfig = {
       case "custom":
         return {
           ...common,
+          ...contextEnv,
           ANTHROPIC_BASE_URL: provider.baseUrl!,
           ANTHROPIC_AUTH_TOKEN: provider.apiKey!,
           ...(tagged ? { ANTHROPIC_MODEL: tagged } : {}),
@@ -388,6 +430,21 @@ export const claudeCodeClient: ClientConfig = {
       default:
         return common;
     }
+  },
+
+  getModelEnvVars(provider: ProviderContext, modelId?: string) {
+    // 恢复会话 / 快捷启动 --model / 面板模型选项：按实际模型重新解析窗口。
+    // 显式给了模型但目录里查不到时，用空值清掉 provider.model 的窗口 env，
+    // 避免把上一个模型的窗口套到未知模型上；Claude Code / statusline 会
+    // 各自回落到默认值。
+    if (provider.type === "claude-subscription") return {};
+    const contextWindow = resolveClaudeContextWindow(provider, modelId);
+    if (contextWindow) return claudeContextEnv(contextWindow);
+    return {
+      [CLAUDE_CONTEXT_WINDOW_ENV_KEY]: "",
+      [CLAUDE_MAX_CONTEXT_ENV_KEY]: "",
+      [TAKO_CONTEXT_WINDOW_ENV_KEY]: "",
+    };
   },
 
   async setupConfigFiles(provider: ProviderContext, selectedOptionIds?: string[], context?: { forLaunch?: boolean; launchEnvVars?: Record<string, string> }) {

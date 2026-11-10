@@ -33,6 +33,11 @@ export async function resumeNativeSession(session: UnifiedSession): Promise<void
   if (prepared.warning) console.warn(prepared.warning);
   const client = getClient(prepared.clientId);
   if (!client) throw new Error(`Client ${prepared.clientId} is not registered`);
-  const result = await launchClientUnified(client, { projectPath: prepared.projectPath, args: prepared.args });
+  const result = await launchClientUnified(client, {
+    projectPath: prepared.projectPath,
+    args: prepared.args,
+    resume: true,
+    resumeModelId: session.model,
+  });
   if (!result.success) throw new Error(result.error ?? "Failed to resume session");
 }

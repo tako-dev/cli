@@ -62,6 +62,8 @@ export async function handleLaunchResult(
     args: result.args,
     envVars: result.envVars,
     selectedOptionIds: result.selectedOptionIds,
+    resume: result.resume,
+    resumeModelId: result.resumeModelId,
     providerContext,
     relaunchTakoOnWindows: useWindowsHandoff,
   });

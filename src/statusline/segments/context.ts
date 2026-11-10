@@ -3,10 +3,10 @@ import { theme, style, getIcon, fg } from "../colors";
 import { getModelEntry } from "../../models";
 
 const DEFAULT_CONTEXT_LIMIT = 200000;
-const DEFAULT_OUTPUT_RESERVE = 8192;
-const AUTO_COMPACT_BUFFER_PERCENT = 20;
+const OUTPUT_RESERVE_CAP = 20000;
 const MIN_COMPACT_BUFFER = 13000;
 export const TAKO_CONTEXT_WINDOW_ENV_KEY = "TAKO_MODEL_CONTEXT_WINDOW";
+export const CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
 
 export function resolveContextLimit(modelId: string, envValue = process.env[TAKO_CONTEXT_WINDOW_ENV_KEY]): number {
   if (envValue) {
@@ -22,12 +22,50 @@ export function statusLineUsageTokens(input: StatusLineInput): number | null {
   return usage.input_tokens + usage.cache_creation_input_tokens + usage.cache_read_input_tokens;
 }
 
-export function resolveAutoCompactThreshold(contextLimit: number): number {
-  const usable = Math.max(0, contextLimit - Math.min(DEFAULT_OUTPUT_RESERVE, 20000));
-  return Math.max(0, Math.min(
-    usable - Math.round(usable * AUTO_COMPACT_BUFFER_PERCENT / 100),
-    usable - MIN_COMPACT_BUFFER,
-  ));
+/**
+ * Claude Code 的 statusline input 已经带当前模型的实际 context_window_size。
+ * 优先用它，避免 tako 的 env / models.dev 兜底和 Claude Code 自己不一致。
+ * 老版本 Claude Code 没有这个字段时才回落到 env / catalog。
+ */
+export function resolveStatusLineContextLimit(input: StatusLineInput): number {
+  const fromInput = input.context_window?.context_window_size;
+  if (typeof fromInput === "number" && Number.isSafeInteger(fromInput) && fromInput > 0) {
+    return fromInput;
+  }
+  return resolveContextLimit(input.model.id);
+}
+
+/**
+ * Claude Code 的自动压缩窗口可能被 CLAUDE_CODE_AUTO_COMPACT_WINDOW 调低。
+ * tako 启动时会设置它；如果用户自己调低，statusline 也跟着用。
+ */
+export function resolveAutoCompactWindow(
+  contextLimit: number,
+  envValue = process.env[CLAUDE_AUTO_COMPACT_WINDOW_ENV_KEY],
+): number {
+  if (envValue) {
+    const configured = Number(envValue);
+    if (Number.isSafeInteger(configured) && configured > 0) return Math.min(contextLimit, configured);
+  }
+  return contextLimit;
+}
+
+/**
+ * 对齐 Claude Code 的自动压缩阈值：
+ *   window - min(maxOutputTokens, 20000) - 13000
+ *
+ * statusline input 不带 maxOutputTokens，默认按 Claude Code 的 20000 上限算。
+ * 不要用 20% precompute buffer——那是 Claude Code 提前预计算摘要的阈值，
+ * 不是真正触发 compaction 的阈值（旧实现抄错了，导致 1M 窗口提前约 17 万
+ * token 归零）。
+ */
+export function resolveAutoCompactThreshold(
+  contextLimit: number,
+  maxOutputTokens = OUTPUT_RESERVE_CAP,
+): number {
+  const reserve = Math.min(Math.max(0, maxOutputTokens), OUTPUT_RESERVE_CAP);
+  const usable = Math.max(0, contextLimit - reserve);
+  return Math.max(0, usable - MIN_COMPACT_BUFFER);
 }
 
 /**
@@ -35,8 +73,8 @@ export function resolveAutoCompactThreshold(contextLimit: number): number {
  * 格式：⚡73%
  *
  * 0% 对齐 Claude Code 的自动压缩触发点，而不是模型的物理上下文上限。
- * 上下文窗口优先使用 tako 启动环境传入的实例值；未传入或无效时才查询
- * models 模块（覆盖全网主流模型 + [1m] 变体），最后回落到 200K。
+ * 窗口优先用 statusline input 的 context_window_size；老版本没有时才回落到
+ * tako 启动环境传入的实例值，再查 models 模块，最后回落到 200K。
  */
 export class ContextSegment implements Segment {
   id = "context";
@@ -47,8 +85,10 @@ export class ContextSegment implements Segment {
   async render(input: StatusLineInput): Promise<string | null> {
     const statusLineTokens = statusLineUsageTokens(input);
     const tokens = statusLineTokens ?? await this.getTokensWithCache(input.transcript_path);
-    const limit = resolveContextLimit(input.model.id);
-    const threshold = resolveAutoCompactThreshold(limit);
+    const limit = resolveStatusLineContextLimit(input);
+    const compactWindow = resolveAutoCompactWindow(limit);
+    const threshold = resolveAutoCompactThreshold(compactWindow);
+    if (threshold <= 0) return null;
     const remainingPercent = Math.min(100, Math.max(
       0,
       Math.ceil((((threshold - (tokens ?? 0)) / threshold) * 100)),

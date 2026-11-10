@@ -16,17 +16,9 @@
  */
 import { appendOneMTagIfNeeded } from "./clients/claude-code";
 import { GROK_DEFAULT_MODEL, mapGrokPassthroughModel, takoGrokModelId } from "./clients/grok";
-import { getLastSelectedOptionsForClient } from "./project-history";
+import { resolveInheritedDangerousFlag, type InheritDangerousFlagOptions } from "./clients/dangerous-flags";
 
-const INHERITED_DANGEROUS_FLAGS: Record<string, { optionId: string; flag: string }> = {
-  "claude-code": { optionId: "skip-permissions", flag: "--dangerously-skip-permissions" },
-  codex: { optionId: "bypass-sandbox", flag: "--dangerously-bypass-approvals-and-sandbox" },
-};
-
-export interface BuildPassthroughOptions {
-  /** 注入用 — 读取 panel 上次勾选的 option id。默认走 project-history。 */
-  getLastSelectedOptionIds?: (clientId: string) => Promise<string[]>;
-}
+export type BuildPassthroughOptions = InheritDangerousFlagOptions;
 
 export async function buildPassthroughArgs(
   clientId: string,
@@ -36,7 +28,7 @@ export async function buildPassthroughArgs(
 ): Promise<string[]> {
   const rest = allArgs.filter((a) => a !== shortcutFlag);
 
-  const inherited = await resolveInheritedFlag(clientId, rest, opts);
+  const inherited = await resolveInheritedDangerousFlag(clientId, rest, opts);
 
   if (clientId === "grok") {
     const out: string[] = [];
@@ -87,21 +79,4 @@ export async function buildPassthroughArgs(
     out.push(a);
   }
   return out;
-}
-
-async function resolveInheritedFlag(
-  clientId: string,
-  rest: string[],
-  opts?: BuildPassthroughOptions,
-): Promise<string | null> {
-  const entry = INHERITED_DANGEROUS_FLAGS[clientId];
-  if (!entry) return null;
-  if (rest.includes(entry.flag)) return null;
-
-  const reader = opts?.getLastSelectedOptionIds ?? getLastSelectedOptionsForClient;
-  const ids = await reader(clientId);
-  // 有记忆：尊重用户上次的选择（只有勾过该危险开关才补全放行 flag）
-  if (ids.length > 0) return ids.includes(entry.optionId) ? entry.flag : null;
-  // 无记忆（首次）：默认全放行 → 补危险 flag
-  return entry.flag;
 }

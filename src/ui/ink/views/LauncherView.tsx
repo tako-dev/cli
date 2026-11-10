@@ -499,7 +499,16 @@ function LauncherViewInner({ clients, defaultIdx, hasProviders, pickCounts, init
         if (selected.session.resumeCapability === "unsupported") { setSessionDetailKey(selected.session.key); return; }
         try {
           const prepared = prepareResume(selected.session, projects[0]?.path);
-          onResult({ type: "launch", clientId: prepared.clientId, projectPath: prepared.projectPath, args: prepared.args, envVars: {}, selectedOptionIds: [] });
+          onResult({
+            type: "launch",
+            clientId: prepared.clientId,
+            projectPath: prepared.projectPath,
+            args: prepared.args,
+            envVars: {},
+            selectedOptionIds: [],
+            resume: true,
+            resumeModelId: selected.session.model,
+          });
         } catch (error) {
           setSessionIndexError(error instanceof Error ? error.message : String(error));
         }

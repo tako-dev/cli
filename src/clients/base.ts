@@ -77,6 +77,12 @@ export interface ClientConfig {
   readSystemVersion?: () => Promise<string | null>;
   /** 生成环境变量（根据 Provider 上下文） */
   getEnvVars: (provider: ProviderContext) => Record<string, string>;
+  /**
+   * 按模型 id 生成上下文窗口等环境变量。
+   * 恢复会话（session.model）和快捷启动（--model）没有面板的 selectedOptionIds，
+   * 需要在这里按实际模型补。
+   */
+  getModelEnvVars?: (provider: ProviderContext, modelId?: string) => Record<string, string>;
   /** 生成配置文件（可选），可返回需要附加到客户端命令行的启动参数 */
   setupConfigFiles?: (
     provider: ProviderContext,

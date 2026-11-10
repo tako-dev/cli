@@ -21,6 +21,19 @@ TUI 前，父进程必须释放 stdin 和终端模式，避免子进程渲染出
 
 `launchClientUnified` 先校验项目目录、用 `resolveLaunchTarget` 决定装哪个 client（Pi Web 先装 Pi），再调用 `ensureClientReady`，解析 Provider 并让 client 写入必要配置文件。最终它把合并后的 args/env/providerContext 传给 `launcher-legacy.ts` 的 `launchClient`。Pi Web 启动前会剥掉终端专用的 `--provider/--model/--no-session/--continue/--web`。
 
+### 恢复会话与快捷启动的选项补全
+
+面板启动时，`LauncherView` 已经把勾选项转成 args/env；但恢复会话和快捷启动没有
+`selectedOptionIds`。`launchClientUnified` 在 `resume: true` 时用
+`withInheritedDangerousFlag` 按项目历史补 `--dangerously-skip-permissions` /
+`--dangerously-bypass-approvals-and-sandbox`（已显式传过则不重复）。同时按
+`resumeModelId`（恢复）、args 里的 `--model`（快捷启动）或
+`options.envVars.ANTHROPIC_MODEL`（面板模型选项）调用 client 的
+`getModelEnvVars`，恢复 `TAKO_MODEL_CONTEXT_WINDOW` /
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW` / `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，避免未知模型
+被 Claude Code 按 200K 处理、statusline 回落到 models.dev。显式模型查不到窗口时
+用空值清掉 provider.model 的窗口 env，防止套用错误窗口。
+
 ### Claude Code 启动配置覆盖
 
 Claude Code 的用户 `settings.json` 可能写死 Provider 环境变量。launcher 不修改用户文件，
@@ -85,3 +98,4 @@ Claude 更新确认 prompt 显示出来但按键无响应。
 - `tests/unit.pi-client.test.ts` - Pi tab、隐藏 Pi Web、tako-pi / pi-cc-header / pi-claude-code-ui 安装策略
 - `tests/unit.pi-install.test.ts` - 跨 OS 启动命令与 PATH 查找
 - `tests/unit.launch-options.test.ts` - 空选不勾目录第一项；只有 Pi 才兜底 grok-4.6
+- `tests/unit.resume-launch-options.test.ts` - 恢复/快捷启动补危险跳过 flag；按 session.model / --model 恢复上下文窗口 env

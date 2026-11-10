@@ -84,15 +84,16 @@ export async function recordProjectLaunch(
 }
 
 /**
- * 获取当前目录下某客户端最近一次启动时勾选的 launchOption id 列表
- * 优先级：当前目录记录 → 该客户端其他项目中最近的一次 → []
+ * 获取某客户端最近一次启动时勾选的 launchOption id 列表
+ * 优先级：projectPath（缺省当前目录）记录 → 该客户端其他项目中最近的一次 → []
  */
 export async function getLastSelectedOptionsForClient(
-  clientId: string
+  clientId: string,
+  projectPath?: string,
 ): Promise<string[]> {
   const config = await loadConfig();
   const projects = config.recentProjects || [];
-  const cwd = process.cwd();
+  const cwd = projectPath ?? process.cwd();
 
   const cwdProject = projects.find((p) => p.path === cwd);
   const cwdIds = cwdProject?.clientUsage?.[clientId]?.lastSelectedOptionIds;

@@ -14,6 +14,7 @@ import { t } from "../i18n";
 import { track, hashProjectPath } from "../analytics";
 import { launchClient as legacyLaunchClient } from "../launcher-legacy";
 import { recordModelPicks } from "../model-usage";
+import { withInheritedDangerousFlag } from "../clients/dangerous-flags";
 
 export interface LaunchOptions {
   projectPath?: string;
@@ -22,6 +23,13 @@ export interface LaunchOptions {
   /** Ephemeral launch files removed after the client exits. */
   cleanupFiles?: string[];
   selectedOptionIds?: string[];
+  /**
+   * 恢复原生会话。设置后 launchClientUnified 会补上「危险跳过」flag，
+   * 并按 resumeModelId 恢复上下文窗口 env（恢复路径没有面板选项）。
+   */
+  resume?: boolean;
+  /** 被恢复会话的模型 id（来自 session index / transcript）。 */
+  resumeModelId?: string;
   /** 调用方直接指定的 Provider（跳过选择） */
   providerContext?: ProviderContext;
   /**
@@ -43,6 +51,16 @@ export interface LaunchResult {
   success: boolean;
   error?: string;
   exitCode?: number;
+}
+
+/** 从 --model <id> / --model=<id> 里取出显式模型；没有则 undefined。 */
+function modelFromArgs(args: string[]): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--model" && i + 1 < args.length) return args[i + 1];
+    if (arg.startsWith("--model=")) return arg.slice("--model=".length);
+  }
+  return undefined;
 }
 
 /**
@@ -151,18 +169,32 @@ export async function launchClientUnified(
       return { success: false, error: t("launcher.apiKeyNotConfigured") };
     }
 
+    // 恢复路径没有面板的 selectedOptionIds：在这里补危险跳过 flag。
+    // 恢复会话用 session.model；快捷启动显式传了 --model 时也用该模型，
+    // 两者都按实际模型补上下文窗口 env。
+    const effectiveArgs = options?.resume
+      ? await withInheritedDangerousFlag(installClient.id, options.args ?? [], { projectPath: workingDir })
+      : (options?.args ?? []);
+    const modelId = options?.resumeModelId
+      ?? modelFromArgs(effectiveArgs)
+      ?? options?.envVars?.ANTHROPIC_MODEL;
+    const modelEnv = modelId
+      ? installClient.getModelEnvVars?.(providerContext, modelId) ?? {}
+      : {};
+
     // Setup config files
     let setupLaunchArgs: string[] = [];
     let setupEnvVars: Record<string, string> = {};
     if (installClient.setupConfigFiles) {
       const launchEnvVars = {
         ...installClient.getEnvVars(providerContext),
+        ...modelEnv,
         ...(options?.envVars ?? {}),
       };
       const setupResult = await installClient.setupConfigFiles(
         providerContext,
         options?.selectedOptionIds,
-        { forLaunch: true, launchEnvVars, launchArgs: options?.args ?? [], workingDir },
+        { forLaunch: true, launchEnvVars, launchArgs: effectiveArgs, workingDir },
       );
       if (setupResult && typeof setupResult === "object") {
         setupLaunchArgs = setupResult.args ?? [];
@@ -190,11 +222,11 @@ export async function launchClientUnified(
 
     log.info(t("launcher.starting", { client: target.name }));
 
-    const mergedArgs = [...setupLaunchArgs, ...(options?.args ?? [])];
+    const mergedArgs = [...setupLaunchArgs, ...effectiveArgs];
     return await legacyLaunchClient(target, {
       ...options,
       args: target.id === "pi-web" ? stripPiOnlyArgs(mergedArgs) : mergedArgs,
-      envVars: { ...setupEnvVars, ...(options?.envVars ?? {}) },
+      envVars: { ...setupEnvVars, ...modelEnv, ...(options?.envVars ?? {}) },
       cleanupFiles: [...setupCleanupFiles, ...(options?.cleanupFiles ?? [])],
       providerContext,
     });
