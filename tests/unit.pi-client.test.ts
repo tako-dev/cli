@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test";
 import "../src/clients";
 import { getAllClients, getClient, getClientLaunchOptions } from "../src/clients/base";
 import { piClient } from "../src/clients/pi";
+import { piWebClient } from "../src/clients/pi-web";
+import { TAKO_DIR } from "../src/config";
 import {
   PI_CC_HEADER_PACKAGE,
   PI_CLAUDE_CODE_UI_PACKAGE,
@@ -138,6 +140,22 @@ describe("tako-pi package detection", () => {
       packages: ["local/tako-pi", PI_CC_HEADER_PACKAGE, PI_CLAUDE_CODE_UI_PACKAGE],
       action: "none",
     });
+  });
+});
+
+describe("Pi account handoff", () => {
+  it("passes the selected account and config root to terminal and Web children without persisting a key", () => {
+    for (const client of [piClient, piWebClient]) {
+      for (const apiKey of ["fixture-pi-account-a", "fixture-pi-account-b"]) {
+        expect(client.getEnvVars({ type: "custom", baseUrl: "https://pi.example.test", apiKey })).toEqual({
+          PI_DISABLE_UPDATE_CHECK: "1",
+          TAKO_BASE_URL: "https://pi.example.test",
+          TAKO_API_KEY: apiKey,
+          TAKO_HOME: TAKO_DIR,
+        });
+      }
+      expect(client.getEnvVars({ type: "tako" }).TAKO_API_KEY).toBe("");
+    }
   });
 });
 

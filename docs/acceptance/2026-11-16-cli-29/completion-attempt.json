@@ -1,0 +1,11 @@
+{
+  "ticket": "c56729cd",
+  "attemptedAtApproxCst": "2026-11-16 17:57 UTC+8",
+  "command": "hq ticket done c56729cd --summary <stage summary> --evidence <candidate, verification and comment evidence>",
+  "exitCode": 2,
+  "stderr": "hq: 拒绝 done：还有活进程：pid 65533 活着（/opt/homebrew/Cellar/python@3.15/3.15.1/Frameworks/Python.framework/Versions/3.1）；先 `hq ticket kill c56729cd`",
+  "ticketMarkedDone": false,
+  "executorKilled": false,
+  "worktreeRemoved": false,
+  "nextAction": "父方收到执行进程退出事件后，先核验最终工作树外归档完整性，再关闭本施工阶段工单并交独立验收；不绕过 HQ 活进程保护。"
+}

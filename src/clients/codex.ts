@@ -65,6 +65,31 @@ export function resolveCodexModel(
 /** Conservative supported baseline, verified against rust-v0.162.1 config.schema.json. */
 export const CODEX_NATIVE_CATALOG_MIN_VERSION = "0.162.1";
 
+/** Respect explicit CLI config layers instead of guessing how Codex merges their catalogs. */
+function hasCodexCatalogOverride(args: string[]): boolean {
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]!;
+    if (arg === "--disable" && args[index + 1] === "api_key_model_discovery"
+      || arg === "--disable=api_key_model_discovery") return true;
+    const override = arg === "-c" || arg === "--config" ? args[++index]
+      : arg.startsWith("--config=") ? arg.slice("--config=".length)
+      : arg.startsWith("-c") && arg.length > 2 ? arg.slice(2) : undefined;
+    if (override === undefined) continue;
+    try {
+      const config = parse(override) as Record<string, any>;
+      if (Object.hasOwn(config, "model_catalog_json") || config.profile || config.profiles
+        || Object.hasOwn(config, "model_provider")
+        || config.model_providers?.tako?.model_catalog_url !== undefined
+        || config.model_providers?.tako?.base_url !== undefined
+        || config.features?.api_key_model_discovery === false) return true;
+    } catch {
+      // Let Codex validate the caller's syntax, with no extra discovery override.
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Enable the official authenticated native catalog endpoint for this launch.
  * Codex appends its actual client_version and validates the complete ModelsResponse;
@@ -82,6 +107,7 @@ export function buildCodexNativeCatalogArgs(
   // Profiles can supply their own catalog settings; leave their resolution to Codex.
   if (existing.profile || existing.profiles) return [];
   if (launchArgs.some((arg) => arg === "-p" || arg === "--profile" || arg.startsWith("--profile=") || /^-p.+/.test(arg))) return [];
+  if (hasCodexCatalogOverride(launchArgs)) return [];
   if ((provider.type !== "tako" && provider.type !== "custom") || !provider.apiKey) return [];
   if (existing.model_catalog_json || existing.model_providers?.tako?.model_catalog_url) return [];
   if (existing.features?.api_key_model_discovery === false) return [];
@@ -260,9 +286,8 @@ function ctxStrOf(ctx: number): string {
 function buildDynamicCodexModels(provider: Provider): LaunchOption[] | null {
   if (!provider.baseUrl) return null;
   const raw = getTakoModels(provider.baseUrl, "openai", provider.apiKey);
-  if (!raw || raw.length === 0) return null;
+  if (raw === null) return null;
   const chat = filterChatModels(raw);
-  if (chat.length === 0) return null;
   return chat.map((e) => ({
     id: `model-${e.id}`,
     label: { en: e.displayName, zh: e.displayName },

@@ -167,6 +167,24 @@ function parseOpenAIResponse(json: unknown, apiType: TakoApiType): TakoModelEntr
   return out;
 }
 
+/** Only complete, explicitly shaped lists may replace an account's catalog (including with []). */
+function parseCompleteModelList(json: unknown, apiType: TakoApiType): TakoModelEntry[] | null {
+  if (!json || typeof json !== "object" || Array.isArray(json)) return null;
+  const data = json as Record<string, unknown>;
+  // These gateway lists are unpaginated. Do not publish the first page of a
+  // different protocol that advertises more data, or guess its cursor semantics.
+  if (data.has_more !== undefined && data.has_more !== false) return null;
+  const codex = Array.isArray(data.models);
+  const rows = codex ? data.models : data.data;
+  if (!Array.isArray(rows)) return null;
+  if (rows.some(row => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return true;
+    const id = (row as Record<string, unknown>)[codex ? "slug" : "id"];
+    return typeof id !== "string" || !id.trim();
+  })) return null;
+  return parseCodexResponse(json, apiType);
+}
+
 /** Parse only Gemini-native models that advertise generateContent support. */
 export function parseGeminiModels(json: unknown): TakoModelEntry[] {
   if (!json || typeof json !== "object" || !Array.isArray((json as { models?: unknown }).models)) return [];
@@ -274,11 +292,12 @@ export async function refreshTakoModels(
         const res = await fetch(url, {
           headers: { Authorization: `Bearer ${apiKey}` },
           signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+          redirect: "error",
         });
         if (!res.ok) return;
-        entries = parseCodexResponse(await res.json(), apiType);
+        entries = parseCompleteModelList(await res.json(), apiType);
       }
-      if (!entries || (entries.length === 0 && apiType !== "gemini")) return;
+      if (entries === null) return;
       memory.set(key, { fetchedAt: Date.now(), entries });
       await writeDisk();
     } catch {
@@ -311,9 +330,9 @@ export function refreshAllTakoCatalogs(providers: Provider[]): Promise<void> {
     if (!p.supportedClients?.length || p.supportedClients.includes("gemini")) apiTypes.push("gemini");
     for (const apiType of apiTypes) {
       const bucket = memory.get(bucketKey(p.baseUrl, apiType, p.apiKey));
-      if (bucket && now - bucket.fetchedAt < REFRESH_TTL_MS) continue;
+      if (bucket && now >= bucket.fetchedAt && now - bucket.fetchedAt < REFRESH_TTL_MS) continue;
       const job = refreshTakoModels(p.baseUrl, p.apiKey, apiType);
-      if (!bucket) coldJobs.push(job);
+      if (!bucket || now < bucket.fetchedAt) coldJobs.push(job);
     }
   }
   return Promise.all(coldJobs).then(() => undefined);

@@ -235,6 +235,10 @@ export function takoPiEnv(provider: ProviderContext): Record<string, string> {
     return {
       ...common,
       TAKO_BASE_URL: provider.baseUrl || "https://tako.shiroha.tech",
+      // Launch-scoped contract: never make the extension guess a different saved
+      // account. Older tako-pi revisions ignore these; see docs/models/PI-DEPENDENCY.md.
+      TAKO_API_KEY: provider.apiKey ?? "",
+      TAKO_HOME: TAKO_DIR,
     };
   }
   return common;
@@ -272,7 +276,8 @@ export function applyPiSettings(
 
 /**
  * Point Pi at Tako without wiping the user's other packages or skills.
- * Does not persist the API key — tako-pi reads ~/.tako/config.json itself.
+ * Does not persist the API key; the launch environment contract and older
+ * tako-pi config fallback are documented in docs/models/PI-DEPENDENCY.md.
  */
 export async function setupPiConfigFiles(
   provider: ProviderContext,

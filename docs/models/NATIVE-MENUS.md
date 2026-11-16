@@ -6,7 +6,7 @@ Tako 启动器的模型列表与客户端内部的模型菜单是两个独立入
 
 Claude Code 2.1.242 及以上支持 [`modelPicker`](https://code.claude.com/docs/en/settings-reference#modelpicker)。Tako 在启动时从真实受管客户端包读取版本，未知版本或低于该版本时不发送新字段。
 
-当前账号的 chat 模型转换为 `modelPicker.options` 中的 `model`、`label` 和可选 `description`。模型 ID 与启动器保持一致，包括已有的 `[1m]` 规则。列表追加到内置选项，不设置 `replaceBuiltInOptions`。此字段只写入临时 `--settings` 文件，退出时随现有启动文件清理；不修改个人 `~/.claude/settings.json`。如果个人设置已有 `modelPicker`，Tako 不覆盖它。组织的模型允许列表和受管配置仍由 Claude Code 执行。
+当前账号的一小时内 chat 模型转换为 `modelPicker.options` 中的 `model`、`label` 和可选 `description`；过期或未来时间戳不获得注入资格。使用最终启动凭据对应的目录，启动路由被覆盖或 token/key 冲突时跳过注入。模型 ID 与启动器保持一致，包括已有的 `[1m]` 规则。列表追加到内置选项，不设置 `replaceBuiltInOptions`。此字段只写入临时 `--settings` 文件，退出时随现有启动文件清理；不修改个人 `~/.claude/settings.json`。如果个人、目标项目或祖先目录的 project/local 设置已有 `modelPicker`（包括空值或空列表），Tako 不覆盖它；配置无法安全解析时也不注入菜单。支持按最终 `CLAUDE_CONFIG_DIR` 定位个人设置；显式 `--settings` 参数保留用户菜单语义。组织的模型允许列表和受管配置仍由 Claude Code 执行。
 
 无账号目录、订阅直连或不支持的版本继续使用客户端原有菜单。
 
@@ -16,11 +16,13 @@ Claude Code 2.1.242 及以上支持 [`modelPicker`](https://code.claude.com/docs
 
 [Codex 原生目录协议](https://developers.openai.com/codex/model-catalogs)要求服务端返回完整的 `ModelsResponse`，包括模型指令和能力元数据。Codex 自己携带当前账号认证、实际 `client_version` 并验证响应；Tako 不伪造能力、指令或把简化缓存转换成原生目录。只有 OpenAI `data[]` 响应的服务并不满足原生目录协议：启动器仍可显示其模型，但内部菜单需要服务端支持 Codex 原生格式。
 
-用户的 `model_catalog_json`、已有 `model_providers.tako.model_catalog_url` 和显式 `features.api_key_model_discovery = false` 保持优先；配置存在 profile 或启动参数选择 profile 时不注入目录覆盖，让 Codex 自行解析 profile 的目录设置。订阅直连、未知版本和旧版本也不注入此参数。不会移除用户目录文件、启用被用户关闭的发现或切换到其他目录服务。
+用户的 `model_catalog_json`、已有 `model_providers.tako.model_catalog_url` 和显式 `features.api_key_model_discovery = false` 保持优先；配置存在 profile 或启动参数选择 profile 时不注入目录覆盖，让 Codex 自行解析 profile 的目录设置。显式 `-c` / `--config` 目录、provider／路由或 profile 覆盖，以及 `--disable api_key_model_discovery` 也阻止注入；无法解析的 TOML 交给 Codex 自行报错。订阅直连、未知版本和旧版本也不注入此参数。不会移除用户目录文件、启用被用户关闭的发现或切换到其他目录服务。
 
 ## 其余客户端
 
-Grok 已通过现有 `tako-*` 模型块接入原生菜单；个人模型和菜单过滤策略需要保留。Pi / Pi Web 的模型注册由现有 `tako-pi` 扩展提供，不在本次修改中新增第二个目录写入器。该外部扩展的账号隔离与配置保留需另行核验，CLI 的缓存修复不代表扩展缓存已修复。
+Grok 已通过现有 `tako-*` 模型块接入原生菜单；个人模型和菜单过滤策略需要保留。Pi / Pi Web 的模型注册由现有 `tako-pi` 扩展提供，不在本次修改中新增第二个目录写入器。该外部扩展的账号隔离与配置保留需另行修复和验收，CLI 的缓存修复及环境透传不代表扩展已修复。固定源码证据、不可用时的实际降级和后续实现／验收契约见 [PI-DEPENDENCY.md](PI-DEPENDENCY.md)。
+
+Pi 启动器只读取当前地址／账号的 Messages 目录，Grok 只读取 OpenAI 目录；协议目录缺失时不借用另一协议的模型 ID。已知完整空目录或筛选后没有合格模型时，Claude Code、Codex、Pi 和 Grok 的启动器模型组选项保持为空，不重新填入静态兜底。只有目录未知时保留原有静态启动选项，这些名称不构成远端能力证明。启动器仍保留同账号过期目录的离线显示策略；这与原生菜单只接受新鲜目录的资格不同。
 
 Gemini 启动器从当前账号的 Gemini 原生 `/v1beta/models` 目录选择模型，只列出宣告 `generateContent` 的模型并传递原始 `--model` ID，不混用 OpenAI / Messages 目录。Gemini 0.51.0 及以上的内部 Manual 菜单通过低优先级 `GEMINI_CLI_SYSTEM_DEFAULTS_PATH` 临时文件接入：保留继承的原默认文件内容（相对路径按实际目标项目解析；显式本次启动默认路径不注入覆盖），添加 `modelDefinitions`、显式 `customAliases[id].modelConfig.model` 和 `modelIdResolutions[id].default`，不继承默认推理参数，不修改高优先级系统文件或用户 HOME。最终启动地址、协议和凭据对应的缓存必须在一小时内；显式完整成功的空目录清除该账号旧列表，失败不更新缓存时间戳，过期目录不生成原生覆盖。退出后清理临时文件，不把上一账号目录持久化到个人设置。
 
@@ -28,6 +30,6 @@ Gemini 启动器从当前账号的 Gemini 原生 `/v1beta/models` 目录选择�
 
 ## 验证
 
-`tests/unit.native-model-menus.test.ts` 覆盖版本门槛、当前账号 chat 列表、个人菜单保留、临时配置清理和 Codex 显式目录/关闭发现的保留。`tests/unit.gemini-native-menu.test.ts` 在隔离子进程调用真实 Gemini 适配器，覆盖默认文件保留、当前账号切换、目标项目禁用设置、配置冲突与过期目录不注入。测试使用临时目录和假凭据，不调用真实模型，不修改个人配置；它们不替代真实客户端菜单或推理验证。
+`tests/unit.native-model-menus.test.ts` 覆盖版本门槛、当前账号 chat 列表、个人／项目／显式菜单保留、临时配置清理和 Codex 显式目录/关闭发现的保留。`tests/unit.model-qualification.test.ts` 覆盖五个启动器的地址／账号／协议隔离与已知空目录；`tests/unit.tako-model-cache.test.ts` 覆盖完整空目录撤销、坏协议／不完整分页拒绝及未来时间戳刷新。`tests/unit.gemini-native-menu.test.ts` 在隔离子进程调用真实 Gemini 适配器，覆盖默认文件保留、当前账号切换、目标项目禁用设置、配置冲突与过期目录不注入。测试使用临时目录、假凭据和 fixture 包版本，不调用真实模型，不修改个人配置；它们不替代真实客户端菜单或推理验证。本轮命令、结果、回归矩阵与未验范围见 [验收记录](../acceptance/2026-11-16-cli-29/NOTES.md)。
 
 可对独立安装的 `@google/gemini-cli-core@0.51.0` 运行 `bun tests/fixtures/gemini-core-resolution.ts <core-package-directory>`，离线检查实际 `ModelConfigService` 的菜单选项、原始 ID 路由与无默认生成参数继承；该检查不调用模型、不声称完整 TUI 或推理兼容。配置入口与优先级依据：[settings loader](https://github.com/google-gemini/gemini-cli/blob/v0.51.0/packages/cli/src/config/settings.ts)、[模型配置](https://github.com/google-gemini/gemini-cli/blob/v0.51.0/packages/core/src/services/modelConfigService.ts)、[内置别名](https://github.com/google-gemini/gemini-cli/blob/v0.51.0/packages/core/src/config/defaultModelConfigs.ts)。
