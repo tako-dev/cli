@@ -1,0 +1,676 @@
+diff --git a/docs/models/NATIVE-MENUS.md b/docs/models/NATIVE-MENUS.md
+index f25aed7..7d52e69 100644
+--- a/docs/models/NATIVE-MENUS.md
++++ b/docs/models/NATIVE-MENUS.md
+@@ -6,7 +6,7 @@ Tako 启动器的模型列表与客户端内部的模型菜单是两个独立入
+ 
+ Claude Code 2.1.242 及以上支持 [`modelPicker`](https://code.claude.com/docs/en/settings-reference#modelpicker)。Tako 在启动时从真实受管客户端包读取版本，未知版本或低于该版本时不发送新字段。
+ 
+-当前账号的 chat 模型转换为 `modelPicker.options` 中的 `model`、`label` 和可选 `description`。模型 ID 与启动器保持一致，包括已有的 `[1m]` 规则。列表追加到内置选项，不设置 `replaceBuiltInOptions`。此字段只写入临时 `--settings` 文件，退出时随现有启动文件清理；不修改个人 `~/.claude/settings.json`。如果个人设置已有 `modelPicker`，Tako 不覆盖它。组织的模型允许列表和受管配置仍由 Claude Code 执行。
++当前账号的一小时内 chat 模型转换为 `modelPicker.options` 中的 `model`、`label` 和可选 `description`；过期或未来时间戳不获得注入资格。使用最终启动凭据对应的目录，启动路由被覆盖或 token/key 冲突时跳过注入。模型 ID 与启动器保持一致，包括已有的 `[1m]` 规则。列表追加到内置选项，不设置 `replaceBuiltInOptions`。此字段只写入临时 `--settings` 文件，退出时随现有启动文件清理；不修改个人 `~/.claude/settings.json`。如果个人、目标项目或祖先目录的 project/local 设置已有 `modelPicker`（包括空值或空列表），Tako 不覆盖它；配置无法安全解析时也不注入菜单。支持按最终 `CLAUDE_CONFIG_DIR` 定位个人设置；显式 `--settings` 参数保留用户菜单语义。组织的模型允许列表和受管配置仍由 Claude Code 执行。
+ 
+ 无账号目录、订阅直连或不支持的版本继续使用客户端原有菜单。
+ 
+@@ -16,11 +16,13 @@ Claude Code 2.1.242 及以上支持 [`modelPicker`](https://code.claude.com/docs
+ 
+ [Codex 原生目录协议](https://developers.openai.com/codex/model-catalogs)要求服务端返回完整的 `ModelsResponse`，包括模型指令和能力元数据。Codex 自己携带当前账号认证、实际 `client_version` 并验证响应；Tako 不伪造能力、指令或把简化缓存转换成原生目录。只有 OpenAI `data[]` 响应的服务并不满足原生目录协议：启动器仍可显示其模型，但内部菜单需要服务端支持 Codex 原生格式。
+ 
+-用户的 `model_catalog_json`、已有 `model_providers.tako.model_catalog_url` 和显式 `features.api_key_model_discovery = false` 保持优先；配置存在 profile 或启动参数选择 profile 时不注入目录覆盖，让 Codex 自行解析 profile 的目录设置。订阅直连、未知版本和旧版本也不注入此参数。不会移除用户目录文件、启用被用户关闭的发现或切换到其他目录服务。
++用户的 `model_catalog_json`、已有 `model_providers.tako.model_catalog_url` 和显式 `features.api_key_model_discovery = false` 保持优先；配置存在 profile 或启动参数选择 profile 时不注入目录覆盖，让 Codex 自行解析 profile 的目录设置。显式 `-c` / `--config` 目录、provider／路由或 profile 覆盖，以及 `--disable api_key_model_discovery` 也阻止注入；无法解析的 TOML 交给 Codex 自行报错。订阅直连、未知版本和旧版本也不注入此参数。不会移除用户目录文件、启用被用户关闭的发现或切换到其他目录服务。
+ 
+ ## 其余客户端
+ 
+-Grok 已通过现有 `tako-*` 模型块接入原生菜单；个人模型和菜单过滤策略需要保留。Pi / Pi Web 的模型注册由现有 `tako-pi` 扩展提供，不在本次修改中新增第二个目录写入器。该外部扩展的账号隔离与配置保留需另行核验，CLI 的缓存修复不代表扩展缓存已修复。
++Grok 已通过现有 `tako-*` 模型块接入原生菜单；个人模型和菜单过滤策略需要保留。Pi / Pi Web 的模型注册由现有 `tako-pi` 扩展提供，不在本次修改中新增第二个目录写入器。该外部扩展的账号隔离与配置保留需另行修复和验收，CLI 的缓存修复及环境透传不代表扩展已修复。固定源码证据、不可用时的实际降级和后续实现／验收契约见 [PI-DEPENDENCY.md](PI-DEPENDENCY.md)。
++
++Pi 启动器只读取当前地址／账号的 Messages 目录，Grok 只读取 OpenAI 目录；协议目录缺失时不借用另一协议的模型 ID。已知完整空目录或筛选后没有合格模型时，Claude Code、Codex、Pi 和 Grok 的启动器模型组选项保持为空，不重新填入静态兜底。只有目录未知时保留原有静态启动选项，这些名称不构成远端能力证明。启动器仍保留同账号过期目录的离线显示策略；这与原生菜单只接受新鲜目录的资格不同。
+ 
+ Gemini 启动器从当前账号的 Gemini 原生 `/v1beta/models` 目录选择模型，只列出宣告 `generateContent` 的模型并传递原始 `--model` ID，不混用 OpenAI / Messages 目录。Gemini 0.51.0 及以上的内部 Manual 菜单通过低优先级 `GEMINI_CLI_SYSTEM_DEFAULTS_PATH` 临时文件接入：保留继承的原默认文件内容（相对路径按实际目标项目解析；显式本次启动默认路径不注入覆盖），添加 `modelDefinitions`、显式 `customAliases[id].modelConfig.model` 和 `modelIdResolutions[id].default`，不继承默认推理参数，不修改高优先级系统文件或用户 HOME。最终启动地址、协议和凭据对应的缓存必须在一小时内；显式完整成功的空目录清除该账号旧列表，失败不更新缓存时间戳，过期目录不生成原生覆盖。退出后清理临时文件，不把上一账号目录持久化到个人设置。
+ 
+@@ -28,6 +30,6 @@ Gemini 启动器从当前账号的 Gemini 原生 `/v1beta/models` 目录选择
+ 
+ ## 验证
+ 
+-`tests/unit.native-model-menus.test.ts` 覆盖版本门槛、当前账号 chat 列表、个人菜单保留、临时配置清理和 Codex 显式目录/关闭发现的保留。`tests/unit.gemini-native-menu.test.ts` 在隔离子进程调用真实 Gemini 适配器，覆盖默认文件保留、当前账号切换、目标项目禁用设置、配置冲突与过期目录不注入。测试使用临时目录和假凭据，不调用真实模型，不修改个人配置；它们不替代真实客户端菜单或推理验证。
++`tests/unit.native-model-menus.test.ts` 覆盖版本门槛、当前账号 chat 列表、个人／项目／显式菜单保留、临时配置清理和 Codex 显式目录/关闭发现的保留。`tests/unit.model-qualification.test.ts` 覆盖五个启动器的地址／账号／协议隔离与已知空目录；`tests/unit.tako-model-cache.test.ts` 覆盖完整空目录撤销、坏协议／不完整分页拒绝及未来时间戳刷新。`tests/unit.gemini-native-menu.test.ts` 在隔离子进程调用真实 Gemini 适配器，覆盖默认文件保留、当前账号切换、目标项目禁用设置、配置冲突与过期目录不注入。测试使用临时目录、假凭据和 fixture 包版本，不调用真实模型，不修改个人配置；它们不替代真实客户端菜单或推理验证。本轮命令、结果、回归矩阵与未验范围见 [验收记录](../acceptance/2026-11-16-cli-29/NOTES.md)。
+ 
+ 可对独立安装的 `@google/gemini-cli-core@0.51.0` 运行 `bun tests/fixtures/gemini-core-resolution.ts <core-package-directory>`，离线检查实际 `ModelConfigService` 的菜单选项、原始 ID 路由与无默认生成参数继承；该检查不调用模型、不声称完整 TUI 或推理兼容。配置入口与优先级依据：[settings loader](https://github.com/google-gemini/gemini-cli/blob/v0.51.0/packages/cli/src/config/settings.ts)、[模型配置](https://github.com/google-gemini/gemini-cli/blob/v0.51.0/packages/core/src/services/modelConfigService.ts)、[内置别名](https://github.com/google-gemini/gemini-cli/blob/v0.51.0/packages/core/src/config/defaultModelConfigs.ts)。
+diff --git a/src/clients/claude-code.ts b/src/clients/claude-code.ts
+index a5c2a0e..9e59110 100644
+--- a/src/clients/claude-code.ts
++++ b/src/clients/claude-code.ts
+@@ -1,7 +1,8 @@
+ import { homedir } from "os";
+ import { randomUUID } from "node:crypto";
+-import { dirname, join } from "path";
++import { dirname, join, resolve } from "path";
+ import { ClientConfig, LaunchOption, registerClient } from "./base";
++import type { ClientLaunchSetupContext } from "./base";
+ import type { ProviderContext, Provider } from "../providers/types";
+ import { DEEPSEEK_ANTHROPIC_URL, resolveXiaomiBaseUrl, SUBAGENT_MODEL_CC_DEFAULT } from "../providers/types";
+ import { log } from "../logger";
+@@ -10,6 +11,7 @@ import { loadCatalog, getTakoModels, filterChatModels, getModelEntry } from "../
+ import { BUNDLED_ENTRIES } from "../models/bundled";
+ import { TAKO_DIR } from "../config";
+ import { clientVersionMeets, getInstalledClientVersion } from "../installer";
++import { getFreshTakoModels } from "../models/tako";
+ 
+ const CLAUDE_SETTINGS_PATH = join(homedir(), ".claude", "settings.json");
+ const TAKO_CLAUDE_SETTINGS_DIR = join(TAKO_DIR, "claude-code", "launch-settings");
+@@ -194,18 +196,26 @@ export interface ClaudeModelPicker {
+ 
+ /**
+  * 把当前 Tako / 自定义 provider 的 par 模型目录转换成 Claude Code 原生
+- * `/model` 选择器的行。只使用该 provider 凭据对应的缓存；没有目录时返回
+- * undefined，保留 Claude Code 内置选择器。
++ * `/model` 选择器的行。只使用最终启动凭据对应的一小时内目录；路由被覆盖
++ * 或凭据不明确时不注入，保留 Claude Code 内置选择器。
+  */
+ export function buildClaudeModelPicker(
+   provider: ProviderContext | undefined,
+   clientVersion: string | null,
++  launchEnvVars: Record<string, string> = {},
+ ): ClaudeModelPicker | undefined {
+   if (!clientVersionMeets(clientVersion, CLAUDE_MODEL_PICKER_MIN_VERSION)) return undefined;
+   if (!provider || (provider.type !== "tako" && provider.type !== "custom") || !provider.baseUrl) {
+     return undefined;
+   }
+-  const raw = getTakoModels(provider.baseUrl, "claude", provider.apiKey);
++  const expectedBase = provider.type === "tako" ? `${provider.baseUrl.replace(/\/+$/, "")}/api` : provider.baseUrl;
++  const launchBase = launchEnvVars.ANTHROPIC_BASE_URL ?? expectedBase;
++  if (launchBase.replace(/\/+$/, "") !== expectedBase.replace(/\/+$/, "")) return undefined;
++  const token = launchEnvVars.ANTHROPIC_AUTH_TOKEN;
++  const key = launchEnvVars.ANTHROPIC_API_KEY;
++  if (token && key && token !== key) return undefined;
++  const apiKey = token !== undefined || key !== undefined ? token || key : provider.apiKey;
++  const raw = getFreshTakoModels(provider.baseUrl, "claude", apiKey);
+   if (!raw || raw.length === 0) return undefined;
+   const chat = filterChatModels(raw);
+   if (chat.length === 0) return undefined;
+@@ -266,6 +276,8 @@ export async function prepareTakoClaudeSettingsForLaunch(opts: {
+   modelPicker?: ClaudeModelPicker;
+   sourcePath?: string;
+   targetPath?: string;
++  /** Project/local settings are client-owned; unreadable layers disable only menu injection. */
++  additionalSettingsPaths?: string[];
+   logConflicts?: boolean;
+ }): Promise<ClaudeSettingsLaunchSetup> {
+   const fs = await import("fs/promises");
+@@ -277,16 +289,27 @@ export async function prepareTakoClaudeSettingsForLaunch(opts: {
+   const overlay = buildTakoClaudeSettingsOverlay(opts.launchEnvVars, opts.modelPicker);
+   let conflictingFields: string[] = [];
+ 
+-  try {
+-    const content = await fs.readFile(sourcePath, "utf-8");
+-    const settings: Record<string, any> = JSON.parse(content);
+-    conflictingFields = findClaudeSettingsConflicts(settings, overlay);
+-    // A user-authored lineup stays authoritative; never replace its rows or labels.
+-    if (Object.hasOwn(settings, "modelPicker")) delete overlay.modelPicker;
+-  } catch {
+-    // User settings are diagnostic only. Project/local settings may still conflict,
+-    // so the launch overlay is always created.
++  for (const path of [sourcePath, ...(opts.additionalSettingsPaths ?? [])]) {
++    try {
++      if ((await fs.stat(path)).size > 1024 * 1024) {
++        delete overlay.modelPicker;
++        continue;
++      }
++      const settings: unknown = JSON.parse(await fs.readFile(path, "utf-8"));
++      if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
++        delete overlay.modelPicker;
++        continue;
++      }
++      conflictingFields.push(...findClaudeSettingsConflicts(settings, overlay));
++      // Even an empty/null user lineup is intentional. Never override it.
++      if (Object.hasOwn(settings, "modelPicker")) delete overlay.modelPicker;
++    } catch (error) {
++      // Keep the auth overlay even if JSONC/malformed or unreadable settings
++      // cannot be checked safely, but do not replace a possibly user-owned menu.
++      if ((error as NodeJS.ErrnoException).code !== "ENOENT") delete overlay.modelPicker;
++    }
+   }
++  conflictingFields = [...new Set(conflictingFields)];
+ 
+   if (opts.logConflicts !== false && conflictingFields.length > 0) {
+     log.warn(t("claudeCode.settingsDetected", { fields: conflictingFields.join(", ") }));
+@@ -308,6 +331,18 @@ export async function prepareTakoClaudeSettingsForLaunch(opts: {
+   };
+ }
+ 
++/** Conservatively honor project/local menus in the target directory and its ancestors. */
++function claudeProjectSettingsPaths(workingDir: string): string[] {
++  const paths: string[] = [];
++  let directory = resolve(workingDir);
++  while (true) {
++    paths.push(join(directory, ".claude", "settings.json"), join(directory, ".claude", "settings.local.json"));
++    const parent = dirname(directory);
++    if (parent === directory) return paths;
++    directory = parent;
++  }
++}
++
+ /**
+  * 切换到 claude-subscription provider 时同步 keychain / .credentials.json
+  *
+@@ -447,7 +482,7 @@ export const claudeCodeClient: ClientConfig = {
+     };
+   },
+ 
+-  async setupConfigFiles(provider: ProviderContext, selectedOptionIds?: string[], context?: { forLaunch?: boolean; launchEnvVars?: Record<string, string> }) {
++  async setupConfigFiles(provider: ProviderContext, selectedOptionIds?: string[], context?: ClientLaunchSetupContext) {
+     // 多账号切换：把目标账号的 OAuth tokens 还原到 Claude Code 的存储位置
+     if (provider.type === "claude-subscription") {
+       await syncClaudeSubscription(provider);
+@@ -461,13 +496,19 @@ export const claudeCodeClient: ClientConfig = {
+     const pinEnv = resolveLaunchPinEnv(provider, selectedOptionIds, baseEnv);
+ 
+     const version = await getInstalledClientVersion(claudeCodeClient);
+-    const modelPicker = buildClaudeModelPicker(provider, version);
++    // A caller-supplied settings layer (JSON or path) owns its menu semantics.
++    const hasExplicitSettings = context.launchArgs?.some(arg => arg === "--settings" || arg.startsWith("--settings="));
++    const modelPicker = hasExplicitSettings ? undefined : buildClaudeModelPicker(provider, version, baseEnv);
+ 
+     // Keep normal configuration sources enabled. Add the native lineup only on
+-    // supported versions and leave a user's own modelPicker untouched.
++    // supported versions and leave user/project/local modelPicker fields untouched.
++    const workingDir = context.workingDir ?? process.cwd();
++    const configDir = (baseEnv.CLAUDE_CONFIG_DIR ?? process.env.CLAUDE_CONFIG_DIR) || join(homedir(), ".claude");
+     const launchSettings = await prepareTakoClaudeSettingsForLaunch({
+       launchEnvVars: { ...baseEnv, ...pinEnv },
+       modelPicker,
++      sourcePath: join(resolve(workingDir, configDir), "settings.json"),
++      additionalSettingsPaths: modelPicker ? claudeProjectSettingsPaths(workingDir) : [],
+     });
+     return {
+       args: launchSettings.args,
+@@ -575,9 +616,8 @@ function ctxStrOf(ctx: number): string {
+ function buildDynamicClaudeModels(provider: Provider): LaunchOption[] | null {
+   if (!provider.baseUrl) return null;
+   const raw = getTakoModels(provider.baseUrl, "claude", provider.apiKey);
+-  if (!raw || raw.length === 0) return null;
++  if (raw === null) return null;
+   const chat = filterChatModels(raw);
+-  if (chat.length === 0) return null;
+   return chat.map((e) => {
+     const modelArg = appendOneMTagIfNeeded(e.id, e.contextWindow);
+     return {
+diff --git a/src/clients/codex.ts b/src/clients/codex.ts
+index 6592147..83cfd2f 100644
+--- a/src/clients/codex.ts
++++ b/src/clients/codex.ts
+@@ -65,6 +65,31 @@ export function resolveCodexModel(
+ /** Conservative supported baseline, verified against rust-v0.162.1 config.schema.json. */
+ export const CODEX_NATIVE_CATALOG_MIN_VERSION = "0.162.1";
+ 
++/** Respect explicit CLI config layers instead of guessing how Codex merges their catalogs. */
++function hasCodexCatalogOverride(args: string[]): boolean {
++  for (let index = 0; index < args.length; index++) {
++    const arg = args[index]!;
++    if (arg === "--disable" && args[index + 1] === "api_key_model_discovery"
++      || arg === "--disable=api_key_model_discovery") return true;
++    const override = arg === "-c" || arg === "--config" ? args[++index]
++      : arg.startsWith("--config=") ? arg.slice("--config=".length)
++      : arg.startsWith("-c") && arg.length > 2 ? arg.slice(2) : undefined;
++    if (override === undefined) continue;
++    try {
++      const config = parse(override) as Record<string, any>;
++      if (Object.hasOwn(config, "model_catalog_json") || config.profile || config.profiles
++        || Object.hasOwn(config, "model_provider")
++        || config.model_providers?.tako?.model_catalog_url !== undefined
++        || config.model_providers?.tako?.base_url !== undefined
++        || config.features?.api_key_model_discovery === false) return true;
++    } catch {
++      // Let Codex validate the caller's syntax, with no extra discovery override.
++      return true;
++    }
++  }
++  return false;
++}
++
+ /**
+  * Enable the official authenticated native catalog endpoint for this launch.
+  * Codex appends its actual client_version and validates the complete ModelsResponse;
+@@ -82,6 +107,7 @@ export function buildCodexNativeCatalogArgs(
+   // Profiles can supply their own catalog settings; leave their resolution to Codex.
+   if (existing.profile || existing.profiles) return [];
+   if (launchArgs.some((arg) => arg === "-p" || arg === "--profile" || arg.startsWith("--profile=") || /^-p.+/.test(arg))) return [];
++  if (hasCodexCatalogOverride(launchArgs)) return [];
+   if ((provider.type !== "tako" && provider.type !== "custom") || !provider.apiKey) return [];
+   if (existing.model_catalog_json || existing.model_providers?.tako?.model_catalog_url) return [];
+   if (existing.features?.api_key_model_discovery === false) return [];
+@@ -260,9 +286,8 @@ function ctxStrOf(ctx: number): string {
+ function buildDynamicCodexModels(provider: Provider): LaunchOption[] | null {
+   if (!provider.baseUrl) return null;
+   const raw = getTakoModels(provider.baseUrl, "openai", provider.apiKey);
+-  if (!raw || raw.length === 0) return null;
++  if (raw === null) return null;
+   const chat = filterChatModels(raw);
+-  if (chat.length === 0) return null;
+   return chat.map((e) => ({
+     id: `model-${e.id}`,
+     label: { en: e.displayName, zh: e.displayName },
+diff --git a/src/clients/grok.ts b/src/clients/grok.ts
+index bea2819..ff0b120 100644
+--- a/src/clients/grok.ts
++++ b/src/clients/grok.ts
+@@ -117,9 +117,9 @@ export function collectGrokCatalogModels(provider?: Provider): Array<{
+ }> {
+   loadCatalog();
+   if (provider && (provider.type === "tako" || provider.type === "custom") && provider.baseUrl) {
+-    const raw = getTakoModels(provider.baseUrl, "openai", provider.apiKey) ?? getTakoModels(provider.baseUrl, "claude", provider.apiKey);
++    const raw = getTakoModels(provider.baseUrl, "openai", provider.apiKey);
+     const chat = raw ? filterChatModels(raw).filter((entry) => isGrokFamilyModel(entry.id)) : [];
+-    if (chat.length > 0) {
++    if (raw !== null) {
+       return chat.map((entry) => ({
+         id: entry.id,
+         displayName: entry.displayName,
+diff --git a/src/clients/pi-settings.ts b/src/clients/pi-settings.ts
+index ae1fb25..2df1429 100644
+--- a/src/clients/pi-settings.ts
++++ b/src/clients/pi-settings.ts
+@@ -235,6 +235,10 @@ export function takoPiEnv(provider: ProviderContext): Record<string, string> {
+     return {
+       ...common,
+       TAKO_BASE_URL: provider.baseUrl || "https://tako.shiroha.tech",
++      // Launch-scoped contract: never make the extension guess a different saved
++      // account. Older tako-pi revisions ignore these; see docs/models/PI-DEPENDENCY.md.
++      TAKO_API_KEY: provider.apiKey ?? "",
++      TAKO_HOME: TAKO_DIR,
+     };
+   }
+   return common;
+@@ -272,7 +276,8 @@ export function applyPiSettings(
+ 
+ /**
+  * Point Pi at Tako without wiping the user's other packages or skills.
+- * Does not persist the API key — tako-pi reads ~/.tako/config.json itself.
++ * Does not persist the API key; the launch environment contract and older
++ * tako-pi config fallback are documented in docs/models/PI-DEPENDENCY.md.
+  */
+ export async function setupPiConfigFiles(
+   provider: ProviderContext,
+diff --git a/src/clients/pi.ts b/src/clients/pi.ts
+index 07ed25b..cf38caf 100644
+--- a/src/clients/pi.ts
++++ b/src/clients/pi.ts
+@@ -17,10 +17,9 @@ function ctxStrOf(ctx: number): string {
+ 
+ function buildDynamicPiModels(provider: Provider): LaunchOption[] | null {
+   if (!provider.baseUrl) return null;
+-  const raw = getTakoModels(provider.baseUrl, "claude", provider.apiKey) ?? getTakoModels(provider.baseUrl, "openai", provider.apiKey);
+-  if (!raw || raw.length === 0) return null;
++  const raw = getTakoModels(provider.baseUrl, "claude", provider.apiKey);
++  if (raw === null) return null;
+   const chat = filterChatModels(raw);
+-  if (chat.length === 0) return null;
+   return chat.map((e) => ({
+     id: `model-${e.id}`,
+     label: { en: e.displayName, zh: e.displayName },
+diff --git a/src/models/tako.ts b/src/models/tako.ts
+index 8170f54..dfb717a 100644
+--- a/src/models/tako.ts
++++ b/src/models/tako.ts
+@@ -167,6 +167,24 @@ function parseOpenAIResponse(json: unknown, apiType: TakoApiType): TakoModelEntr
+   return out;
+ }
+ 
++/** Only complete, explicitly shaped lists may replace an account's catalog (including with []). */
++function parseCompleteModelList(json: unknown, apiType: TakoApiType): TakoModelEntry[] | null {
++  if (!json || typeof json !== "object" || Array.isArray(json)) return null;
++  const data = json as Record<string, unknown>;
++  // These gateway lists are unpaginated. Do not publish the first page of a
++  // different protocol that advertises more data, or guess its cursor semantics.
++  if (data.has_more !== undefined && data.has_more !== false) return null;
++  const codex = Array.isArray(data.models);
++  const rows = codex ? data.models : data.data;
++  if (!Array.isArray(rows)) return null;
++  if (rows.some(row => {
++    if (!row || typeof row !== "object" || Array.isArray(row)) return true;
++    const id = (row as Record<string, unknown>)[codex ? "slug" : "id"];
++    return typeof id !== "string" || !id.trim();
++  })) return null;
++  return parseCodexResponse(json, apiType);
++}
++
+ /** Parse only Gemini-native models that advertise generateContent support. */
+ export function parseGeminiModels(json: unknown): TakoModelEntry[] {
+   if (!json || typeof json !== "object" || !Array.isArray((json as { models?: unknown }).models)) return [];
+@@ -274,11 +292,12 @@ export async function refreshTakoModels(
+         const res = await fetch(url, {
+           headers: { Authorization: `Bearer ${apiKey}` },
+           signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
++          redirect: "error",
+         });
+         if (!res.ok) return;
+-        entries = parseCodexResponse(await res.json(), apiType);
++        entries = parseCompleteModelList(await res.json(), apiType);
+       }
+-      if (!entries || (entries.length === 0 && apiType !== "gemini")) return;
++      if (entries === null) return;
+       memory.set(key, { fetchedAt: Date.now(), entries });
+       await writeDisk();
+     } catch {
+@@ -311,9 +330,9 @@ export function refreshAllTakoCatalogs(providers: Provider[]): Promise<void> {
+     if (!p.supportedClients?.length || p.supportedClients.includes("gemini")) apiTypes.push("gemini");
+     for (const apiType of apiTypes) {
+       const bucket = memory.get(bucketKey(p.baseUrl, apiType, p.apiKey));
+-      if (bucket && now - bucket.fetchedAt < REFRESH_TTL_MS) continue;
++      if (bucket && now >= bucket.fetchedAt && now - bucket.fetchedAt < REFRESH_TTL_MS) continue;
+       const job = refreshTakoModels(p.baseUrl, p.apiKey, apiType);
+-      if (!bucket) coldJobs.push(job);
++      if (!bucket || now < bucket.fetchedAt) coldJobs.push(job);
+     }
+   }
+   return Promise.all(coldJobs).then(() => undefined);
+diff --git a/tests/fixtures/native-menu-setup.ts b/tests/fixtures/native-menu-setup.ts
+index 7b74a74..77363e3 100644
+--- a/tests/fixtures/native-menu-setup.ts
++++ b/tests/fixtures/native-menu-setup.ts
+@@ -31,13 +31,44 @@ const overlay = JSON.parse(await readFile(claude.cleanupFiles[0], "utf8"));
+ const codex = await codexClient.setupConfigFiles!(provider, [], { forLaunch: true, launchArgs: [] });
+ const codexConfig = parse(await readFile(join(home, ".codex", "config.toml"), "utf8"));
+ const profile = await codexClient.setupConfigFiles!(provider, [], { forLaunch: true, launchArgs: ["--profile", "mine"] });
++// The target project, not this fixture's cwd, owns project/local menu choices.
++const project = join(home, "target-project");
++await mkdir(join(project, ".claude"), { recursive: true });
++const localPath = join(project, ".claude", "settings.local.json");
++const localSource = JSON.stringify({ modelPicker: { options: [{ model: "personal-project", label: "Project" }] } });
++await writeFile(localPath, localSource);
++const projectSetup = await claudeCodeClient.setupConfigFiles!(provider, [], {
++  forLaunch: true, launchEnvVars: {}, workingDir: project,
++});
++const projectOverlay = JSON.parse(await readFile(projectSetup!.cleanupFiles![0]!, "utf8"));
++const projectSourceUnchanged = await readFile(localPath, "utf8") === localSource;
++await rm(localPath);
++const explicitSetup = await claudeCodeClient.setupConfigFiles!(provider, [], {
++  forLaunch: true, launchEnvVars: {}, workingDir: project,
++  launchArgs: ["--settings", '{"modelPicker":{"options":[]}}'],
++});
++const explicitOverlay = JSON.parse(await readFile(explicitSetup!.cleanupFiles![0]!, "utf8"));
++const overridePath = join(home, "claude-config-override");
++await mkdir(overridePath);
++const overrideSource = JSON.stringify({ modelPicker: null });
++await writeFile(join(overridePath, "settings.json"), overrideSource);
++const overriddenSetup = await claudeCodeClient.setupConfigFiles!(provider, [], {
++  forLaunch: true, launchEnvVars: { CLAUDE_CONFIG_DIR: overridePath }, workingDir: project,
++});
++const overriddenOverlay = JSON.parse(await readFile(overriddenSetup!.cleanupFiles![0]!, "utf8"));
+ const result = {
+   claudeModelPicker: overlay.modelPicker,
++  claudeProjectPickerPreserved: !projectOverlay.modelPicker && projectSourceUnchanged,
++  claudeExplicitPickerPreserved: !explicitOverlay.modelPicker,
++  claudeConfigDirPickerPreserved: !overriddenOverlay.modelPicker
++    && await readFile(join(overridePath, "settings.json"), "utf8") === overrideSource,
+   claudeUserUnchanged: await readFile(join(home, ".claude", "settings.json"), "utf8") === claudeUser,
+   codexArgs: codex?.args,
+   codexCatalogNotPersisted: !codexConfig.model_providers?.tako?.model_catalog_url,
+   codexModelPreserved: codexConfig.model === "personal-model",
+   profileOverrideAbsent: !profile?.args,
+ };
+-await Promise.all(claude.cleanupFiles.map((path) => rm(path)));
++const cleanupFiles = [claude, projectSetup, explicitSetup, overriddenSetup]
++  .flatMap(setup => setup?.cleanupFiles ?? []);
++await Promise.all(cleanupFiles.map((path) => rm(path)));
+ console.log(JSON.stringify(result));
+diff --git a/tests/unit.dynamic-model-options.test.ts b/tests/unit.dynamic-model-options.test.ts
+index 7b060b7..66957e1 100644
+--- a/tests/unit.dynamic-model-options.test.ts
++++ b/tests/unit.dynamic-model-options.test.ts
+@@ -188,14 +188,10 @@ describe("dynamic model launch options", () => {
+     ]);
+   });
+ 
+-  it("Grok picker falls back to grok-family whitelist when catalog has no grok slugs", () => {
++  it("Grok picker stays empty when the known catalog has no eligible grok slugs", () => {
+     const ids = getClientLaunchOptions(grokClient, provider("grok"))
+       .filter((o) => o.group === "model").map((o) => o.id);
+-    expect(ids).toEqual([
+-      "model-grok-4.6",
+-      "model-grok-4.5",
+-      "model-composer-2.5",
+-    ]);
++    expect(ids).toEqual([]);
+   });
+ 
+   it("filters out non-chat models (image/video/audio) from both pickers", () => {
+diff --git a/tests/unit.native-model-menus.test.ts b/tests/unit.native-model-menus.test.ts
+index 91f0f15..c37b361 100644
+--- a/tests/unit.native-model-menus.test.ts
++++ b/tests/unit.native-model-menus.test.ts
+@@ -58,6 +58,36 @@ describe("Claude native model menu", () => {
+     expect(buildClaudeModelPicker({ ...provider, apiKey: "missing-account" }, "2.1.316")).toBeUndefined();
+   });
+ 
++  it("does not inject expired or future-dated catalogs into the native menu", () => {
++    const cache = join(directory, "catalog.json");
++    const snapshot = JSON.parse(readFileSync(cache, "utf8"));
++    for (const fetchedAt of [Date.now() - 60 * 60 * 1000 - 1, Date.now() + 60000]) {
++      snapshot.buckets[bucket(KEY)].fetchedAt = fetchedAt;
++      writeFileSync(cache, JSON.stringify(snapshot));
++      _resetTakoCatalog();
++      expect(buildClaudeModelPicker(provider, "2.1.316")).toBeUndefined();
++    }
++  });
++
++  it("uses final launch credentials and refuses a changed or ambiguous route", () => {
++    expect(buildClaudeModelPicker(provider, "2.1.316", {
++      ANTHROPIC_AUTH_TOKEN: "fixture-account-b", ANTHROPIC_BASE_URL: URL,
++    })?.options[0]?.model).toBe("other-account-model");
++    expect(buildClaudeModelPicker(provider, "2.1.316", {
++      ANTHROPIC_API_KEY: "fixture-account-b",
++    })?.options[0]?.model).toBe("other-account-model");
++    for (const env of [
++      { ANTHROPIC_AUTH_TOKEN: "" },
++      { ANTHROPIC_BASE_URL: "https://different.example.test" },
++      { ANTHROPIC_AUTH_TOKEN: KEY, ANTHROPIC_API_KEY: "fixture-account-b" },
++    ]) {
++      expect(buildClaudeModelPicker(provider, "2.1.316", env)).toBeUndefined();
++    }
++    expect(buildClaudeModelPicker({ ...provider, type: "tako" }, "2.1.316", {
++      ANTHROPIC_AUTH_TOKEN: KEY, ANTHROPIC_BASE_URL: `${URL}/api/`,
++    })?.options).toHaveLength(1);
++  });
++
+   it("writes the native lineup only into a launch-owned overlay", async () => {
+     const sourcePath = join(directory, "user.json");
+     const targetPath = join(directory, "launch.json");
+@@ -84,6 +114,27 @@ describe("Claude native model menu", () => {
+     expect(JSON.parse(readFileSync(targetPath, "utf8")).modelPicker).toBeUndefined();
+     expect(readFileSync(sourcePath, "utf8")).toBe(source);
+   });
++
++  it("keeps project/local/explicit pickers authoritative and fails closed on unreadable settings", async () => {
++    const sourcePath = join(directory, "user.json");
++    const additional = join(directory, "project.json");
++    writeFileSync(sourcePath, "{}");
++    for (const [index, content] of [
++      JSON.stringify({ modelPicker: { options: [], replaceBuiltInOptions: true } }),
++      JSON.stringify({ modelPicker: null }),
++      '{ "modelPicker": /* JSONC remains client-owned */ {} }',
++      "[]",
++    ].entries()) {
++      writeFileSync(additional, content);
++      const targetPath = join(directory, `preserved-${index}.json`);
++      await prepareTakoClaudeSettingsForLaunch({
++        launchEnvVars: {}, modelPicker: buildClaudeModelPicker(provider, "2.1.316"),
++        sourcePath, targetPath, additionalSettingsPaths: [additional], logConflicts: false,
++      });
++      expect(JSON.parse(readFileSync(targetPath, "utf8")).modelPicker).toBeUndefined();
++      expect(readFileSync(additional, "utf8")).toBe(content);
++    }
++  });
+ });
+ 
+ describe("Codex native catalog launch override", () => {
+@@ -117,6 +168,27 @@ describe("Codex native catalog launch override", () => {
+     }
+   });
+ 
++  it("does not replace explicit command-line catalog choices or disabled discovery", () => {
++    for (const args of [
++      ["-c", 'model_catalog_json="/fixture/personal.json"'],
++      ["--config=model_providers.tako.model_catalog_url=\"https://personal.example.test\""],
++      ["-cfeatures.api_key_model_discovery=false"],
++      ["--config", '"model_catalog_json"="/fixture/personal.json"'],
++      ["-c", 'model_providers = { tako = { model_catalog_url = "https://personal.example.test" } }'],
++      ["-c", 'features = { api_key_model_discovery = false }'],
++      ["--disable", "api_key_model_discovery"],
++      ["--disable=api_key_model_discovery"],
++      ["-c", 'model_providers.tako.base_url="https://other.example.test/v1"'],
++      ["-c", 'model_provider="personal"'],
++      ["-c", 'profile="personal"'],
++      ["-c", "invalid TOML"],
++    ]) {
++      expect(buildCodexNativeCatalogArgs(provider, "0.166.0", URL, {}, args)).toEqual([]);
++    }
++    expect(buildCodexNativeCatalogArgs(provider, "0.166.0", URL, {}, ["-c", "model_reasoning_effort=\"high\""]))
++      .toHaveLength(2);
++  });
++
+   it("does not send unsupported or unknown versions a new config field", () => {
+     for (const version of [null, "latest", "0.162.0", "0.100.0"]) {
+       expect(buildCodexNativeCatalogArgs(provider, version, URL, {})).toEqual([]);
+@@ -125,11 +197,14 @@ describe("Codex native catalog launch override", () => {
+ });
+ 
+ describe("real adapter setup in an isolated home", () => {
+-  it("reads real managed package versions and returns launch-only menu settings", async () => {
++  it("reads fixture managed-package versions and returns launch-only menu settings", async () => {
+     const home = mkdtempSync(join(tmpdir(), "tako-native-setup-"));
+     try {
++      const env = Object.fromEntries(Object.entries(process.env)
++        .filter(([key]) => !/CLAUDE|ANTHROPIC|CODEX|OPENAI|TAKO|KEY|TOKEN|SECRET|PROXY|HOME|XDG/i.test(key)));
+       const proc = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/native-menu-setup.ts")], {
+-        env: { ...process.env, HOME: home, TAKO_HOME: join(home, "tako"), XDG_CONFIG_HOME: join(home, "config") },
++        cwd: home,
++        env: { ...env, HOME: home, USERPROFILE: home, TAKO_HOME: join(home, "tako"), XDG_CONFIG_HOME: join(home, "config") },
+         stdout: "pipe", stderr: "pipe",
+       });
+       const [output, errors, code] = await Promise.all([
+@@ -139,6 +214,9 @@ describe("real adapter setup in an isolated home", () => {
+       expect(code).toBe(0);
+       expect(JSON.parse(output)).toEqual({
+         claudeModelPicker: { options: [{ model: "fixture-model", label: "Fixture model", description: "Fixture only" }] },
++        claudeProjectPickerPreserved: true,
++        claudeExplicitPickerPreserved: true,
++        claudeConfigDirPickerPreserved: true,
+         claudeUserUnchanged: true,
+         codexArgs: ["-c", 'model_providers.tako.model_catalog_url="https://fixture.example.test/v1/models?api_type=openai"'],
+         codexCatalogNotPersisted: true,
+diff --git a/tests/unit.pi-client.test.ts b/tests/unit.pi-client.test.ts
+index 24ecfe6..fed582e 100644
+--- a/tests/unit.pi-client.test.ts
++++ b/tests/unit.pi-client.test.ts
+@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test";
+ import "../src/clients";
+ import { getAllClients, getClient, getClientLaunchOptions } from "../src/clients/base";
+ import { piClient } from "../src/clients/pi";
++import { piWebClient } from "../src/clients/pi-web";
++import { TAKO_DIR } from "../src/config";
+ import {
+   PI_CC_HEADER_PACKAGE,
+   PI_CLAUDE_CODE_UI_PACKAGE,
+@@ -141,6 +143,22 @@ describe("tako-pi package detection", () => {
+   });
+ });
+ 
++describe("Pi account handoff", () => {
++  it("passes the selected account and config root to terminal and Web children without persisting a key", () => {
++    for (const client of [piClient, piWebClient]) {
++      for (const apiKey of ["fixture-pi-account-a", "fixture-pi-account-b"]) {
++        expect(client.getEnvVars({ type: "custom", baseUrl: "https://pi.example.test", apiKey })).toEqual({
++          PI_DISABLE_UPDATE_CHECK: "1",
++          TAKO_BASE_URL: "https://pi.example.test",
++          TAKO_API_KEY: apiKey,
++          TAKO_HOME: TAKO_DIR,
++        });
++      }
++      expect(client.getEnvVars({ type: "tako" }).TAKO_API_KEY).toBe("");
++    }
++  });
++});
++
+ describe("Pi settings merge", () => {
+   it("writes Tako defaults without wiping other settings", () => {
+     const { next, args } = applyPiSettings(
+diff --git a/tests/unit.tako-model-cache.test.ts b/tests/unit.tako-model-cache.test.ts
+index 064015a..66bd9c0 100644
+--- a/tests/unit.tako-model-cache.test.ts
++++ b/tests/unit.tako-model-cache.test.ts
+@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+ import { tmpdir } from "node:os";
+ import { join } from "node:path";
++import { createHash } from "node:crypto";
+ import {
+-  _resetTakoCatalog, _setCachePathForTest, getTakoModels,
++  _resetTakoCatalog, _setCachePathForTest, getFreshTakoModels, getTakoModels,
+   refreshAllTakoCatalogs, refreshTakoModels,
+ } from "../src/models/tako";
+ import type { Provider } from "../src/providers/types";
+@@ -95,4 +96,64 @@ describe("provider model cache account isolation", () => {
+     expect(getTakoModels(URL, "claude", KEY_B)).toBeNull();
+     expect(getTakoModels(URL, "claude", KEY_A)?.[0]?.id).toBe("model-a");
+   });
++
++  for (const apiType of ["openai", "claude"] as const) {
++    for (const list of ["models", "data"] as const) {
++      it(`revokes only the current ${apiType} account after a complete empty ${list} list`, async () => {
++        await refreshTakoModels(URL, KEY_A, apiType);
++        await refreshTakoModels(URL, KEY_B, apiType);
++        globalThis.fetch = mock(async () => Response.json({ [list]: [] })) as typeof fetch;
++        await refreshTakoModels(URL, KEY_A, apiType);
++        expect(getFreshTakoModels(URL, apiType, KEY_A)).toEqual([]);
++        expect(getTakoModels(URL, apiType, KEY_B)?.[0]?.id).toBe("model-b");
++        _resetTakoCatalog();
++        expect(getTakoModels(URL, apiType, KEY_A)).toEqual([]);
++        expect(getTakoModels(URL, apiType, KEY_B)?.[0]?.id).toBe("model-b");
++      });
++    }
++
++    it(`rejects invalid or incomplete ${apiType} lists without renewing freshness`, async () => {
++      await refreshTakoModels(URL, KEY_A, apiType);
++      const snapshot = readFileSync(cache, "utf8");
++      for (const payload of [
++        {}, [], null, { models: "invalid" }, { data: "invalid" },
++        { models: [{ name: "wrong-protocol" }] }, { data: [null] },
++        { models: [{ slug: "partial" }], has_more: true },
++        { data: [{ id: "partial" }], has_more: true, last_id: "partial" },
++        { data: [], has_more: "false" },
++      ]) {
++        globalThis.fetch = mock(async () => Response.json(payload)) as typeof fetch;
++        await refreshTakoModels(URL, KEY_A, apiType);
++        expect(readFileSync(cache, "utf8")).toBe(snapshot);
++        expect(getTakoModels(URL, apiType, KEY_A)?.[0]?.id).toBe("model-a");
++      }
++    });
++  }
++
++  it("revokes models when a complete OpenAI list no longer supports the requested protocol", async () => {
++    await refreshTakoModels(URL, KEY_A, "claude");
++    globalThis.fetch = mock(async () => Response.json({
++      data: [{ id: "openai-only", supported_endpoint_types: ["openai"] }], has_more: false,
++    })) as typeof fetch;
++    await refreshTakoModels(URL, KEY_A, "claude");
++    expect(getTakoModels(URL, "claude", KEY_A)).toEqual([]);
++  });
++
++  it("does not follow redirects while discovering an authenticated catalog", async () => {
++    await refreshTakoModels(URL, KEY_A, "openai");
++    expect((globalThis.fetch as ReturnType<typeof mock>).mock.calls[0]?.[1]?.redirect).toBe("error");
++  });
++
++  it("refreshes future-dated snapshots rather than suppressing discovery indefinitely", async () => {
++    const fingerprint = createHash("sha256").update(KEY_A).digest("hex");
++    writeFileSync(cache, JSON.stringify({ version: 2, buckets: Object.fromEntries(
++      ["openai", "claude"].map(apiType => [`${URL}#${apiType}#${fingerprint}`, {
++        fetchedAt: Date.now() + 24 * 60 * 60 * 1000, entries: [{ id: "future-snapshot" }],
++      }]),
++    ) }));
++    expect(getFreshTakoModels(URL, "claude", KEY_A)).toBeNull();
++    await refreshAllTakoCatalogs([provider(KEY_A)]);
++    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
++    expect(getFreshTakoModels(URL, "claude", KEY_A)?.[0]?.id).toBe("model-a");
++  });
+ });

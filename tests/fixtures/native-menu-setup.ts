@@ -31,13 +31,44 @@ const overlay = JSON.parse(await readFile(claude.cleanupFiles[0], "utf8"));
 const codex = await codexClient.setupConfigFiles!(provider, [], { forLaunch: true, launchArgs: [] });
 const codexConfig = parse(await readFile(join(home, ".codex", "config.toml"), "utf8"));
 const profile = await codexClient.setupConfigFiles!(provider, [], { forLaunch: true, launchArgs: ["--profile", "mine"] });
+// The target project, not this fixture's cwd, owns project/local menu choices.
+const project = join(home, "target-project");
+await mkdir(join(project, ".claude"), { recursive: true });
+const localPath = join(project, ".claude", "settings.local.json");
+const localSource = JSON.stringify({ modelPicker: { options: [{ model: "personal-project", label: "Project" }] } });
+await writeFile(localPath, localSource);
+const projectSetup = await claudeCodeClient.setupConfigFiles!(provider, [], {
+  forLaunch: true, launchEnvVars: {}, workingDir: project,
+});
+const projectOverlay = JSON.parse(await readFile(projectSetup!.cleanupFiles![0]!, "utf8"));
+const projectSourceUnchanged = await readFile(localPath, "utf8") === localSource;
+await rm(localPath);
+const explicitSetup = await claudeCodeClient.setupConfigFiles!(provider, [], {
+  forLaunch: true, launchEnvVars: {}, workingDir: project,
+  launchArgs: ["--settings", '{"modelPicker":{"options":[]}}'],
+});
+const explicitOverlay = JSON.parse(await readFile(explicitSetup!.cleanupFiles![0]!, "utf8"));
+const overridePath = join(home, "claude-config-override");
+await mkdir(overridePath);
+const overrideSource = JSON.stringify({ modelPicker: null });
+await writeFile(join(overridePath, "settings.json"), overrideSource);
+const overriddenSetup = await claudeCodeClient.setupConfigFiles!(provider, [], {
+  forLaunch: true, launchEnvVars: { CLAUDE_CONFIG_DIR: overridePath }, workingDir: project,
+});
+const overriddenOverlay = JSON.parse(await readFile(overriddenSetup!.cleanupFiles![0]!, "utf8"));
 const result = {
   claudeModelPicker: overlay.modelPicker,
+  claudeProjectPickerPreserved: !projectOverlay.modelPicker && projectSourceUnchanged,
+  claudeExplicitPickerPreserved: !explicitOverlay.modelPicker,
+  claudeConfigDirPickerPreserved: !overriddenOverlay.modelPicker
+    && await readFile(join(overridePath, "settings.json"), "utf8") === overrideSource,
   claudeUserUnchanged: await readFile(join(home, ".claude", "settings.json"), "utf8") === claudeUser,
   codexArgs: codex?.args,
   codexCatalogNotPersisted: !codexConfig.model_providers?.tako?.model_catalog_url,
   codexModelPreserved: codexConfig.model === "personal-model",
   profileOverrideAbsent: !profile?.args,
 };
-await Promise.all(claude.cleanupFiles.map((path) => rm(path)));
+const cleanupFiles = [claude, projectSetup, explicitSetup, overriddenSetup]
+  .flatMap(setup => setup?.cleanupFiles ?? []);
+await Promise.all(cleanupFiles.map((path) => rm(path)));
 console.log(JSON.stringify(result));

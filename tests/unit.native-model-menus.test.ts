@@ -58,6 +58,36 @@ describe("Claude native model menu", () => {
     expect(buildClaudeModelPicker({ ...provider, apiKey: "missing-account" }, "2.1.316")).toBeUndefined();
   });
 
+  it("does not inject expired or future-dated catalogs into the native menu", () => {
+    const cache = join(directory, "catalog.json");
+    const snapshot = JSON.parse(readFileSync(cache, "utf8"));
+    for (const fetchedAt of [Date.now() - 60 * 60 * 1000 - 1, Date.now() + 60000]) {
+      snapshot.buckets[bucket(KEY)].fetchedAt = fetchedAt;
+      writeFileSync(cache, JSON.stringify(snapshot));
+      _resetTakoCatalog();
+      expect(buildClaudeModelPicker(provider, "2.1.316")).toBeUndefined();
+    }
+  });
+
+  it("uses final launch credentials and refuses a changed or ambiguous route", () => {
+    expect(buildClaudeModelPicker(provider, "2.1.316", {
+      ANTHROPIC_AUTH_TOKEN: "fixture-account-b", ANTHROPIC_BASE_URL: URL,
+    })?.options[0]?.model).toBe("other-account-model");
+    expect(buildClaudeModelPicker(provider, "2.1.316", {
+      ANTHROPIC_API_KEY: "fixture-account-b",
+    })?.options[0]?.model).toBe("other-account-model");
+    for (const env of [
+      { ANTHROPIC_AUTH_TOKEN: "" },
+      { ANTHROPIC_BASE_URL: "https://different.example.test" },
+      { ANTHROPIC_AUTH_TOKEN: KEY, ANTHROPIC_API_KEY: "fixture-account-b" },
+    ]) {
+      expect(buildClaudeModelPicker(provider, "2.1.316", env)).toBeUndefined();
+    }
+    expect(buildClaudeModelPicker({ ...provider, type: "tako" }, "2.1.316", {
+      ANTHROPIC_AUTH_TOKEN: KEY, ANTHROPIC_BASE_URL: `${URL}/api/`,
+    })?.options).toHaveLength(1);
+  });
+
   it("writes the native lineup only into a launch-owned overlay", async () => {
     const sourcePath = join(directory, "user.json");
     const targetPath = join(directory, "launch.json");
@@ -83,6 +113,27 @@ describe("Claude native model menu", () => {
     });
     expect(JSON.parse(readFileSync(targetPath, "utf8")).modelPicker).toBeUndefined();
     expect(readFileSync(sourcePath, "utf8")).toBe(source);
+  });
+
+  it("keeps project/local/explicit pickers authoritative and fails closed on unreadable settings", async () => {
+    const sourcePath = join(directory, "user.json");
+    const additional = join(directory, "project.json");
+    writeFileSync(sourcePath, "{}");
+    for (const [index, content] of [
+      JSON.stringify({ modelPicker: { options: [], replaceBuiltInOptions: true } }),
+      JSON.stringify({ modelPicker: null }),
+      '{ "modelPicker": /* JSONC remains client-owned */ {} }',
+      "[]",
+    ].entries()) {
+      writeFileSync(additional, content);
+      const targetPath = join(directory, `preserved-${index}.json`);
+      await prepareTakoClaudeSettingsForLaunch({
+        launchEnvVars: {}, modelPicker: buildClaudeModelPicker(provider, "2.1.316"),
+        sourcePath, targetPath, additionalSettingsPaths: [additional], logConflicts: false,
+      });
+      expect(JSON.parse(readFileSync(targetPath, "utf8")).modelPicker).toBeUndefined();
+      expect(readFileSync(additional, "utf8")).toBe(content);
+    }
   });
 });
 
@@ -117,6 +168,27 @@ describe("Codex native catalog launch override", () => {
     }
   });
 
+  it("does not replace explicit command-line catalog choices or disabled discovery", () => {
+    for (const args of [
+      ["-c", 'model_catalog_json="/fixture/personal.json"'],
+      ["--config=model_providers.tako.model_catalog_url=\"https://personal.example.test\""],
+      ["-cfeatures.api_key_model_discovery=false"],
+      ["--config", '"model_catalog_json"="/fixture/personal.json"'],
+      ["-c", 'model_providers = { tako = { model_catalog_url = "https://personal.example.test" } }'],
+      ["-c", 'features = { api_key_model_discovery = false }'],
+      ["--disable", "api_key_model_discovery"],
+      ["--disable=api_key_model_discovery"],
+      ["-c", 'model_providers.tako.base_url="https://other.example.test/v1"'],
+      ["-c", 'model_provider="personal"'],
+      ["-c", 'profile="personal"'],
+      ["-c", "invalid TOML"],
+    ]) {
+      expect(buildCodexNativeCatalogArgs(provider, "0.166.0", URL, {}, args)).toEqual([]);
+    }
+    expect(buildCodexNativeCatalogArgs(provider, "0.166.0", URL, {}, ["-c", "model_reasoning_effort=\"high\""]))
+      .toHaveLength(2);
+  });
+
   it("does not send unsupported or unknown versions a new config field", () => {
     for (const version of [null, "latest", "0.162.0", "0.100.0"]) {
       expect(buildCodexNativeCatalogArgs(provider, version, URL, {})).toEqual([]);
@@ -125,11 +197,14 @@ describe("Codex native catalog launch override", () => {
 });
 
 describe("real adapter setup in an isolated home", () => {
-  it("reads real managed package versions and returns launch-only menu settings", async () => {
+  it("reads fixture managed-package versions and returns launch-only menu settings", async () => {
     const home = mkdtempSync(join(tmpdir(), "tako-native-setup-"));
     try {
+      const env = Object.fromEntries(Object.entries(process.env)
+        .filter(([key]) => !/CLAUDE|ANTHROPIC|CODEX|OPENAI|TAKO|KEY|TOKEN|SECRET|PROXY|HOME|XDG/i.test(key)));
       const proc = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/native-menu-setup.ts")], {
-        env: { ...process.env, HOME: home, TAKO_HOME: join(home, "tako"), XDG_CONFIG_HOME: join(home, "config") },
+        cwd: home,
+        env: { ...env, HOME: home, USERPROFILE: home, TAKO_HOME: join(home, "tako"), XDG_CONFIG_HOME: join(home, "config") },
         stdout: "pipe", stderr: "pipe",
       });
       const [output, errors, code] = await Promise.all([
@@ -139,6 +214,9 @@ describe("real adapter setup in an isolated home", () => {
       expect(code).toBe(0);
       expect(JSON.parse(output)).toEqual({
         claudeModelPicker: { options: [{ model: "fixture-model", label: "Fixture model", description: "Fixture only" }] },
+        claudeProjectPickerPreserved: true,
+        claudeExplicitPickerPreserved: true,
+        claudeConfigDirPickerPreserved: true,
         claudeUserUnchanged: true,
         codexArgs: ["-c", 'model_providers.tako.model_catalog_url="https://fixture.example.test/v1/models?api_type=openai"'],
         codexCatalogNotPersisted: true,

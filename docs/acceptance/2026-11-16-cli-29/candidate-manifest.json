@@ -1,0 +1,67 @@
+{
+  "verifiedAt": "2026-11-16T09:46:22.273Z",
+  "base": "320f41f68a30c91714519523af37253cb74db1b9",
+  "head": "320f41f68a30c91714519523af37253cb74db1b9",
+  "remote": "https://github.com/tako-dev/cli.git",
+  "candidateSha256": "fdcac4b79569bdc8b76a715e8b316dcafb84bc780043f930abd6fef6eb33bffb",
+  "trackedPatchSha256": "a1e5856804997468b72066c958c96b3808cccfcdddd5b737c7c54faa3f960aa4",
+  "uncommitted": true,
+  "files": [
+    {
+      "file": "docs/models/NATIVE-MENUS.md",
+      "sha256": "7fd24f153f746fba610bbbf4e39e4de48d07605846d5cd3c61187b1ad7a72084"
+    },
+    {
+      "file": "docs/models/PI-DEPENDENCY.md",
+      "sha256": "8746bf502231e5cee829c082dda20d550b7bde9e021a0109114718413ec6a778"
+    },
+    {
+      "file": "src/clients/claude-code.ts",
+      "sha256": "8dd755a13d79edbcc46ad9219ee77b10cd2576bd50073d1a50d812e6e7893c24"
+    },
+    {
+      "file": "src/clients/codex.ts",
+      "sha256": "bab8f8699554f8a7a35c32680c73e84b2689acfe480723a11b972197e03d0520"
+    },
+    {
+      "file": "src/clients/grok.ts",
+      "sha256": "97212b621e532be296e54d57aefd29ca1bc1d5eaeeede9026e122ec3cec41425"
+    },
+    {
+      "file": "src/clients/pi-settings.ts",
+      "sha256": "71a6e02a2815245c07f10d40fd7226c6e6779ca210480a3d09ef99a347197d36"
+    },
+    {
+      "file": "src/clients/pi.ts",
+      "sha256": "cf5bbdd5e9e1723af32bd0063f649e16274b8694b5f0baa80fc94aa232b09c67"
+    },
+    {
+      "file": "src/models/tako.ts",
+      "sha256": "c228ea326fb815eb66091c52011dba6965fb85e8b59867233976644ed9422c05"
+    },
+    {
+      "file": "tests/fixtures/native-menu-setup.ts",
+      "sha256": "5d53f685ce2efd4106c9876b27409412461f8b9ba289595fc1f83d6264f1d065"
+    },
+    {
+      "file": "tests/unit.dynamic-model-options.test.ts",
+      "sha256": "8447d981a97546c63089e8f0f238974bde4b913f6228bba179125516b7c2c220"
+    },
+    {
+      "file": "tests/unit.model-qualification.test.ts",
+      "sha256": "593270ad7e5b048711dc9f09c90a90f547b94fd898a23bca70429cf15622cb1c"
+    },
+    {
+      "file": "tests/unit.native-model-menus.test.ts",
+      "sha256": "7b2e053f95f239f4204e524a0777a7dca215e1eb20f7844f77a9e55cb618a8d3"
+    },
+    {
+      "file": "tests/unit.pi-client.test.ts",
+      "sha256": "9749adef8ec0b91a1db82be61fed8053f8f14b0a3496ad8af622620f77efd6b9"
+    },
+    {
+      "file": "tests/unit.tako-model-cache.test.ts",
+      "sha256": "aef58d181837373acb566691a60fcec8acc63550810f9a25775a3d0f8864c20c"
+    }
+  ]
+}

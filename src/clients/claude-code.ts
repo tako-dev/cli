@@ -1,7 +1,8 @@
 import { homedir } from "os";
 import { randomUUID } from "node:crypto";
-import { dirname, join } from "path";
+import { dirname, join, resolve } from "path";
 import { ClientConfig, LaunchOption, registerClient } from "./base";
+import type { ClientLaunchSetupContext } from "./base";
 import type { ProviderContext, Provider } from "../providers/types";
 import { DEEPSEEK_ANTHROPIC_URL, resolveXiaomiBaseUrl, SUBAGENT_MODEL_CC_DEFAULT } from "../providers/types";
 import { log } from "../logger";
@@ -10,6 +11,7 @@ import { loadCatalog, getTakoModels, filterChatModels, getModelEntry } from "../
 import { BUNDLED_ENTRIES } from "../models/bundled";
 import { TAKO_DIR } from "../config";
 import { clientVersionMeets, getInstalledClientVersion } from "../installer";
+import { getFreshTakoModels } from "../models/tako";
 
 const CLAUDE_SETTINGS_PATH = join(homedir(), ".claude", "settings.json");
 const TAKO_CLAUDE_SETTINGS_DIR = join(TAKO_DIR, "claude-code", "launch-settings");
@@ -194,18 +196,26 @@ export interface ClaudeModelPicker {
 
 /**
  * 把当前 Tako / 自定义 provider 的 par 模型目录转换成 Claude Code 原生
- * `/model` 选择器的行。只使用该 provider 凭据对应的缓存；没有目录时返回
- * undefined，保留 Claude Code 内置选择器。
+ * `/model` 选择器的行。只使用最终启动凭据对应的一小时内目录；路由被覆盖
+ * 或凭据不明确时不注入，保留 Claude Code 内置选择器。
  */
 export function buildClaudeModelPicker(
   provider: ProviderContext | undefined,
   clientVersion: string | null,
+  launchEnvVars: Record<string, string> = {},
 ): ClaudeModelPicker | undefined {
   if (!clientVersionMeets(clientVersion, CLAUDE_MODEL_PICKER_MIN_VERSION)) return undefined;
   if (!provider || (provider.type !== "tako" && provider.type !== "custom") || !provider.baseUrl) {
     return undefined;
   }
-  const raw = getTakoModels(provider.baseUrl, "claude", provider.apiKey);
+  const expectedBase = provider.type === "tako" ? `${provider.baseUrl.replace(/\/+$/, "")}/api` : provider.baseUrl;
+  const launchBase = launchEnvVars.ANTHROPIC_BASE_URL ?? expectedBase;
+  if (launchBase.replace(/\/+$/, "") !== expectedBase.replace(/\/+$/, "")) return undefined;
+  const token = launchEnvVars.ANTHROPIC_AUTH_TOKEN;
+  const key = launchEnvVars.ANTHROPIC_API_KEY;
+  if (token && key && token !== key) return undefined;
+  const apiKey = token !== undefined || key !== undefined ? token || key : provider.apiKey;
+  const raw = getFreshTakoModels(provider.baseUrl, "claude", apiKey);
   if (!raw || raw.length === 0) return undefined;
   const chat = filterChatModels(raw);
   if (chat.length === 0) return undefined;
@@ -266,6 +276,8 @@ export async function prepareTakoClaudeSettingsForLaunch(opts: {
   modelPicker?: ClaudeModelPicker;
   sourcePath?: string;
   targetPath?: string;
+  /** Project/local settings are client-owned; unreadable layers disable only menu injection. */
+  additionalSettingsPaths?: string[];
   logConflicts?: boolean;
 }): Promise<ClaudeSettingsLaunchSetup> {
   const fs = await import("fs/promises");
@@ -277,16 +289,27 @@ export async function prepareTakoClaudeSettingsForLaunch(opts: {
   const overlay = buildTakoClaudeSettingsOverlay(opts.launchEnvVars, opts.modelPicker);
   let conflictingFields: string[] = [];
 
-  try {
-    const content = await fs.readFile(sourcePath, "utf-8");
-    const settings: Record<string, any> = JSON.parse(content);
-    conflictingFields = findClaudeSettingsConflicts(settings, overlay);
-    // A user-authored lineup stays authoritative; never replace its rows or labels.
-    if (Object.hasOwn(settings, "modelPicker")) delete overlay.modelPicker;
-  } catch {
-    // User settings are diagnostic only. Project/local settings may still conflict,
-    // so the launch overlay is always created.
+  for (const path of [sourcePath, ...(opts.additionalSettingsPaths ?? [])]) {
+    try {
+      if ((await fs.stat(path)).size > 1024 * 1024) {
+        delete overlay.modelPicker;
+        continue;
+      }
+      const settings: unknown = JSON.parse(await fs.readFile(path, "utf-8"));
+      if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+        delete overlay.modelPicker;
+        continue;
+      }
+      conflictingFields.push(...findClaudeSettingsConflicts(settings, overlay));
+      // Even an empty/null user lineup is intentional. Never override it.
+      if (Object.hasOwn(settings, "modelPicker")) delete overlay.modelPicker;
+    } catch (error) {
+      // Keep the auth overlay even if JSONC/malformed or unreadable settings
+      // cannot be checked safely, but do not replace a possibly user-owned menu.
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") delete overlay.modelPicker;
+    }
   }
+  conflictingFields = [...new Set(conflictingFields)];
 
   if (opts.logConflicts !== false && conflictingFields.length > 0) {
     log.warn(t("claudeCode.settingsDetected", { fields: conflictingFields.join(", ") }));
@@ -306,6 +329,18 @@ export async function prepareTakoClaudeSettingsForLaunch(opts: {
     settingsPath: targetPath,
     cleanupFiles: [targetPath],
   };
+}
+
+/** Conservatively honor project/local menus in the target directory and its ancestors. */
+function claudeProjectSettingsPaths(workingDir: string): string[] {
+  const paths: string[] = [];
+  let directory = resolve(workingDir);
+  while (true) {
+    paths.push(join(directory, ".claude", "settings.json"), join(directory, ".claude", "settings.local.json"));
+    const parent = dirname(directory);
+    if (parent === directory) return paths;
+    directory = parent;
+  }
 }
 
 /**
@@ -447,7 +482,7 @@ export const claudeCodeClient: ClientConfig = {
     };
   },
 
-  async setupConfigFiles(provider: ProviderContext, selectedOptionIds?: string[], context?: { forLaunch?: boolean; launchEnvVars?: Record<string, string> }) {
+  async setupConfigFiles(provider: ProviderContext, selectedOptionIds?: string[], context?: ClientLaunchSetupContext) {
     // 多账号切换：把目标账号的 OAuth tokens 还原到 Claude Code 的存储位置
     if (provider.type === "claude-subscription") {
       await syncClaudeSubscription(provider);
@@ -461,13 +496,19 @@ export const claudeCodeClient: ClientConfig = {
     const pinEnv = resolveLaunchPinEnv(provider, selectedOptionIds, baseEnv);
 
     const version = await getInstalledClientVersion(claudeCodeClient);
-    const modelPicker = buildClaudeModelPicker(provider, version);
+    // A caller-supplied settings layer (JSON or path) owns its menu semantics.
+    const hasExplicitSettings = context.launchArgs?.some(arg => arg === "--settings" || arg.startsWith("--settings="));
+    const modelPicker = hasExplicitSettings ? undefined : buildClaudeModelPicker(provider, version, baseEnv);
 
     // Keep normal configuration sources enabled. Add the native lineup only on
-    // supported versions and leave a user's own modelPicker untouched.
+    // supported versions and leave user/project/local modelPicker fields untouched.
+    const workingDir = context.workingDir ?? process.cwd();
+    const configDir = (baseEnv.CLAUDE_CONFIG_DIR ?? process.env.CLAUDE_CONFIG_DIR) || join(homedir(), ".claude");
     const launchSettings = await prepareTakoClaudeSettingsForLaunch({
       launchEnvVars: { ...baseEnv, ...pinEnv },
       modelPicker,
+      sourcePath: join(resolve(workingDir, configDir), "settings.json"),
+      additionalSettingsPaths: modelPicker ? claudeProjectSettingsPaths(workingDir) : [],
     });
     return {
       args: launchSettings.args,
@@ -575,9 +616,8 @@ function ctxStrOf(ctx: number): string {
 function buildDynamicClaudeModels(provider: Provider): LaunchOption[] | null {
   if (!provider.baseUrl) return null;
   const raw = getTakoModels(provider.baseUrl, "claude", provider.apiKey);
-  if (!raw || raw.length === 0) return null;
+  if (raw === null) return null;
   const chat = filterChatModels(raw);
-  if (chat.length === 0) return null;
   return chat.map((e) => {
     const modelArg = appendOneMTagIfNeeded(e.id, e.contextWindow);
     return {

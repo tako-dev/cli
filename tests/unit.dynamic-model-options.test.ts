@@ -188,14 +188,10 @@ describe("dynamic model launch options", () => {
     ]);
   });
 
-  it("Grok picker falls back to grok-family whitelist when catalog has no grok slugs", () => {
+  it("Grok picker stays empty when the known catalog has no eligible grok slugs", () => {
     const ids = getClientLaunchOptions(grokClient, provider("grok"))
       .filter((o) => o.group === "model").map((o) => o.id);
-    expect(ids).toEqual([
-      "model-grok-4.6",
-      "model-grok-4.5",
-      "model-composer-2.5",
-    ]);
+    expect(ids).toEqual([]);
   });
 
   it("filters out non-chat models (image/video/audio) from both pickers", () => {

@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import {
-  _resetTakoCatalog, _setCachePathForTest, getTakoModels,
+  _resetTakoCatalog, _setCachePathForTest, getFreshTakoModels, getTakoModels,
   refreshAllTakoCatalogs, refreshTakoModels,
 } from "../src/models/tako";
 import type { Provider } from "../src/providers/types";
@@ -94,5 +95,65 @@ describe("provider model cache account isolation", () => {
     await refreshTakoModels(URL, KEY_B, "claude");
     expect(getTakoModels(URL, "claude", KEY_B)).toBeNull();
     expect(getTakoModels(URL, "claude", KEY_A)?.[0]?.id).toBe("model-a");
+  });
+
+  for (const apiType of ["openai", "claude"] as const) {
+    for (const list of ["models", "data"] as const) {
+      it(`revokes only the current ${apiType} account after a complete empty ${list} list`, async () => {
+        await refreshTakoModels(URL, KEY_A, apiType);
+        await refreshTakoModels(URL, KEY_B, apiType);
+        globalThis.fetch = mock(async () => Response.json({ [list]: [] })) as typeof fetch;
+        await refreshTakoModels(URL, KEY_A, apiType);
+        expect(getFreshTakoModels(URL, apiType, KEY_A)).toEqual([]);
+        expect(getTakoModels(URL, apiType, KEY_B)?.[0]?.id).toBe("model-b");
+        _resetTakoCatalog();
+        expect(getTakoModels(URL, apiType, KEY_A)).toEqual([]);
+        expect(getTakoModels(URL, apiType, KEY_B)?.[0]?.id).toBe("model-b");
+      });
+    }
+
+    it(`rejects invalid or incomplete ${apiType} lists without renewing freshness`, async () => {
+      await refreshTakoModels(URL, KEY_A, apiType);
+      const snapshot = readFileSync(cache, "utf8");
+      for (const payload of [
+        {}, [], null, { models: "invalid" }, { data: "invalid" },
+        { models: [{ name: "wrong-protocol" }] }, { data: [null] },
+        { models: [{ slug: "partial" }], has_more: true },
+        { data: [{ id: "partial" }], has_more: true, last_id: "partial" },
+        { data: [], has_more: "false" },
+      ]) {
+        globalThis.fetch = mock(async () => Response.json(payload)) as typeof fetch;
+        await refreshTakoModels(URL, KEY_A, apiType);
+        expect(readFileSync(cache, "utf8")).toBe(snapshot);
+        expect(getTakoModels(URL, apiType, KEY_A)?.[0]?.id).toBe("model-a");
+      }
+    });
+  }
+
+  it("revokes models when a complete OpenAI list no longer supports the requested protocol", async () => {
+    await refreshTakoModels(URL, KEY_A, "claude");
+    globalThis.fetch = mock(async () => Response.json({
+      data: [{ id: "openai-only", supported_endpoint_types: ["openai"] }], has_more: false,
+    })) as typeof fetch;
+    await refreshTakoModels(URL, KEY_A, "claude");
+    expect(getTakoModels(URL, "claude", KEY_A)).toEqual([]);
+  });
+
+  it("does not follow redirects while discovering an authenticated catalog", async () => {
+    await refreshTakoModels(URL, KEY_A, "openai");
+    expect((globalThis.fetch as ReturnType<typeof mock>).mock.calls[0]?.[1]?.redirect).toBe("error");
+  });
+
+  it("refreshes future-dated snapshots rather than suppressing discovery indefinitely", async () => {
+    const fingerprint = createHash("sha256").update(KEY_A).digest("hex");
+    writeFileSync(cache, JSON.stringify({ version: 2, buckets: Object.fromEntries(
+      ["openai", "claude"].map(apiType => [`${URL}#${apiType}#${fingerprint}`, {
+        fetchedAt: Date.now() + 24 * 60 * 60 * 1000, entries: [{ id: "future-snapshot" }],
+      }]),
+    ) }));
+    expect(getFreshTakoModels(URL, "claude", KEY_A)).toBeNull();
+    await refreshAllTakoCatalogs([provider(KEY_A)]);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(getFreshTakoModels(URL, "claude", KEY_A)?.[0]?.id).toBe("model-a");
   });
 });
