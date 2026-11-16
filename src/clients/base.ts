@@ -196,6 +196,11 @@ export function getClientLaunchOptions(client: ClientConfig, provider?: Provider
 export const clients: Map<string, ClientConfig> = new Map();
 
 /**
+ * 固定展示顺序（= tab 顺序）。注册顺序依赖 import 时序，不能只靠 Map 插入顺序。
+ */
+const CLIENT_DISPLAY_ORDER = ["codex", "claude-code", "pi", "pi-web", "grok", "gemini"];
+
+/**
  * 注册客户端
  */
 export function registerClient(client: ClientConfig): void {
@@ -206,7 +211,13 @@ export function registerClient(client: ClientConfig): void {
  * 获取所有客户端
  */
 export function getAllClients(): ClientConfig[] {
-  return Array.from(clients.values()).filter((client) => !client.hidden);
+  const rank = (client: ClientConfig) => {
+    const i = CLIENT_DISPLAY_ORDER.indexOf(client.id);
+    return i === -1 ? CLIENT_DISPLAY_ORDER.length : i;
+  };
+  return Array.from(clients.values())
+    .filter((client) => !client.hidden)
+    .sort((a, b) => rank(a) - rank(b));
 }
 
 /**
