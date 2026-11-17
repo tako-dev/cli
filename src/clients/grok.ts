@@ -328,7 +328,7 @@ export async function writeGrokConfigFile(
 async function setupGrokConfigFiles(
   provider: ProviderContext,
   selectedOptionIds?: string[],
-): Promise<{ args: string[] }> {
+): Promise<{ args?: string[] }> {
   return writeGrokConfigFile(provider, selectedOptionIds, GROK_CONFIG_PATH);
 }
 
