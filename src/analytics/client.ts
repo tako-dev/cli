@@ -48,14 +48,14 @@ export function identifyUser(
 ): void {
   const { email, ...rest } = properties;
 
-  const p = getClient().identify({
+  const p = Promise.resolve(getClient().identify({
     profileId,
     // 顶层字段让 OpenPanel profile 面板能显示
     ...(typeof email === "string" ? { email } : {}),
     firstName: String(rest.platform || ""),
     // 其余放 properties
     properties: rest,
-  }).catch(() => {});
+  })).catch(() => {});
   pending.push(p);
 }
 

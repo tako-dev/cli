@@ -222,7 +222,7 @@ export function startApiKeySetup(): Promise<boolean> {
             process.stdin.pause();
             process.stdin.unref();
           } catch { /* ignore */ }
-          resolve(ok);
+          resolve(ok ?? false);
         }}
       />
     );

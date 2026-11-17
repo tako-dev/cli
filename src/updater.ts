@@ -355,7 +355,7 @@ export async function runUpdateCommand(): Promise<void> {
 
   const result = await checkForUpdates();
 
-  if (!result.hasUpdate) {
+  if (!result.hasUpdate || !result.latestVersion) {
     if (result.latestVersion) {
       console.log(`已是最新版本 v${CURRENT_VERSION}`);
     } else {
