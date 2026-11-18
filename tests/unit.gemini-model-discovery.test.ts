@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _resetTakoCatalog, _setCachePathForTest, getTakoModels, parseGeminiModels, refreshAllTakoCatalogs, refreshTakoModels } from "../src/models/tako";
@@ -36,12 +37,13 @@ describe("Gemini-native account catalog discovery", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
-  it("fetches all pages using native auth and exposes exact launcher IDs", async () => {
+  it("fetches all pages using native auth and client=agy and exposes exact launcher IDs", async () => {
     const urls: string[] = [];
     globalThis.fetch = async (input, init) => {
       const url = new URL(String(input));
       urls.push(String(url));
       expect(url.pathname).toBe("/v1beta/models");
+      expect(url.searchParams.get("client")).toBe("agy");
       expect(url.searchParams.has("key")).toBe(false);
       expect(new Headers(init?.headers).get("x-goog-api-key")).toBe(KEY);
       expect(init?.redirect).toBe("error");
@@ -51,9 +53,48 @@ describe("Gemini-native account catalog discovery", () => {
     };
     await refreshTakoModels(BASE_URL, KEY, "gemini");
     expect(urls).toHaveLength(2);
+    expect(urls[0]).toContain("client=agy");
+    expect(urls[1]).toContain("client=agy");
+    expect(urls[1]).toContain("pageToken=next");
     expect(buildGeminiModelOptions(provider).map((option) => option.args)).toEqual([["--model", "gemini-a"], ["--model", "gemini-b"]]);
     expect(getTakoModels(BASE_URL, "openai", KEY)).toBeNull();
-    expect(readFileSync(cache, "utf8")).not.toContain(KEY);
+    const saved = readFileSync(cache, "utf8");
+    expect(saved).not.toContain(KEY);
+    expect(saved).toContain("#agy-v2#");
+    expect(saved).not.toContain("#gemini#");
+  });
+
+  it("bypasses stale v0.3.54 #gemini# buckets on upgrade and refreshes into #agy-v2#", async () => {
+    const fp = createHash("sha256").update(KEY).digest("hex");
+    writeFileSync(cache, JSON.stringify({
+      version: 2,
+      buckets: {
+        [`${BASE_URL}#gemini#${fp}`]: {
+          fetchedAt: Date.now(),
+          entries: [{ id: "deepseek-v4-flash", displayName: "DeepSeek", description: "", contextWindow: 128000, sortOrder: 0, category: "chat" }],
+        },
+      },
+    }));
+    _resetTakoCatalog();
+
+    // Stale #gemini# bucket must be ignored on read
+    expect(getTakoModels(BASE_URL, "gemini", KEY)).toBeNull();
+
+    // refreshAllTakoCatalogs treats #agy-v2# as cold and fetches with ?client=agy
+    const fetchedUrls: string[] = [];
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      fetchedUrls.push(url);
+      if (url.includes("/v1beta/models")) {
+        return Response.json({ models: [model("claude-opus-4-6")] });
+      }
+      return Response.json({ models: [{ slug: "other", context_window: 200000 }] });
+    };
+    await refreshAllTakoCatalogs([provider]);
+    const geminiCalls = fetchedUrls.filter((u) => u.includes("/v1beta/models"));
+    expect(geminiCalls).toHaveLength(1);
+    expect(new URL(geminiCalls[0]!).searchParams.get("client")).toBe("agy");
+    expect(getTakoModels(BASE_URL, "gemini", KEY)?.map((e) => e.id)).toEqual(["claude-opus-4-6"]);
   });
 
   it("isolates credentials and preserves only that account's offline catalog", async () => {

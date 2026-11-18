@@ -31,10 +31,10 @@ const fingerprint = (key: string) => createHash("sha256").update(key).digest("he
 async function seed(age = 0) {
   _resetTakoCatalog();
   await writeFile(cache, JSON.stringify({ version: 2, buckets: {
-    [`${provider.baseUrl}#gemini#${fingerprint("fixture-a")}`]: { fetchedAt: Date.now() - age, entries: [
+    [`${provider.baseUrl}#agy-v2#${fingerprint("fixture-a")}`]: { fetchedAt: Date.now() - age, entries: [
       ...["model-a", "user-owned", "existing", "auto"].map(id => ({ id, displayName: id, category: "chat" })),
     ] },
-    [`${provider.baseUrl}#gemini#${fingerprint("fixture-b")}`]: { fetchedAt: Date.now(), entries: [
+    [`${provider.baseUrl}#agy-v2#${fingerprint("fixture-b")}`]: { fetchedAt: Date.now(), entries: [
       { id: "model-b", displayName: "Model B", category: "chat" },
     ] },
   } }));
