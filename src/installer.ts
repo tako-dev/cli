@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, win32 as win32Path } from "path";
+import { join, posix as posixPath, win32 as win32Path } from "path";
 import { log, createSpinner } from "./logger";
 import { confirmPrompt } from "./ui/shared/terminal";
 import { ClientConfig, getClientDir } from "./clients/base";
@@ -1309,10 +1309,13 @@ export interface AgyInstallOptions extends AgyInstallTargetOptions {
 }
 
 function joinAgyPath(platform: NodeJS.Platform, base: string, ...parts: string[]): string {
-  if (platform === "win32" && (/^[A-Za-z]:[\\/]/.test(base) || base.startsWith("\\\\"))) {
+  if (/^[A-Za-z]:[\\/]/.test(base) || base.startsWith("\\\\")) {
     return win32Path.join(base, ...parts);
   }
-  return join(base, ...parts);
+  if (base.startsWith("/")) {
+    return posixPath.join(base, ...parts);
+  }
+  return (platform === "win32" ? win32Path : posixPath).join(base, ...parts);
 }
 
 /** 检测 Linux 是否为 musl 运行时（如 Alpine） */
@@ -1420,10 +1423,25 @@ export function isDirOnPath(
   platform: NodeJS.Platform = process.platform,
 ): boolean {
   if (!pathEnv) return false;
-  const sep = platform === "win32" ? ";" : ":";
   const norm = (value: string) => value.replace(/[\\/]+$/, "");
   const target = norm(dir);
-  return pathEnv.split(sep).some((entry) => {
+  let entries: string[];
+  if (platform === "win32" || pathEnv.includes(";")) {
+    entries = pathEnv.split(";");
+  } else {
+    entries = [];
+    const raw = pathEnv.split(":");
+    for (let i = 0; i < raw.length; i++) {
+      const cur = raw[i];
+      if (/^[A-Za-z]$/.test(cur) && i + 1 < raw.length && /^[\\/]/.test(raw[i + 1])) {
+        entries.push(`${cur}:${raw[i + 1]}`);
+        i++;
+      } else {
+        entries.push(cur);
+      }
+    }
+  }
+  return entries.some((entry) => {
     const cleaned = norm(entry.trim());
     if (!cleaned) return false;
     return platform === "win32"
@@ -1557,7 +1575,9 @@ export async function installAgyFromManifest(
         s?.update("正在解压 Antigravity (agy)...");
         const extractDir = join(tmpDir, "extract");
         await fs.mkdir(extractDir, { recursive: true });
-        const proc = Bun.spawn(["tar", "-xzf", tmpFile, "-C", extractDir], {
+        // 使用相对文件名 + cwd，避免 Windows 上 Git GNU tar 把 C:\ 盘符当作远端主机
+        const proc = Bun.spawn(["tar", "-xzf", archiveName, "-C", "extract"], {
+          cwd: tmpDir,
           stdout: "pipe",
           stderr: "pipe",
         });

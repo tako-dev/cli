@@ -1,6 +1,6 @@
 import { constants as fsConstants } from "node:fs";
 import { homedir } from "node:os";
-import { join, win32 as win32Path } from "node:path";
+import { posix as posixPath, win32 as win32Path } from "node:path";
 import { ClientConfig, LaunchOption, registerClient } from "./base";
 import type { Provider, ProviderContext } from "../providers/types";
 import { PROXY_BASE_URL } from "../config";
@@ -19,10 +19,38 @@ export function agyBinaryName(platform: NodeJS.Platform = process.platform): str
 }
 
 function joinPlatformPath(platform: NodeJS.Platform, base: string, ...parts: string[]): string {
-  if (platform === "win32" && (/^[A-Za-z]:[\\/]/.test(base) || base.startsWith("\\\\"))) {
+  if (/^[A-Za-z]:[\\/]/.test(base) || base.startsWith("\\\\")) {
     return win32Path.join(base, ...parts);
   }
-  return join(base, ...parts);
+  if (base.startsWith("/")) {
+    return posixPath.join(base, ...parts);
+  }
+  return (platform === "win32" ? win32Path : posixPath).join(base, ...parts);
+}
+
+/**
+ * 拆分 PATH 环境变量，同时兼容在 Windows 上模拟 POSIX 平台时带盘符（如 C:\...）的路径。
+ */
+export function splitAgyPathEnv(
+  pathVar: string,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  if (!pathVar) return [];
+  if (platform === "win32" || pathVar.includes(";")) {
+    return pathVar.split(";").map((s) => s.trim()).filter(Boolean);
+  }
+  const parts: string[] = [];
+  const raw = pathVar.split(":");
+  for (let i = 0; i < raw.length; i++) {
+    const cur = raw[i];
+    if (/^[A-Za-z]$/.test(cur) && i + 1 < raw.length && /^[\\/]/.test(raw[i + 1])) {
+      parts.push(`${cur}:${raw[i + 1]}`.trim());
+      i++;
+    } else if (cur.trim()) {
+      parts.push(cur.trim());
+    }
+  }
+  return parts;
 }
 
 /**
@@ -157,7 +185,7 @@ async function isExecutableFile(
   try {
     const st = await fs.stat(filePath);
     if (!st.isFile()) return false;
-    if (platform !== "win32") {
+    if (platform !== "win32" && process.platform !== "win32") {
       await fs.access(filePath, fsConstants.X_OK);
     }
     return true;
@@ -195,11 +223,8 @@ export async function findAgyBinary(opts?: FindAgyBinaryOptions): Promise<string
   // 2. PATH 搜索
   const pathVar = env.PATH ?? env.Path ?? "";
   if (pathVar) {
-    const sep = platform === "win32" ? ";" : ":";
     const names = platform === "win32" ? ["agy.exe", "agy.cmd", "agy"] : ["agy"];
-    for (const rawDir of pathVar.split(sep)) {
-      const dir = rawDir.trim();
-      if (!dir) continue;
+    for (const dir of splitAgyPathEnv(pathVar, platform)) {
       for (const name of names) {
         const candidate = joinPlatformPath(platform, dir, name);
         if (await check(candidate, platform)) {

@@ -18,6 +18,7 @@ import {
   prepareAgyEnv,
   resolveAgyApiKey,
   resolveAgyGatewayUrl,
+  splitAgyPathEnv,
 } from "../src/clients/agy";
 import {
   computeFileSha512,
@@ -95,8 +96,16 @@ describe("Antigravity binary resolution", () => {
 
     for (const p of [explicitBin, pathBin, localBin]) {
       writeFileSync(p, "#!/bin/sh\necho 1.5.11\n");
-      chmodSync(p, 0o755);
+      if (process.platform !== "win32") chmodSync(p, 0o755);
     }
+
+    expect(splitAgyPathEnv("C:\\Users\\runner\\path-bin", "darwin")).toEqual([
+      "C:\\Users\\runner\\path-bin",
+    ]);
+    expect(splitAgyPathEnv("/usr/local/bin:/usr/bin", "darwin")).toEqual([
+      "/usr/local/bin",
+      "/usr/bin",
+    ]);
 
     // 1. AGY_PATH wins over PATH and ~/.local/bin
     expect(
@@ -387,7 +396,9 @@ describe("Antigravity cross-platform one-click installer", () => {
     writeFileSync(join(pkgSrc, "antigravity"), mockBinaryBody, { mode: 0o755 });
 
     const tarballPath = join(tmp, "cli_mac_arm64.tar.gz");
-    const tarRes = Bun.spawnSync(["tar", "-czf", tarballPath, "-C", pkgSrc, "antigravity"]);
+    const tarRes = Bun.spawnSync(["tar", "-czf", "../cli_mac_arm64.tar.gz", "antigravity"], {
+      cwd: pkgSrc,
+    });
     expect(tarRes.exitCode).toBe(0);
     const tarballSha512 = await computeFileSha512(tarballPath);
 
@@ -440,7 +451,9 @@ describe("Antigravity cross-platform one-click installer", () => {
       expect(res.version).toBe("1.5.11");
       expect(res.binPath).toBe(join(unixTarget, "agy"));
       expect(readFileSync(join(unixTarget, "agy"), "utf-8")).toBe(mockBinaryBody);
-      expect(statSync(join(unixTarget, "agy")).mode & 0o111).toBeGreaterThan(0);
+      if (process.platform !== "win32") {
+        expect(statSync(join(unixTarget, "agy")).mode & 0o111).toBeGreaterThan(0);
+      }
 
       // 2. Successful Windows .exe install via installAgyFromManifest
       const winTarget = join(tmp, "win-target");
@@ -484,16 +497,27 @@ describe("Antigravity cross-platform one-click installer", () => {
   });
 
   it("runs end-to-end CLI `tako install agy` and `tako --agy` with isolated env and config", async () => {
+    const isWin = process.platform === "win32";
     const fakeHome = join(tmp, "e2e-home");
+    const fakeLocalAppData = join(tmp, "e2e-localappdata");
     const takoHome = join(tmp, "e2e-tako");
     mkdirSync(fakeHome, { recursive: true });
+    mkdirSync(fakeLocalAppData, { recursive: true });
     mkdirSync(takoHome, { recursive: true });
 
-    // Create a mock `antigravity` script that prints env + argv JSON when invoked
     const pkgSrc = join(tmp, "e2e-pkg");
     mkdirSync(pkgSrc, { recursive: true });
     const dumpFile = join(tmp, "agy-dump.json");
-    const mockScript = `#!/usr/bin/env bun
+    const platformKey = resolveAgyPlatform();
+
+    let payloadPath: string;
+    let payloadRoute: string;
+    if (isWin) {
+      payloadPath = join(tmp, "e2e_agy.exe");
+      payloadRoute = "/e2e_agy.exe";
+      writeFileSync(payloadPath, "MZ-mock-antigravity-exe");
+    } else {
+      const mockScript = `#!/usr/bin/env bun
 import { writeFileSync } from "node:fs";
 if (process.argv.includes("--version")) {
   console.log("1.5.11");
@@ -509,11 +533,14 @@ writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
   hasAicodeUrl: Object.hasOwn(process.env, "AICODE_ENDPOINT_URL"),
 }));
 `;
-    writeFileSync(join(pkgSrc, "antigravity"), mockScript, { mode: 0o755 });
-    const tarballPath = join(tmp, "e2e_agy.tar.gz");
-    expect(Bun.spawnSync(["tar", "-czf", tarballPath, "-C", pkgSrc, "antigravity"]).exitCode).toBe(0);
-    const sha512 = await computeFileSha512(tarballPath);
-    const platformKey = resolveAgyPlatform();
+      writeFileSync(join(pkgSrc, "antigravity"), mockScript, { mode: 0o755 });
+      payloadPath = join(tmp, "e2e_agy.tar.gz");
+      payloadRoute = "/e2e_agy.tar.gz";
+      expect(
+        Bun.spawnSync(["tar", "-czf", "../e2e_agy.tar.gz", "antigravity"], { cwd: pkgSrc }).exitCode,
+      ).toBe(0);
+    }
+    const sha512 = await computeFileSha512(payloadPath);
 
     const server = Bun.serve({
       port: 0,
@@ -523,12 +550,12 @@ writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
         if (url.pathname === `/manifests/${platformKey}.json`) {
           return Response.json({
             version: "1.5.11",
-            url: `http://127.0.0.1:${server.port}/e2e_agy.tar.gz`,
+            url: `http://127.0.0.1:${server.port}${payloadRoute}`,
             sha512,
           });
         }
-        if (url.pathname === "/e2e_agy.tar.gz") {
-          return new Response(Bun.file(tarballPath));
+        if (url.pathname === payloadRoute) {
+          return new Response(Bun.file(payloadPath));
         }
         return new Response("not found", { status: 404 });
       },
@@ -536,18 +563,37 @@ writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
 
     try {
       const cliEntry = join(import.meta.dir, "..", "src", "index.ts");
-      const shimBin = join(tmp, "shim-bin");
-      mkdirSync(shimBin, { recursive: true });
-      symlinkSync(process.execPath, join(shimBin, "bun"));
-      const isolatedPath = `${shimBin}:/usr/bin:/bin`;
+      let isolatedPath: string;
+      if (isWin) {
+        const sysRoot = process.env.SystemRoot || "C:\\Windows";
+        isolatedPath = `${sysRoot}\\System32;${sysRoot}`;
+      } else {
+        const shimBin = join(tmp, "shim-bin");
+        mkdirSync(shimBin, { recursive: true });
+        symlinkSync(process.execPath, join(shimBin, "bun"));
+        isolatedPath = `${shimBin}:/usr/bin:/bin`;
+      }
 
-      // Step 1: `tako install agy` installs into fakeHome/.local/bin/agy
+      const expectedBin = isWin
+        ? join(fakeLocalAppData, "agy", "bin", "agy.exe")
+        : join(fakeHome, ".local", "bin", "agy");
+
+      const cleanParentEnv: Record<string, string | undefined> = { ...process.env };
+      delete cleanParentEnv.Path;
+      delete cleanParentEnv.AGY_PATH;
+      delete cleanParentEnv.AGY_INSTALL_DIR;
+      delete cleanParentEnv.TAKO_AGY_API_KEY;
+      delete cleanParentEnv.TAKO_AGY_GATEWAY_URL;
+
+      // Step 1: `tako install agy` installs into platform target location
       const installProc = Bun.spawn([process.execPath, cliEntry, "install", "agy"], {
         stdout: "pipe",
         stderr: "pipe",
         env: {
-          ...process.env,
+          ...cleanParentEnv,
           HOME: fakeHome,
+          USERPROFILE: fakeHome,
+          LOCALAPPDATA: fakeLocalAppData,
           TAKO_HOME: takoHome,
           TAKO_DEV: "1",
           AGY_INSTALL_MANIFEST_BASE: `http://127.0.0.1:${server.port}/manifests`,
@@ -556,7 +602,7 @@ writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
       });
       const installOut = `${await new Response(installProc.stdout).text()}\n${await new Response(installProc.stderr).text()}`;
       expect(await installProc.exited).toBe(0);
-      expect(existsSync(join(fakeHome, ".local", "bin", "agy"))).toBe(true);
+      expect(existsSync(expectedBin)).toBe(true);
       expect(installOut).toContain("tako --agy");
 
       // Step 2: Write Tako config with both apiKey and dedicated agyApiKey + /v1 baseUrl
@@ -583,16 +629,20 @@ writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
       );
 
       // Step 3: `tako --agy --model models/gemini-2.5-pro -p hi`
+      const handoffFile = join(tmp, "win-handoff.ps1");
       const launchProc = Bun.spawn(
         [process.execPath, cliEntry, "--agy", "--model", "models/gemini-2.5-pro", "-p", "hi"],
         {
           stdout: "pipe",
           stderr: "pipe",
           env: {
-            ...process.env,
+            ...cleanParentEnv,
             HOME: fakeHome,
+            USERPROFILE: fakeHome,
+            LOCALAPPDATA: fakeLocalAppData,
             TAKO_HOME: takoHome,
             TAKO_DEV: "1",
+            ...(isWin ? { TAKO_WINDOWS_HANDOFF_FILE: handoffFile } : {}),
             GOOGLE_GEMINI_BASE_URL: "https://polluted.example",
             GEMINI_API_KEY: "polluted-gemini",
             GOOGLE_API_KEY: "polluted-google",
@@ -602,16 +652,28 @@ writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
         },
       );
       expect(await launchProc.exited).toBe(0);
-      const dumped = JSON.parse(readFileSync(dumpFile, "utf-8"));
-      expect(dumped).toEqual({
-        argv: ["--dangerously-skip-permissions", "--model", "gemini-2.5-pro", "-p", "hi"],
-        AGY_LLM_GATEWAY_URL: "https://tako.shiroha.tech",
-        AGY_LLM_GATEWAY_API_KEY: "cr_agy_dedicated",
-        hasGeminiBase: false,
-        hasGeminiKey: false,
-        hasGoogleKey: false,
-        hasAicodeUrl: false,
-      });
+
+      if (isWin) {
+        const handoffText = readFileSync(handoffFile, "utf-8");
+        expect(handoffText).toContain(expectedBin.replace(/'/g, "''"));
+        expect(handoffText).toContain("'--dangerously-skip-permissions', '--model', 'gemini-2.5-pro', '-p', 'hi'");
+        expect(handoffText).toContain("$env:AGY_LLM_GATEWAY_URL = 'https://tako.shiroha.tech'");
+        expect(handoffText).toContain("$env:AGY_LLM_GATEWAY_API_KEY = 'cr_agy_dedicated'");
+        for (const conflictKey of AGY_CONFLICTING_ENV_KEYS) {
+          expect(handoffText).toContain(`Remove-Item -Path Env:${conflictKey} -ErrorAction SilentlyContinue`);
+        }
+      } else {
+        const dumped = JSON.parse(readFileSync(dumpFile, "utf-8"));
+        expect(dumped).toEqual({
+          argv: ["--dangerously-skip-permissions", "--model", "gemini-2.5-pro", "-p", "hi"],
+          AGY_LLM_GATEWAY_URL: "https://tako.shiroha.tech",
+          AGY_LLM_GATEWAY_API_KEY: "cr_agy_dedicated",
+          hasGeminiBase: false,
+          hasGeminiKey: false,
+          hasGoogleKey: false,
+          hasAicodeUrl: false,
+        });
+      }
     } finally {
       server.stop(true);
     }
