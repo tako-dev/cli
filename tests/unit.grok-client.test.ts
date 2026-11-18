@@ -60,10 +60,10 @@ function entry(id: string, category = "chat", contextWindow = 200000) {
 }
 
 describe("Grok Build client registry", () => {
-  it("registers a visible system client before Gemini", () => {
+  it("registers a visible system client before Antigravity (agy)", () => {
     const ids = getAllClients().map((c) => c.id);
     expect(ids).toContain("grok");
-    expect(ids.indexOf("grok")).toBeLessThan(ids.indexOf("gemini"));
+    expect(ids.indexOf("grok")).toBeLessThan(ids.indexOf("agy"));
     expect(getClient("grok")?.install).toBe("system");
     expect(getClient("grok")?.runtime).toBe("native");
   });
@@ -72,12 +72,12 @@ describe("Grok Build client registry", () => {
     expect(getDefaultSupportedClients("custom")).toEqual(["claude-code", "codex", "grok"]);
   });
 
-  it("inserts grok before gemini in existing provider client lists", () => {
-    expect(insertSupportedClient(["codex", "claude-code", "pi", "gemini"], "grok", "gemini"))
-      .toEqual(["codex", "claude-code", "pi", "grok", "gemini"]);
-    expect(insertSupportedClient(["codex", "grok", "gemini"], "grok", "gemini"))
-      .toEqual(["codex", "grok", "gemini"]);
-    expect(insertSupportedClient(["codex", "claude-code"], "grok", "gemini"))
+  it("inserts grok before agy in existing provider client lists", () => {
+    expect(insertSupportedClient(["codex", "claude-code", "pi", "agy"], "grok", "agy"))
+      .toEqual(["codex", "claude-code", "pi", "grok", "agy"]);
+    expect(insertSupportedClient(["codex", "grok", "agy"], "grok", "agy"))
+      .toEqual(["codex", "grok", "agy"]);
+    expect(insertSupportedClient(["codex", "claude-code"], "grok", "agy"))
       .toEqual(["codex", "claude-code", "grok"]);
   });
 });

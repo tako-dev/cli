@@ -19,6 +19,8 @@ export interface Provider {
   name: string;
   type: ProviderType;
   apiKey?: string;
+  /** Antigravity (agy) 专用网关 API Key（可选；未设置时回退到 apiKey） */
+  agyApiKey?: string;
   baseUrl?: string;
   apiId?: string;
   supportedClients?: string[];
@@ -50,6 +52,8 @@ export interface Provider {
 export interface ProviderContext {
   type: ProviderType;
   apiKey?: string;
+  /** Antigravity (agy) 专用网关 API Key（可选；未设置时回退到 apiKey） */
+  agyApiKey?: string;
   baseUrl?: string;
   /** 订阅认证数据，客户端启动时恢复 */
   authData?: Record<string, any>;

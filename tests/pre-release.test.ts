@@ -4,6 +4,7 @@ import { getTakoDir, getTakoCliDir, getProjectRoot, getSrcDir, getDistDir } from
 import { expectFileExists, expectValidPackageJson, expectHasShebang } from "./_helpers/assertions";
 import { coreModules, clientModules, requiredConfigFields } from "./_helpers/fixtures";
 import { buildCliUpdateCommand } from "../src/updater";
+import { agyClient } from "../src/clients/agy";
 import { grokClient } from "../src/clients/grok";
 import { piClient } from "../src/clients/pi";
 import { piWebClient } from "../src/clients/pi-web";
@@ -221,5 +222,14 @@ describe("Pre-Release - Client Registry", () => {
     expect(grokClient.runtime).toBe("native");
     expect(grokClient.install).toBe("system");
     expect(grokClient.package).toBe("system:grok");
+  });
+
+  it("Antigravity (agy) client configuration should be complete", () => {
+    expect(agyClient.id).toBe("agy");
+    expect(agyClient.name).toBe("Antigravity (agy)");
+    expect(agyClient.command).toBe("agy");
+    expect(agyClient.runtime).toBe("native");
+    expect(agyClient.install).toBe("system");
+    expect(agyClient.package).toBe("system:agy");
   });
 });

@@ -327,12 +327,30 @@ export function refreshAllTakoCatalogs(providers: Provider[]): Promise<void> {
     if (p.type !== "tako" && p.type !== "custom") continue;
     if (!p.apiKey || !p.baseUrl) continue;
     const apiTypes: TakoApiType[] = ["openai", "claude"];
-    if (!p.supportedClients?.length || p.supportedClients.includes("gemini")) apiTypes.push("gemini");
+    const supportsGeminiOrAgy =
+      !p.supportedClients?.length ||
+      p.supportedClients.includes("gemini") ||
+      p.supportedClients.includes("agy");
+    if (supportsGeminiOrAgy) apiTypes.push("gemini");
     for (const apiType of apiTypes) {
       const bucket = memory.get(bucketKey(p.baseUrl, apiType, p.apiKey));
       if (bucket && now >= bucket.fetchedAt && now - bucket.fetchedAt < REFRESH_TTL_MS) continue;
       const job = refreshTakoModels(p.baseUrl, p.apiKey, apiType);
       if (!bucket || now < bucket.fetchedAt) coldJobs.push(job);
+    }
+    if (!p.supportedClients?.length || p.supportedClients.includes("agy")) {
+      const agyUrl = (process.env.TAKO_AGY_GATEWAY_URL?.trim() || p.baseUrl)
+        .replace(/\/+$/, "")
+        .replace(/\/v1(?:beta)?$/i, "")
+        .replace(/\/+$/, "");
+      const agyKey = process.env.TAKO_AGY_API_KEY?.trim() || p.agyApiKey?.trim() || p.apiKey;
+      if (agyUrl && agyKey && (agyUrl !== p.baseUrl.replace(/\/+$/, "") || agyKey !== p.apiKey)) {
+        const bucket = memory.get(bucketKey(agyUrl, "gemini", agyKey));
+        if (!bucket || now < bucket.fetchedAt || now - bucket.fetchedAt >= REFRESH_TTL_MS) {
+          const job = refreshTakoModels(agyUrl, agyKey, "gemini");
+          if (!bucket || now < bucket.fetchedAt) coldJobs.push(job);
+        }
+      }
     }
   }
   return Promise.all(coldJobs).then(() => undefined);

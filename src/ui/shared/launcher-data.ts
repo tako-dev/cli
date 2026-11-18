@@ -23,6 +23,7 @@ export function resolveDefaultClientIndex(
   fallbackId = "pi",
 ): number {
   if (lastId === "pi-web") lastId = "pi";
+  if (lastId === "gemini") lastId = "agy";
   if (lastId) {
     const lastIdx = clientIds.indexOf(lastId);
     if (lastIdx >= 0) return lastIdx;

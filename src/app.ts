@@ -11,6 +11,7 @@ import { statusLineCommand, injectStatusLineConfig } from "./statusline";
 import { selectProviderForClient } from "./ui/providers";
 import { buildPassthroughArgs } from "./quick-launch-args";
 import { loadCatalog, refreshCatalog } from "./models";
+import { getGeminiRetiredMessage } from "./installer";
 import { listAvailableVersions, installAtVersion, getInstalledVersion } from "./installer-versions";
 import { IS_DEV } from "./config";
 
@@ -50,7 +51,7 @@ ${t("cli.shortcutCodex")}
 ${t("cli.shortcutPi")}
 ${t("cli.shortcutPiWeb")}
 ${t("cli.shortcutGrok")}
-${t("cli.shortcutGemini")}
+${t("cli.shortcutAgy")}
 
 Commands:
   tako update                Update Tako CLI to the latest version
@@ -70,7 +71,7 @@ ${t("cli.exampleCodex")}
 ${t("cli.examplePi")}
 ${t("cli.examplePiWeb")}
 ${t("cli.exampleGrok")}
-${t("cli.exampleGemini")}
+${t("cli.exampleAgy")}
 `);
 }
 
@@ -87,6 +88,10 @@ async function runInstallCommand(rest: string[]): Promise<void> {
     console.error("  tako install claude-code 1.0.5        # 安装指定版本");
     process.exit(1);
   }
+  if (clientId === "gemini") {
+    console.error(getGeminiRetiredMessage());
+    process.exit(1);
+  }
   const client = getClient(clientId);
   if (!client) {
     console.error(`未知 client: ${clientId}`);
@@ -94,7 +99,7 @@ async function runInstallCommand(rest: string[]): Promise<void> {
   }
 
   if (client.install === "system") {
-    if (!version) {
+    if (!version && !client.oneClickInstall) {
       const current = await getInstalledVersion(client);
       console.log(`${client.name} 使用官方系统安装，不走 npm。`);
       console.log(current ? `当前版本: ${current}` : "未安装");
@@ -102,9 +107,10 @@ async function runInstallCommand(rest: string[]): Promise<void> {
       console.log(`安装指定版本: tako install ${clientId} 0.2.93`);
       return;
     }
-    console.log(`正在安装 ${client.name}${version === "latest" ? "" : `@${version}`}...`);
+    const targetVersion = version || "latest";
+    console.log(`正在安装 ${client.name}${targetVersion === "latest" ? "" : `@${targetVersion}`}...`);
     try {
-      await installAtVersion(client, version);
+      await installAtVersion(client, targetVersion);
       const current = await getInstalledVersion(client);
       console.log(`✓ ${client.name} 已就绪${current ? `（${current}）` : ""}`);
     } catch (e) {
@@ -144,7 +150,7 @@ async function runInstallCommand(rest: string[]): Promise<void> {
 }
 
 /**
- * 快捷启动（--claude, --codex, --pi, --pi-web, --gemini, --grok）
+ * 快捷启动（--claude, --codex, --pi, --pi-web, --grok, --agy）
  * 自动选 Provider，不弹交互式菜单
  */
 async function quickLaunch(
@@ -242,6 +248,11 @@ export async function runCli(main: UiMain): Promise<void> {
     return;
   }
 
+  if (args.includes("--gemini")) {
+    console.error(getGeminiRetiredMessage());
+    process.exit(1);
+  }
+
   if (args.includes("-v") || args.includes("--version")) {
     console.log(`Tako CLI v${VERSION}`);
     return;
@@ -276,11 +287,6 @@ export async function runCli(main: UiMain): Promise<void> {
     await quickLaunch("codex", "Codex", await buildPassthroughArgs("codex", args, "--codex"));
     return;
   }
-  if (args.includes("--gemini")) {
-    await maybeStartupUpdate(isDev);
-    await quickLaunch("gemini", "Gemini CLI", await buildPassthroughArgs("gemini", args, "--gemini"));
-    return;
-  }
   if (args.includes("--pi")) {
     await maybeStartupUpdate(isDev);
     await quickLaunch("pi", "Pi", await buildPassthroughArgs("pi", args, "--pi"));
@@ -294,6 +300,11 @@ export async function runCli(main: UiMain): Promise<void> {
   if (args.includes("--grok")) {
     await maybeStartupUpdate(isDev);
     await quickLaunch("grok", "Grok Build", await buildPassthroughArgs("grok", args, "--grok"));
+    return;
+  }
+  if (args.includes("--agy")) {
+    await maybeStartupUpdate(isDev);
+    await quickLaunch("agy", "Antigravity (agy)", await buildPassthroughArgs("agy", args, "--agy"));
     return;
   }
 

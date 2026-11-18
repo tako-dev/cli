@@ -81,16 +81,27 @@ async function resolveProvider(
   client: ClientConfig,
   options?: LaunchOptions,
 ): Promise<ProviderContext | null> {
-  if (options?.providerContext) return options.providerContext;
+  if (options?.providerContext) {
+    if (!options.providerContext.agyApiKey) {
+      const config = await loadConfig();
+      if (config.agyApiKey) {
+        return { ...options.providerContext, agyApiKey: config.agyApiKey };
+      }
+    }
+    return options.providerContext;
+  }
+
+  const config = await loadConfig();
+  const fallbackAgyKey = config.agyApiKey;
 
   // 尝试默认 Provider
   const defaultProvider = await getDefaultProvider();
   if (defaultProvider) {
     const compatible = await getProvidersForClient(client.id);
     const isDefault = compatible.some((p) => p.id === defaultProvider.id);
-    if (isDefault) return resolveProviderContext(defaultProvider);
+    if (isDefault) return resolveProviderContext(defaultProvider, fallbackAgyKey);
     // 默认不兼容，取第一个兼容的
-    if (compatible.length > 0) return resolveProviderContext(compatible[0]);
+    if (compatible.length > 0) return resolveProviderContext(compatible[0], fallbackAgyKey);
   }
 
   return null;

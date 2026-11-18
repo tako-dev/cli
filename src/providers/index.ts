@@ -17,11 +17,34 @@ export function insertSupportedClient(clients: string[], clientId: string, befor
   return [...clients, clientId];
 }
 
+/**
+ * 将历史配置中的 "gemini" 客户端迁移替换为 "agy"（保序且去重）。
+ */
+export function migrateSupportedClients(clients: string[]): string[] {
+  if (!clients.includes("gemini")) return clients;
+  const next: string[] = [];
+  for (const id of clients) {
+    const mapped = id === "gemini" ? "agy" : id;
+    if (!next.includes(mapped)) next.push(mapped);
+  }
+  return next;
+}
+
+function normalizeLoadedProvider(provider: Provider): Provider {
+  if (!Array.isArray(provider.supportedClients) || !provider.supportedClients.includes("gemini")) {
+    return provider;
+  }
+  return {
+    ...provider,
+    supportedClients: migrateSupportedClients(provider.supportedClients),
+  };
+}
+
 // --- CRUD ---
 
 export async function getProviders(): Promise<Provider[]> {
   const config = await loadConfig();
-  return config.providers ?? [];
+  return (config.providers ?? []).map(normalizeLoadedProvider);
 }
 
 export async function getProvider(id: string): Promise<Provider | undefined> {
@@ -31,7 +54,7 @@ export async function getProvider(id: string): Promise<Provider | undefined> {
 
 export async function getDefaultProvider(): Promise<Provider | undefined> {
   const config = await loadConfig();
-  const providers = config.providers ?? [];
+  const providers = (config.providers ?? []).map(normalizeLoadedProvider);
   if (providers.length === 0) return undefined;
   if (config.defaultProviderId) {
     const found = providers.find((p) => p.id === config.defaultProviderId);
@@ -112,9 +135,12 @@ export async function setDefaultProvider(id: string): Promise<void> {
 /** 获取某个客户端绑定的 Provider */
 export async function getClientProvider(clientId: string): Promise<Provider | undefined> {
   const config = await loadConfig();
-  const providerId = config.clientProviderMap?.[clientId];
+  const providerId =
+    config.clientProviderMap?.[clientId] ??
+    (clientId === "agy" ? config.clientProviderMap?.gemini : undefined);
   if (providerId) {
-    const found = (config.providers ?? []).find((p) => p.id === providerId);
+    const raw = (config.providers ?? []).find((p) => p.id === providerId);
+    const found = raw ? normalizeLoadedProvider(raw) : undefined;
     if (found && isProviderCompatible(found, clientId)) return found;
   }
   // 没绑定或绑定失效 → 走默认
@@ -137,10 +163,13 @@ export async function setClientProvider(clientId: string, providerId: string): P
 
 // --- ProviderContext 解析 ---
 
-export function resolveProviderContext(provider: Provider): ProviderContext {
+export function resolveProviderContext(provider: Provider, fallbackAgyApiKey?: string): ProviderContext {
   return {
     type: provider.type,
     apiKey: provider.apiKey,
+    ...(provider.agyApiKey || fallbackAgyApiKey
+      ? { agyApiKey: provider.agyApiKey || fallbackAgyApiKey }
+      : {}),
     baseUrl: provider.baseUrl,
     authData: provider.authData,
     model: provider.model,
@@ -320,6 +349,7 @@ export async function migrateIfNeeded(): Promise<boolean> {
     name: "Tako 官方",
     type: "tako",
     apiKey: config.apiKey,
+    ...(config.agyApiKey ? { agyApiKey: config.agyApiKey } : {}),
     baseUrl: PROXY_BASE_URL,
     apiId: config.apiId,
     supportedClients: getDefaultSupportedClients("tako"),
@@ -349,15 +379,31 @@ export async function fixupProviders(): Promise<void> {
       p.builtin = true;
       changed = true;
     }
+    if (p.type === "tako" && config.agyApiKey && !p.agyApiKey) {
+      p.agyApiKey = config.agyApiKey;
+      changed = true;
+    }
+    if (Array.isArray(p.supportedClients) && p.supportedClients.includes("gemini")) {
+      p.supportedClients = migrateSupportedClients(p.supportedClients);
+      changed = true;
+    }
     if (
       (p.type === "tako" || p.type === "custom")
       && Array.isArray(p.supportedClients)
       && p.supportedClients.length > 0
       && !p.supportedClients.includes("grok")
     ) {
-      p.supportedClients = insertSupportedClient(p.supportedClients, "grok", "gemini");
+      p.supportedClients = insertSupportedClient(p.supportedClients, "grok", "agy");
       changed = true;
     }
+  }
+
+  if (config.clientProviderMap && "gemini" in config.clientProviderMap) {
+    if (!config.clientProviderMap.agy && config.clientProviderMap.gemini) {
+      config.clientProviderMap.agy = config.clientProviderMap.gemini;
+    }
+    delete config.clientProviderMap.gemini;
+    changed = true;
   }
 
   // 有 apiKey 但 Tako provider 不存在 → 自动重建
@@ -367,6 +413,7 @@ export async function fixupProviders(): Promise<void> {
       name: "Tako 官方",
       type: "tako",
       apiKey: config.apiKey,
+      ...(config.agyApiKey ? { agyApiKey: config.agyApiKey } : {}),
       baseUrl: PROXY_BASE_URL,
       apiId: config.apiId,
       supportedClients: getDefaultSupportedClients("tako"),

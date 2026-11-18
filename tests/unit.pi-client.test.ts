@@ -30,15 +30,19 @@ describe("Pi launcher placement", () => {
   });
 
   it("defaults to Pi when this directory has no last client", () => {
-    expect(resolveDefaultClientIndex(["codex", "claude-code", "pi", "gemini"], null)).toBe(2);
+    expect(resolveDefaultClientIndex(["codex", "claude-code", "pi", "agy"], null)).toBe(2);
   });
 
   it("stays on the last client used in this directory", () => {
-    expect(resolveDefaultClientIndex(["codex", "claude-code", "pi", "gemini"], "claude-code")).toBe(1);
+    expect(resolveDefaultClientIndex(["codex", "claude-code", "pi", "agy"], "claude-code")).toBe(1);
   });
 
   it("treats leftover pi-web history as Pi", () => {
-    expect(resolveDefaultClientIndex(["codex", "claude-code", "pi", "gemini"], "pi-web")).toBe(2);
+    expect(resolveDefaultClientIndex(["codex", "claude-code", "pi", "agy"], "pi-web")).toBe(2);
+  });
+
+  it("maps retired gemini directory history onto agy", () => {
+    expect(resolveDefaultClientIndex(["codex", "claude-code", "pi", "agy"], "gemini")).toBe(3);
   });
 
   it("exposes Web UI as a Pi option, not a separate tab", () => {

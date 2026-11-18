@@ -4,9 +4,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getClientLaunchOptions } from "../src/clients/base";
+import { agyClient } from "../src/clients/agy";
 import { claudeCodeClient } from "../src/clients/claude-code";
 import { codexClient } from "../src/clients/codex";
-import { geminiClient } from "../src/clients/gemini";
 import { grokClient } from "../src/clients/grok";
 import { piClient } from "../src/clients/pi";
 import { _resetTakoCatalog, _setCachePathForTest, type TakoApiType } from "../src/models/tako";
@@ -16,7 +16,7 @@ const BASE = "https://qualification.example.test";
 const KEY_A = "fixture-account-a";
 const KEY_B = "fixture-account-b";
 const protocols: TakoApiType[] = ["openai", "claude", "gemini"];
-const clients = [claudeCodeClient, codexClient, piClient, grokClient, geminiClient];
+const clients = [claudeCodeClient, codexClient, piClient, grokClient, agyClient];
 const entry = (id: string, category = "chat") => ({
   id, displayName: id, description: "Fixture only", contextWindow: 128000, sortOrder: 0, category,
 });
@@ -54,7 +54,7 @@ describe("cross-client launcher catalog qualification", () => {
         [key(`${BASE}/other`, apiType, KEY_A), { fetchedAt: Date.now(), entries: [entry(`grok-${apiType}-other-endpoint`)] }],
       ]));
       writeFileSync(cache, JSON.stringify({ version: 2, buckets }));
-      const apiType = client.id === "gemini" ? "gemini" : ["codex", "grok"].includes(client.id) ? "openai" : "claude";
+      const apiType = client.id === "agy" ? "gemini" : ["codex", "grok"].includes(client.id) ? "openai" : "claude";
       expect(models(client, provider(KEY_A))).toEqual([`model-grok-${apiType}-account-a`]);
       expect(models(client, provider(KEY_B))).toEqual([`model-grok-${apiType}-account-b`]);
       expect(models(client, provider(KEY_A, `${BASE}/other`))).toEqual([`model-grok-${apiType}-other-endpoint`]);
@@ -63,7 +63,7 @@ describe("cross-client launcher catalog qualification", () => {
     });
 
     it(`${client.id}: does not borrow model IDs from a different protocol's catalog`, () => {
-      const apiType = client.id === "gemini" ? "gemini" : ["codex", "grok"].includes(client.id) ? "openai" : "claude";
+      const apiType = client.id === "agy" ? "gemini" : ["codex", "grok"].includes(client.id) ? "openai" : "claude";
       writeFileSync(cache, JSON.stringify({ version: 2, buckets: Object.fromEntries(
         protocols.filter(protocol => protocol !== apiType).map(protocol => [
           key(BASE, protocol, KEY_A), { fetchedAt: Date.now(), entries: [entry(`grok-unqualified-${protocol}`)] },
@@ -73,7 +73,7 @@ describe("cross-client launcher catalog qualification", () => {
     });
 
     it(`${client.id}: a known empty or non-chat catalog does not re-enable static fallback models`, () => {
-      for (const entries of client.id === "gemini" ? [[]] : [[], [entry("grok-image-fixture", "image")]]) {
+      for (const entries of client.id === "agy" ? [[]] : [[], [entry("grok-image-fixture", "image")]]) {
         writeFileSync(cache, JSON.stringify({ version: 2, buckets: Object.fromEntries(protocols.map(apiType => [
           key(BASE, apiType, KEY_A), { fetchedAt: Date.now(), entries },
         ])) }));
@@ -87,6 +87,6 @@ describe("cross-client launcher catalog qualification", () => {
     for (const client of [claudeCodeClient, codexClient, piClient, grokClient]) {
       expect(models(client, provider("unseen-account")).length).toBeGreaterThan(0);
     }
-    expect(models(geminiClient, provider("unseen-account"))).toEqual([]);
+    expect(models(agyClient, provider("unseen-account"))).toEqual([]);
   });
 });

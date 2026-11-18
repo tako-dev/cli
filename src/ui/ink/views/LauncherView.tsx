@@ -53,7 +53,7 @@ export function buildInitialEnabled(
 const CLIENT_STYLE: Record<string, { icon: string; color: string }> = {
   "claude-code": { icon: "✦", color: "yellow" },
   codex:         { icon: "◈", color: "blue" },
-  gemini:        { icon: "◆", color: "cyan" },
+  agy:           { icon: "▲", color: "green" },
   grok:          { icon: "✶", color: "white" },
   pi:            { icon: "π", color: "magenta" },
   "pi-web":      { icon: "◎", color: "magenta" },
