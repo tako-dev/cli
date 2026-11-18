@@ -27,7 +27,13 @@ export async function buildPassthroughArgs(
   shortcutFlag: string,
   opts?: BuildPassthroughOptions,
 ): Promise<string[]> {
-  const rest = allArgs.filter((a) => a !== shortcutFlag);
+  const rest = !shortcutFlag
+    ? allArgs
+    : shortcutFlag.startsWith("--")
+      ? allArgs.filter((a) => a !== shortcutFlag)
+      : allArgs[0] === shortcutFlag
+        ? allArgs.slice(1)
+        : allArgs;
 
   const inherited = await resolveInheritedDangerousFlag(clientId, rest, opts);
 

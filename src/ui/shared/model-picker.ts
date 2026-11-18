@@ -3,6 +3,12 @@ import { fuzzyFilter } from "./fuzzy";
 
 export const COMMON_MODEL_LIMIT = 6;
 export const MODEL_PAGE_SIZE = 10;
+export const MODEL_PICKER_DEFAULT_ID = "__default__" as const;
+
+export interface ModelPickerEntry {
+  kind: "default" | "model";
+  option?: LaunchOption;
+}
 
 export function commonModelOptions(
   groupOptions: LaunchOption[],
@@ -46,6 +52,20 @@ export function listedModelOptions(
   const commonIds = new Set(common.map((option) => option.id));
   const rest = groupOptions.filter((option) => !commonIds.has(option.id));
   return [...common, ...rest];
+}
+
+export function resolveModelPickerEntries(
+  options: LaunchOption[],
+  pickCounts: Record<string, number>,
+  query: string,
+  zh = false,
+): ModelPickerEntry[] {
+  const models = listedModelOptions(options, pickCounts, query, zh);
+  const entries = models.map((option): ModelPickerEntry => ({ kind: "model", option }));
+  if (query.trim() === "") {
+    return [{ kind: "default" }, ...entries];
+  }
+  return entries;
 }
 
 export function modelPickerWindow(

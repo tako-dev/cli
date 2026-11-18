@@ -34,10 +34,20 @@ interface VersionState {
   current: string | null;
 }
 
-export function ClientVersionView({ onDone }: { onDone: () => void }) {
+export function ClientVersionView({
+  onDone,
+  initialClientId,
+}: {
+  onDone: () => void;
+  initialClientId?: string;
+}) {
   const clients = getAllClients();
   const zh = getLocale() === "zh";
-  const [tabIdx, setTabIdx] = useState(0);
+  const [tabIdx, setTabIdx] = useState(() => {
+    if (!initialClientId) return 0;
+    const idx = clients.findIndex((c) => c.id === initialClientId);
+    return idx >= 0 ? idx : 0;
+  });
   const [rowIdx, setRowIdx] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
   const [stateByClient, setStateByClient] = useState<Record<string, VersionState>>({});
@@ -56,11 +66,23 @@ export function ClientVersionView({ onDone }: { onDone: () => void }) {
     try {
       if (client.install === "system") {
         const installed = await getInstalledVersion(client);
+        const versions: VersionInfo[] = client.oneClickInstall
+          ? [
+              {
+                version: "latest",
+                publishedAt: zh ? "官方最新（安装/更新）" : "official latest",
+                isCurrent: false,
+              },
+              ...(installed ? [{ version: installed, isCurrent: true }] : []),
+            ]
+          : installed
+            ? [{ version: installed, isCurrent: true }]
+            : [];
         setStateByClient((prev) => ({
           ...prev,
           [clientId]: {
             loading: false,
-            versions: installed ? [{ version: installed, isCurrent: true }] : [],
+            versions,
             current: installed,
           },
         }));
@@ -211,7 +233,9 @@ export function ClientVersionView({ onDone }: { onDone: () => void }) {
               {slice.map((v, i) => {
                 const absIdx = scrollTop + i;
                 const focused = absIdx === rowIdx;
-                const date = v.publishedAt ? v.publishedAt.slice(0, 10) : "";
+                const date = v.publishedAt
+                  ? (/^\d{4}-\d{2}-\d{2}T/.test(v.publishedAt) ? v.publishedAt.slice(0, 10) : v.publishedAt)
+                  : "";
                 const marker = v.isCurrent ? (zh ? " ★ 当前" : " ★ current") : "";
                 const installingThis = installing === v.version;
                 const color = focused ? tabColor : v.isCurrent ? "green" : undefined;

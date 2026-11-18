@@ -3,7 +3,7 @@
  * 卡片/输入/详情渲染在 ProviderComponents.tsx
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Box, Text, useInput } from "ink";
 import { getLocale } from "../../../i18n";
 import {
@@ -17,7 +17,17 @@ import type { Provider, ProviderType } from "../../../providers/types";
 import { PROVIDER_TYPE_NAMES, getDefaultSupportedClients, getDefaultModel, getDefaultBaseUrl, getModelChoices } from "../../../providers/types";
 import { BUNDLED_ENTRIES } from "../../../models/bundled";
 import { track, identify, reset as resetAnalytics } from "../../../analytics";
-import { PROV_STYLE, TAB_STYLE, ADD_TYPES, ProviderCard, InputScreen, DetailScreen } from "./ProviderComponents";
+import {
+  PROV_STYLE,
+  TAB_STYLE,
+  ADD_TYPES,
+  ProviderCard,
+  InputScreen,
+  DetailScreen,
+  AddTypeScreen,
+  SubmodelScreen,
+  SubmodelCustomScreen,
+} from "./ProviderComponents";
 
 type Screen = "list" | "detail" | "add-type" | "add-key" | "add-url" | "add-model" | "add-ctx" | "submodel" | "submodel-custom" | "scanning" | "logging-in";
 
@@ -25,12 +35,25 @@ type Screen = "list" | "detail" | "add-type" | "add-key" | "add-url" | "add-mode
 
 type DoneAction = "client-versions" | undefined;
 
-function ProviderMenuComponent({ onDone }: { onDone: (action?: DoneAction) => void }) {
+function ProviderMenuComponent({
+  onDone,
+  initialClientId,
+  initialRekeyProviderId,
+}: {
+  onDone: (action?: DoneAction, clientId?: string) => void;
+  initialClientId?: string;
+  initialRekeyProviderId?: string;
+}) {
+  const clients = getAllClients();
   const [screen, setScreen] = useState<Screen>("list");
   const [providers, setProviders] = useState<Provider[]>([]);
   const [defaultId, setDefaultIdState] = useState<string | undefined>();
   const [clientBindings, setClientBindings] = useState<Record<string, string | undefined>>({});
-  const [tabIdx, setTabIdx] = useState(0);
+  const [tabIdx, setTabIdx] = useState(() => {
+    if (!initialClientId) return 0;
+    const idx = clients.findIndex((c) => c.id === initialClientId);
+    return idx >= 0 ? idx : 0;
+  });
   const [rowIdx, setRowIdx] = useState(0);
   const [detailIdx, setDetailIdx] = useState(0);
   const [selectedId, setSelectedId] = useState("");
@@ -41,9 +64,9 @@ function ProviderMenuComponent({ onDone }: { onDone: (action?: DoneAction) => vo
   const [addModel, setAddModel] = useState("");
   const [addCtx, setAddCtx] = useState("");
   const [subModelInput, setSubModelInput] = useState("");
+  const appliedInitialRekey = useRef(false);
   const zh = getLocale() === "zh";
 
-  const clients = getAllClients();
   const currentClient = clients[tabIdx];
   const tabColor = TAB_STYLE[currentClient?.id]?.color || "white";
 
@@ -60,7 +83,8 @@ function ProviderMenuComponent({ onDone }: { onDone: (action?: DoneAction) => vo
     ...(isSubscription ? ["relogin"] as const : []),
     // Claude Code 子代理模型三态（跟随主模型 / CC 默认 / 指定模型）只对 API key 类 provider 有意义
     ...(!isSubscription ? ["submodel"] as const : []),
-    ...(selectedProv.builtin ? ["rekey"] as const : ["delete"] as const),
+    ...(!isSubscription ? ["rekey"] as const : []),
+    ...(!selectedProv.builtin ? ["delete"] as const : []),
     "back" as const,
   ] : ["back" as const];
 
@@ -80,15 +104,32 @@ function ProviderMenuComponent({ onDone }: { onDone: (action?: DoneAction) => vo
   useEffect(() => { refresh(); }, [refresh]);
   useEffect(() => { setRowIdx(0); }, [tabIdx]);
   useEffect(() => {
+    if (appliedInitialRekey.current || !initialRekeyProviderId || providers.length === 0) return;
+    const target = providers.find((p) => p.id === initialRekeyProviderId);
+    if (!target) return;
+    appliedInitialRekey.current = true;
+    if (target.type !== "claude-subscription" && target.type !== "codex-subscription") {
+      setSelectedId(target.id);
+      setAddType(target.type);
+      setAddKey("");
+      setScreen("add-key");
+    }
+  }, [initialRekeyProviderId, providers]);
+  useEffect(() => {
     if (message) { const timer = setTimeout(() => setMessage(""), 3000); return () => clearTimeout(timer); }
   }, [message]);
 
   // ─── Action helpers ───────────────────
 
   const finishAdd = useCallback(async () => {
-    if (selectedId && providers.find((p) => p.id === selectedId)?.builtin) {
+    if (selectedId && providers.some((p) => p.id === selectedId)) {
       await updateProvider(selectedId, { apiKey: addKey });
       setMessage(zh ? "Key 已更新" : "Key updated");
+      setSelectedId("");
+      if (initialRekeyProviderId) {
+        onDone();
+        return;
+      }
       await refresh(); setScreen("list"); setRowIdx(0); return;
     }
     const name = PROVIDER_TYPE_NAMES[addType]?.[zh ? "zh" : "en"] || addType;
@@ -102,7 +143,7 @@ function ProviderMenuComponent({ onDone }: { onDone: (action?: DoneAction) => vo
     setMessage(zh ? "已添加" : "Added");
     setAddCtx("");
     await refresh(); setScreen("list"); setRowIdx(0);
-  }, [addType, addKey, addUrl, addModel, addCtx, zh, refresh, selectedId, providers]);
+  }, [addType, addKey, addUrl, addModel, addCtx, zh, refresh, selectedId, providers, initialRekeyProviderId, onDone]);
 
   const doScan = useCallback(async () => {
     setScreen("scanning");
@@ -192,10 +233,28 @@ function ProviderMenuComponent({ onDone }: { onDone: (action?: DoneAction) => vo
             // 绑定后自动返回主页
             onDone();
           });
-        } else if (rowIdx === compatible.length) { setScreen("add-type"); setRowIdx(0); }
-        else if (rowIdx === compatible.length + 1) { doScan(); }
-        else if (rowIdx === compatible.length + 2) { onDone("client-versions"); }
-        else { onDone(); }
+        } else if (rowIdx === compatible.length) {
+          setSelectedId("");
+          setScreen("add-type");
+          setRowIdx(0);
+        } else if (rowIdx === compatible.length + 1) {
+          doScan();
+        } else if (rowIdx === compatible.length + 2) {
+          onDone("client-versions", currentClient?.id);
+        } else {
+          onDone();
+        }
+        return;
+      }
+      if (input === "k" && rowIdx < compatible.length) {
+        const prov = compatible[rowIdx];
+        if (prov.type !== "claude-subscription" && prov.type !== "codex-subscription") {
+          setSelectedId(prov.id);
+          setAddType(prov.type);
+          setAddKey("");
+          setScreen("add-key");
+          setRowIdx(0);
+        }
         return;
       }
       if ((input === "d" || input === "e") && rowIdx < compatible.length) {
@@ -278,8 +337,17 @@ function ProviderMenuComponent({ onDone }: { onDone: (action?: DoneAction) => vo
       return;
     }
     if (screen === "add-key") {
-      if (key.escape) { setScreen("list"); setRowIdx(0); return; }
+      if (key.escape) {
+        setSelectedId("");
+        if (initialRekeyProviderId) { onDone(); return; }
+        setScreen("list"); setRowIdx(0); return;
+      }
       if (key.return && addKey) {
+        // 更新已有服务商 Key 时（内置与自定义均支持），直接保存无需重填 URL/模型
+        if (selectedId && providers.some((p) => p.id === selectedId)) {
+          finishAdd();
+          return;
+        }
         // custom 需要填 URL；deepseek/anthropic/tako/xiaomi 走模型选择
         if (addType === "custom") { setScreen("add-url"); }
         else if (addType === "deepseek" || addType === "anthropic" || addType === "tako" || addType === "xiaomi") { setScreen("add-model"); setRowIdx(0); }
@@ -329,7 +397,7 @@ function ProviderMenuComponent({ onDone }: { onDone: (action?: DoneAction) => vo
       if (input && !key.ctrl && /^[0-9]$/.test(input)) { setAddCtx((p) => p + input); }
       return;
     }
-  }, [screen, rowIdx, detailIdx, compatible, totalRows, clients.length, currentClient, selectedId, selectedProv, detailActions, addType, addKey, addUrl, addModel, addCtx, subModelInput, onDone, doScan, doLogin, finishAdd, refresh, zh]));
+  }, [screen, rowIdx, detailIdx, compatible, totalRows, clients.length, currentClient, selectedId, selectedProv, providers, initialRekeyProviderId, detailActions, addType, addKey, addUrl, addModel, addCtx, subModelInput, onDone, doScan, doLogin, finishAdd, refresh, zh]));
 
   // ═══════════════════════════════════════
   // Render
@@ -357,124 +425,15 @@ function ProviderMenuComponent({ onDone }: { onDone: (action?: DoneAction) => vo
   }
 
   if (screen === "add-type") {
-    return (
-      <Box flexDirection="column" paddingX={2} paddingY={1}>
-        <Box borderStyle="round" borderColor="gray" paddingX={3} paddingY={0}>
-          <Text bold>➕ {zh ? "添加服务商" : "Add Provider"}</Text>
-        </Box>
-        <Box flexDirection="column" marginTop={1} gap={0}>
-          {ADD_TYPES.map((tp, i) => {
-            const s = PROV_STYLE[tp] || PROV_STYLE.custom;
-            const focused = rowIdx === i;
-            const typeName = zh ? PROVIDER_TYPE_NAMES[tp]?.zh : PROVIDER_TYPE_NAMES[tp]?.en;
-            const isLogin = tp === "claude-subscription" || tp === "codex-subscription";
-            return (
-              <Box
-                key={tp}
-                borderStyle={focused ? "bold" : "round"}
-                borderColor={focused ? s.color : "gray"}
-                paddingX={2}
-                paddingY={0}
-              >
-                <Box gap={1}>
-                  <Text color={s.color} bold>{s.icon}</Text>
-                  <Text bold={focused} color={focused ? s.color : undefined}>{typeName}</Text>
-                  {isLogin && <Text dimColor>({zh ? "登录授权" : "login auth"})</Text>}
-                  {!isLogin && <Text dimColor>({zh ? "填写 Key" : "enter key"})</Text>}
-                </Box>
-              </Box>
-            );
-          })}
-        </Box>
-        <Box marginTop={1} borderStyle="round" borderColor="gray" paddingX={2} justifyContent="center" gap={2}>
-          <Text dimColor bold>↑↓</Text><Text dimColor>{zh ? "选择" : "select"}</Text>
-          <Text dimColor>│</Text>
-          <Text dimColor bold>Enter</Text><Text dimColor>{zh ? "确认" : "confirm"}</Text>
-          <Text dimColor>│</Text>
-          <Text dimColor bold>Esc</Text><Text dimColor>{zh ? "返回" : "back"}</Text>
-        </Box>
-      </Box>
-    );
+    return <AddTypeScreen rowIdx={rowIdx} zh={zh} />;
   }
 
   if (screen === "submodel" && selectedProv) {
-    const cur = selectedProv.subagentModel;
-    const curIdx = cur === SUBAGENT_MODEL_CC_DEFAULT ? 1 : cur ? 2 : 0;
-    const items = [
-      {
-        key: "follow",
-        label: zh ? "跟随主模型" : "Follow main model",
-        desc: zh ? "subagent / 别名 / utility 全部锁定到主模型（推荐）" : "Pin subagent / alias / utility to main model (recommended)",
-      },
-      {
-        key: "cc-default",
-        label: zh ? "Claude Code 默认" : "Claude Code default",
-        desc: zh ? "不锁定，由 Claude Code 自己解析（settings.json / 环境变量可接管）" : "No pinning; Claude Code resolves on its own (settings.json / env can take over)",
-      },
-      {
-        key: "custom",
-        label: zh ? "指定模型…" : "Custom model…",
-        desc: zh ? "锁定到你填写的模型 ID（如主模型便宜 + subagent 强力）" : "Pin to a model ID you enter (e.g. cheap main + strong subagent)",
-      },
-    ];
-    return (
-      <Box flexDirection="column" paddingX={2} paddingY={1}>
-        <Box borderStyle="bold" borderColor="cyan" paddingX={3} paddingY={1} flexDirection="column">
-          <Box gap={1} marginBottom={1}>
-            <Text bold color="cyan">🧩 {zh ? "子代理模型" : "Subagent Model"}</Text>
-            <Text dimColor>— Claude Code</Text>
-          </Box>
-          {items.map((it, i) => {
-            const focused = rowIdx === i;
-            return (
-              <Box key={it.key} flexDirection="column" paddingLeft={1}>
-                <Box gap={1}>
-                  <Text color={focused ? "cyan" : undefined} bold={focused}>{focused ? "▸" : " "}</Text>
-                  <Text bold={focused} color={focused ? "cyan" : undefined}>
-                    {it.label}{i === curIdx ? (zh ? "（当前）" : " (current)") : ""}
-                  </Text>
-                </Box>
-                {focused && <Text dimColor>  {it.desc}</Text>}
-              </Box>
-            );
-          })}
-          {curIdx === 2 && (
-            <Box marginTop={1}><Text dimColor>{zh ? "当前指定" : "Current"}: {cur}</Text></Box>
-          )}
-        </Box>
-        <Box marginTop={1} borderStyle="round" borderColor="gray" paddingX={2} justifyContent="center" gap={2}>
-          <Text dimColor bold>↑↓</Text><Text dimColor>{zh ? "选择" : "select"}</Text>
-          <Text dimColor>│</Text>
-          <Text dimColor bold>Enter</Text><Text dimColor>{zh ? "确认" : "confirm"}</Text>
-          <Text dimColor>│</Text>
-          <Text dimColor bold>Esc</Text><Text dimColor>{zh ? "返回" : "back"}</Text>
-        </Box>
-      </Box>
-    );
+    return <SubmodelScreen provider={selectedProv} rowIdx={rowIdx} zh={zh} />;
   }
 
   if (screen === "submodel-custom" && selectedProv) {
-    return (
-      <Box flexDirection="column" paddingX={2} paddingY={1}>
-        <Box borderStyle="bold" borderColor="cyan" paddingX={3} paddingY={1} flexDirection="column">
-          <Box gap={1} marginBottom={1}>
-            <Text bold color="cyan">🧩 {zh ? "指定子代理模型" : "Custom Subagent Model"}</Text>
-            <Text dimColor>— Claude Code</Text>
-          </Box>
-          <Text dimColor>  {zh ? "输入模型 ID；留空保存 = 恢复跟随主模型" : "Enter a model ID; save empty = follow main model"}</Text>
-          <Box marginTop={1}>
-            <Text color="cyan" bold>{"›"} </Text>
-            <Text>{subModelInput}</Text>
-            <Text color="cyan">█</Text>
-          </Box>
-        </Box>
-        <Box marginTop={1} borderStyle="round" borderColor="gray" paddingX={2} justifyContent="center" gap={2}>
-          <Text dimColor bold>Enter</Text><Text dimColor>{zh ? "保存" : "save"}</Text>
-          <Text dimColor>│</Text>
-          <Text dimColor bold>Esc</Text><Text dimColor>{zh ? "返回" : "back"}</Text>
-        </Box>
-      </Box>
-    );
+    return <SubmodelCustomScreen subModelInput={subModelInput} zh={zh} />;
   }
 
   if (screen === "detail" && selectedProv) {
@@ -566,6 +525,8 @@ function ProviderMenuComponent({ onDone }: { onDone: (action?: DoneAction) => vo
         <Text dimColor bold>↑↓</Text><Text dimColor>{zh ? "选择" : "select"}</Text>
         <Text dimColor>│</Text>
         <Text dimColor bold>Enter</Text><Text dimColor>{zh ? "绑定" : "bind"}</Text>
+        <Text dimColor>│</Text>
+        <Text dimColor bold>k</Text><Text dimColor>{zh ? "改Key" : "edit key"}</Text>
         <Text dimColor>│</Text>
         <Text dimColor bold>d</Text><Text dimColor>{zh ? "详情" : "detail"}</Text>
         <Text dimColor>│</Text>

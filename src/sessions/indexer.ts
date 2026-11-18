@@ -20,8 +20,21 @@ async function readBoundedSessionText(path: string, size: number): Promise<strin
   }
 }
 
-export interface SessionIndexCandidate { source: NativeSessionSource; path: string; text?: string; size: number; mtimeMs: number; cwd?: string }
-export type VersionedParser = ((text: string, path: string, cwd?: string) => ParsedNativeSession | null) & { parserVersion?: number };
+export interface SessionIndexCandidate {
+  source: NativeSessionSource;
+  path: string;
+  text?: string;
+  size: number;
+  mtimeMs: number;
+  cwd?: string;
+  title?: string;
+}
+export type VersionedParser = ((
+  text: string,
+  path: string,
+  cwd?: string,
+  meta?: { title?: string },
+) => ParsedNativeSession | null) & { parserVersion?: number };
 export type ParserMap = Partial<Record<NativeSessionSource, VersionedParser>>;
 
 export async function indexSessionCandidates(db: SessionDatabase, candidates: SessionIndexCandidate[], parsers: ParserMap): Promise<number> {
@@ -33,7 +46,10 @@ export async function indexSessionCandidates(db: SessionDatabase, candidates: Se
     const parserVersion = parser.parserVersion ?? 1;
     if (previous && previous.size === candidate.size && previous.mtimeMs === candidate.mtimeMs && previous.parserVersion === parserVersion && previous.sessionKey) continue;
     const text = candidate.text ?? await readBoundedSessionText(candidate.path, candidate.size);
-    const parsed = parser(text, candidate.path, candidate.cwd);
+    const meta = candidate.title !== undefined ? { title: candidate.title } : undefined;
+    const parsed = meta !== undefined
+      ? parser(text, candidate.path, candidate.cwd, meta)
+      : parser(text, candidate.path, candidate.cwd);
     if (!parsed) continue;
     db.replaceSession({ ...parsed, parserVersion }, candidate);
     changed++;

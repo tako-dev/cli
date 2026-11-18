@@ -1027,6 +1027,7 @@ writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
         { mode: 0o755 },
       );
       writeFileSync(mockAgy, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      Bun.spawnSync([mockAgy]);
     }
 
     const launcherUrl = new URL("../src/launcher-legacy.ts", import.meta.url).href;

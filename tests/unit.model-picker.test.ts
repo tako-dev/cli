@@ -5,8 +5,11 @@ import {
   commonModelOptions,
   listedModelOptions,
   MODEL_PAGE_SIZE,
+  MODEL_PICKER_DEFAULT_ID,
   modelPickerWindow,
+  resolveModelPickerEntries,
 } from "../src/ui/shared/model-picker";
+import { nextLauncherFocus } from "../src/ui/ink/launcher-keys";
 
 function model(id: string, label = id): LaunchOption {
   return {
@@ -163,5 +166,35 @@ describe("modelPickerWindow", () => {
     expect(modelPickerWindow(0, 30)).toEqual({ start: 0, end: 10 });
     expect(modelPickerWindow(14, 30)).toEqual({ start: 9, end: 19 });
     expect(modelPickerWindow(29, 30)).toEqual({ start: 20, end: 30 });
+  });
+});
+
+describe("resolveModelPickerEntries & nextLauncherFocus", () => {
+  it("prepends default entry when query is empty or whitespace, and omits it when filtering", () => {
+    expect(MODEL_PICKER_DEFAULT_ID).toBe("__default__");
+    const opts = [model("model-a", "Alpha"), model("model-b", "Beta")];
+    const unfiltered = resolveModelPickerEntries(opts, {}, "  ");
+    expect(unfiltered[0]).toEqual({ kind: "default" });
+    expect(unfiltered.slice(1).map((e) => e.option?.id)).toEqual(["model-a", "model-b"]);
+
+    const filtered = resolveModelPickerEntries(opts, {}, "beta");
+    expect(filtered.every((e) => e.kind === "model")).toBe(true);
+    expect(filtered.map((e) => e.option?.id)).toEqual(["model-b"]);
+  });
+
+  it("cycles LauncherFocus forward (Tab) and backward (Shift+Tab) with and without options", () => {
+    expect(nextLauncherFocus("projects", false, true)).toBe("options");
+    expect(nextLauncherFocus("options", false, true)).toBe("search");
+    expect(nextLauncherFocus("search", false, true)).toBe("projects");
+
+    expect(nextLauncherFocus("projects", false, false)).toBe("search");
+    expect(nextLauncherFocus("search", false, false)).toBe("projects");
+
+    expect(nextLauncherFocus("projects", true, true)).toBe("search");
+    expect(nextLauncherFocus("search", true, true)).toBe("options");
+    expect(nextLauncherFocus("options", true, true)).toBe("projects");
+
+    expect(nextLauncherFocus("projects", true, false)).toBe("search");
+    expect(nextLauncherFocus("search", true, false)).toBe("projects");
   });
 });

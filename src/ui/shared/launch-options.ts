@@ -1,6 +1,8 @@
 import type { LaunchOption } from "../../clients";
 import type { LauncherResult, OptionRow } from "./types";
 
+export const EXPLICIT_DEFAULT_MODEL_SENTINEL = "__default_model__" as const;
+
 export interface LaunchSelectionSource {
   launchOptions: LaunchOption[];
   enabled: Set<string>;
@@ -45,11 +47,16 @@ export function selectedArgs(
   const args: string[] = [];
   const envVars: Record<string, string> = {};
   const selectedOptionIds: string[] = [];
+  let hasSelectedModel = false;
   for (const option of current.launchOptions) {
     if (!current.enabled.has(option.id)) continue;
     args.push(...option.args);
     if (option.envVars) Object.assign(envVars, option.envVars);
     selectedOptionIds.push(option.id);
+    if (option.group === "model") hasSelectedModel = true;
+  }
+  if (!hasSelectedModel && current.enabled.has(EXPLICIT_DEFAULT_MODEL_SENTINEL)) {
+    selectedOptionIds.push(EXPLICIT_DEFAULT_MODEL_SENTINEL);
   }
   return { args, envVars, selectedOptionIds };
 }
@@ -65,6 +72,7 @@ export function selectedArgsWithGroupOverride(
   for (const option of current.launchOptions) {
     if (option.group === group) nextEnabled.delete(option.id);
   }
+  if (group === "model") nextEnabled.delete(EXPLICIT_DEFAULT_MODEL_SENTINEL);
   nextEnabled.add(forcedOptionId);
 
   return selectedArgs({
@@ -93,19 +101,28 @@ export function enabledWithProviderDefaultModel(
     fallbackModelId,
   ].filter((id): id is string => !!id && modelIds.has(id));
 
+  let hasValidModel = false;
+  for (const id of previous) {
+    if (modelIds.has(id)) {
+      hasValidModel = true;
+      break;
+    }
+  }
+  const hasExplicitDefault = !hasValidModel && previous.has(EXPLICIT_DEFAULT_MODEL_SENTINEL);
+
   const next = new Set<string>();
   let changed = false;
-  let hasModel = false;
   for (const id of previous) {
     if (validIds.has(id)) {
       next.add(id);
-      if (modelIds.has(id)) hasModel = true;
+    } else if (id === EXPLICIT_DEFAULT_MODEL_SENTINEL && hasExplicitDefault) {
+      next.add(id);
     } else {
       changed = true;
     }
   }
 
-  if (!hasModel && preferredIds[0]) {
+  if (!hasValidModel && !hasExplicitDefault && preferredIds[0]) {
     next.add(preferredIds[0]);
     changed = true;
   }

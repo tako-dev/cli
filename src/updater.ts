@@ -1,7 +1,8 @@
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import { dirname, join } from "path";
 import { log, createSpinner } from "./logger";
 import { getNpmRegistry } from "./region";
 import { TAKO_BUN_BIN, TAKO_CLI_DIR, TAKO_DIR } from "./config";
-import { join } from "path";
 import { t } from "./i18n";
 import { track } from "./analytics";
 import { streamBunInstall } from "./bun-progress";
@@ -17,6 +18,95 @@ const PACKAGE_NAME = "tako-cli";
 
 // 当前版本（构建时自动从 package.json 注入）
 export const CURRENT_VERSION = process.env.VERSION || "0.0.0";
+
+// 启动更新检查本地缓存 TTL（6 小时）
+export const UPDATE_CHECK_TTL_MS = 6 * 60 * 60 * 1000;
+
+export interface UpdateCheckCache {
+  checkedAt: number;
+  latestVersion: string | null;
+  lastFailedVersion?: string;
+  lastFailedAt?: number;
+}
+
+let updateCachePathOverride: string | null = null;
+
+export function _setUpdateCachePathForTest(path: string | null): void {
+  updateCachePathOverride = path;
+}
+
+function getUpdateCachePath(): string {
+  return updateCachePathOverride ?? join(TAKO_DIR, "update-check.json");
+}
+
+export function readUpdateCheckCache(): UpdateCheckCache | null {
+  try {
+    const raw = readFileSync(getUpdateCachePath(), "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    if (typeof parsed.checkedAt !== "number" || !Number.isFinite(parsed.checkedAt)) return null;
+    if (parsed.latestVersion !== null && typeof parsed.latestVersion !== "string") return null;
+    const cache: UpdateCheckCache = {
+      checkedAt: parsed.checkedAt,
+      latestVersion: parsed.latestVersion,
+    };
+    if (typeof parsed.lastFailedVersion === "string") {
+      cache.lastFailedVersion = parsed.lastFailedVersion;
+    }
+    if (typeof parsed.lastFailedAt === "number" && Number.isFinite(parsed.lastFailedAt)) {
+      cache.lastFailedAt = parsed.lastFailedAt;
+    }
+    return cache;
+  } catch {
+    return null;
+  }
+}
+
+export function writeUpdateCheckCache(cache: UpdateCheckCache): void {
+  try {
+    const p = getUpdateCachePath();
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, JSON.stringify(cache, null, 2), "utf8");
+  } catch {
+    // 静默忽略写入异常
+  }
+}
+
+export async function refreshUpdateCheckInBackground(): Promise<UpdateCheckCache | null> {
+  try {
+    const registry = await getNpmRegistry();
+    const response = await fetch(`${registry}/${PACKAGE_NAME}/latest`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    const latestVersion =
+      typeof data?.version === "string" && data.version.trim()
+        ? data.version.trim()
+        : null;
+    const existing = readUpdateCheckCache();
+    const keepFailed = Boolean(
+      latestVersion &&
+      existing?.lastFailedVersion &&
+      existing.lastFailedVersion === latestVersion,
+    );
+    const next: UpdateCheckCache = {
+      ...(keepFailed
+        ? {
+            lastFailedVersion: existing!.lastFailedVersion,
+            ...(existing!.lastFailedAt !== undefined ? { lastFailedAt: existing!.lastFailedAt } : {}),
+          }
+        : {}),
+      checkedAt: Date.now(),
+      latestVersion,
+    };
+    writeUpdateCheckCache(next);
+    return next;
+  } catch {
+    return null;
+  }
+}
 
 export function buildCliUpdateCommand(): string[] {
   return [TAKO_BUN_BIN, "update", PACKAGE_NAME, "--latest"];
@@ -317,28 +407,55 @@ async function migrateIfNeeded(): Promise<boolean> {
 
 /**
  * 检查更新（在启动时调用）
- * 检测到新版本时自动更新
+ * 基于本地 TTL 缓存实现 0ms 启动，仅在本地缓存已知存在新版本（且未处于失败退避期）时执行更新。
  */
-export async function checkAndUpdate(): Promise<void> {
+export async function checkAndUpdate(opts?: { spawnBackgroundRefresh?: boolean }): Promise<void> {
   try {
-    // 首先检查是否需要迁移（从全局安装迁移到本地安装）
+    // 首先检查是否需要迁移（从全局安装迁移到本地安装，纯本地文件检查）
     const needsRestart = await migrateIfNeeded();
     if (needsRestart) {
       log.info(t("updater.migrationComplete"));
       process.exit(0);
     }
 
-    const result = await checkForUpdates();
+    const cache = readUpdateCheckCache();
+    const now = Date.now();
+    const hasCachedUpdate = Boolean(
+      cache?.latestVersion && compareVersions(cache.latestVersion, CURRENT_VERSION) > 0,
+    );
+    const inFailureBackoff = Boolean(
+      cache?.latestVersion &&
+      cache.lastFailedVersion === cache.latestVersion &&
+      cache.lastFailedAt &&
+      now - cache.lastFailedAt < UPDATE_CHECK_TTL_MS,
+    );
 
-    if (result.hasUpdate && result.latestVersion) {
-      log.warn(t("updater.newVersionAvailable", { version: result.latestVersion, current: CURRENT_VERSION }));
+    if (hasCachedUpdate && !inFailureBackoff) {
+      const targetVersion = cache!.latestVersion!;
+      log.warn(t("updater.newVersionAvailable", { version: targetVersion, current: CURRENT_VERSION }));
 
-      const success = await performUpdate(result.latestVersion);
-
+      const success = await performUpdate(targetVersion);
+      const doneAt = Date.now();
       if (success) {
+        writeUpdateCheckCache({
+          checkedAt: doneAt,
+          latestVersion: targetVersion,
+        });
         log.info(t("updater.pleaseRestart"));
         process.exit(0);
+      } else {
+        writeUpdateCheckCache({
+          checkedAt: doneAt,
+          latestVersion: targetVersion,
+          lastFailedVersion: targetVersion,
+          lastFailedAt: doneAt,
+        });
       }
+      return;
+    }
+
+    if ((!cache || now - cache.checkedAt >= UPDATE_CHECK_TTL_MS) && opts?.spawnBackgroundRefresh !== false) {
+      void refreshUpdateCheckInBackground().catch(() => {});
     }
   } catch {
     // 静默失败，不影响正常使用
@@ -354,6 +471,12 @@ export async function runUpdateCommand(): Promise<void> {
   console.log("正在检查更新...");
 
   const result = await checkForUpdates();
+  if (result.latestVersion) {
+    writeUpdateCheckCache({
+      checkedAt: Date.now(),
+      latestVersion: result.latestVersion ?? null,
+    });
+  }
 
   if (!result.hasUpdate || !result.latestVersion) {
     if (result.latestVersion) {
@@ -370,6 +493,10 @@ export async function runUpdateCommand(): Promise<void> {
   const success = await performUpdate(result.latestVersion);
 
   if (success) {
+    writeUpdateCheckCache({
+      checkedAt: Date.now(),
+      latestVersion: result.latestVersion,
+    });
     console.log(`更新成功！请重启 tako 以使用新版本。`);
   } else {
     console.error("更新失败，请稍后重试或手动执行:");
