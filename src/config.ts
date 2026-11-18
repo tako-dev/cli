@@ -101,6 +101,8 @@ export interface TakoConfig {
   seenAnnouncementIds?: string[];
   /** par admin token（`tako channel` 管理命令用；也可由环境变量 TAKO_ADMIN_TOKEN 覆盖） */
   adminToken?: string;
+  /** Antigravity (agy) 专用网关 API Key（可选；未设置时自动回退到 provider/tako apiKey） */
+  agyApiKey?: string;
 }
 
 const defaultConfig: TakoConfig = {

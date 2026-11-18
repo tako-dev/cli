@@ -69,12 +69,16 @@ export interface ClientConfig {
   runtime?: "native" | "bun" | "node";
   /** 安装方式。默认 npm（bun add）。system = 官方二进制 / PATH，不走 npm。 */
   install?: "npm" | "system";
+  /** system 客户端在 `tako install <id>`（无版本参数）时直接执行一键安装 */
+  oneClickInstall?: boolean;
   /** system 客户端解析真实二进制。返回值可以在 TAKO_DIR 外（如 ~/.grok/bin/grok）。 */
   resolveBin?: () => Promise<string | null>;
   /** system 客户端安装 / 切换版本。version 缺省或 latest 表示官方 latest。 */
   installSystem?: (version?: string) => Promise<{ success: boolean; error?: string }>;
   /** system 客户端读取当前版本号。 */
   readSystemVersion?: () => Promise<string | null>;
+  /** 启动子进程前必须从继承环境中删除（unset）的冲突变量名 */
+  unsetEnvVars?: readonly string[];
   /** 生成环境变量（根据 Provider 上下文） */
   getEnvVars: (provider: ProviderContext) => Record<string, string>;
   /**
@@ -198,7 +202,7 @@ export const clients: Map<string, ClientConfig> = new Map();
 /**
  * 固定展示顺序（= tab 顺序）。注册顺序依赖 import 时序，不能只靠 Map 插入顺序。
  */
-const CLIENT_DISPLAY_ORDER = ["codex", "claude-code", "pi", "pi-web", "grok", "gemini"];
+const CLIENT_DISPLAY_ORDER = ["codex", "claude-code", "pi", "pi-web", "grok", "gemini", "agy"];
 
 /**
  * 注册客户端

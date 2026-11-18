@@ -9,7 +9,9 @@ import {
   resolveProviderContext,
   detectProviders,
   mergeDetectedProviders,
+  migrateIfNeeded,
 } from "../providers";
+import { loadConfig } from "../config";
 import type { ProviderContext } from "../providers/types";
 import { track, identify, reset as resetAnalytics } from "../analytics";
 
@@ -21,22 +23,30 @@ import { track, identify, reset as resetAnalytics } from "../analytics";
 export async function selectProviderForClient(
   clientId: string,
 ): Promise<ProviderContext | null> {
-  const compatible = await getProvidersForClient(clientId);
+  let compatible = await getProvidersForClient(clientId);
+  if (compatible.length === 0) {
+    if (await migrateIfNeeded()) {
+      compatible = await getProvidersForClient(clientId);
+    }
+  }
   if (compatible.length === 0) return null;
+
+  const config = await loadConfig();
+  const fallbackAgyKey = config.agyApiKey;
 
   // 1. 客户端绑定
   const bound = await getClientProvider(clientId);
-  if (bound) return resolveProviderContext(bound);
+  if (bound) return resolveProviderContext(bound, fallbackAgyKey);
 
   // 2. 默认 Provider
-  if (compatible.length === 1) return resolveProviderContext(compatible[0]);
+  if (compatible.length === 1) return resolveProviderContext(compatible[0], fallbackAgyKey);
   const defaultProv = await getDefaultProvider();
   if (defaultProv && compatible.some((p) => p.id === defaultProv.id)) {
-    return resolveProviderContext(defaultProv);
+    return resolveProviderContext(defaultProv, fallbackAgyKey);
   }
 
   // 3. 第一个兼容的
-  return resolveProviderContext(compatible[0]);
+  return resolveProviderContext(compatible[0], fallbackAgyKey);
 }
 
 /**

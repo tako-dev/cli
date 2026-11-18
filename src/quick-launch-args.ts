@@ -15,6 +15,7 @@
  * `getLastSelectedOptionIds` 通过参数注入，让单测无需读真实 config。
  */
 import { appendOneMTagIfNeeded } from "./clients/claude-code";
+import { normalizeAgyModelId } from "./clients/agy";
 import { GROK_DEFAULT_MODEL, mapGrokPassthroughModel, takoGrokModelId } from "./clients/grok";
 import { resolveInheritedDangerousFlag, type InheritDangerousFlagOptions } from "./clients/dangerous-flags";
 
@@ -55,6 +56,26 @@ export async function buildPassthroughArgs(
       out.push(a);
     }
     if (!hasModel) out.unshift("-m", takoGrokModelId(GROK_DEFAULT_MODEL));
+    return out;
+  }
+
+  if (clientId === "agy") {
+    const out: string[] = [];
+    if (inherited) out.push(inherited);
+    for (let i = 0; i < rest.length; i++) {
+      const a = rest[i];
+      if (a === "--model" && i + 1 < rest.length) {
+        out.push(a, normalizeAgyModelId(rest[i + 1]));
+        i++;
+        continue;
+      }
+      if (a.startsWith("--model=")) {
+        const id = a.slice("--model=".length);
+        out.push(`--model=${normalizeAgyModelId(id)}`);
+        continue;
+      }
+      out.push(a);
+    }
     return out;
   }
 

@@ -1,4 +1,7 @@
-import { join } from "path";
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join, win32 as win32Path } from "path";
 import { log, createSpinner } from "./logger";
 import { confirmPrompt } from "./ui/shared/terminal";
 import { ClientConfig, getClientDir } from "./clients/base";
@@ -1273,4 +1276,383 @@ async function recordUpdateDismissed(clientId: string): Promise<void> {
     data[clientId] = new Date().toISOString().slice(0, 10);
     await Bun.write(UPDATE_DISMISS_FILE, JSON.stringify(data));
   } catch { /* ignore */ }
+}
+
+// ─── Antigravity CLI (agy) 跨平台一键安装 ─────────────────────
+
+export const AGY_DEFAULT_MANIFEST_BASE =
+  "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests";
+
+export interface AgyManifest {
+  version?: string;
+  url: string;
+  sha512: string;
+}
+
+export interface AgyPlatformOptions {
+  isMusl?: boolean;
+}
+
+export interface AgyInstallTargetOptions {
+  targetDir?: string;
+  platform?: NodeJS.Platform;
+  home?: string;
+  env?: Record<string, string | undefined>;
+}
+
+export interface AgyInstallOptions extends AgyInstallTargetOptions {
+  version?: string;
+  manifestBaseUrl?: string;
+  arch?: string;
+  isMusl?: boolean;
+  quiet?: boolean;
+}
+
+function joinAgyPath(platform: NodeJS.Platform, base: string, ...parts: string[]): string {
+  if (platform === "win32" && (/^[A-Za-z]:[\\/]/.test(base) || base.startsWith("\\\\"))) {
+    return win32Path.join(base, ...parts);
+  }
+  return join(base, ...parts);
+}
+
+/** 检测 Linux 是否为 musl 运行时（如 Alpine） */
+export function detectMuslLinux(): boolean {
+  if (process.platform !== "linux") return false;
+  try {
+    if (
+      existsSync("/etc/alpine-release") ||
+      existsSync("/lib/ld-musl-x86_64.so.1") ||
+      existsSync("/lib/ld-musl-aarch64.so.1")
+    ) {
+      return true;
+    }
+    const report = (process as any).report?.getReport?.();
+    if (report && typeof report === "object") {
+      if (report.header?.glibcVersionRuntime) return false;
+      if (Array.isArray(report.sharedObjects) && report.sharedObjects.some((s: unknown) => typeof s === "string" && /musl/i.test(s))) {
+        return true;
+      }
+    }
+  } catch {
+    // ignore detection errors
+  }
+  return false;
+}
+
+/**
+ * 将 (platform, arch) 映射为 Antigravity 更新器 manifest key：
+ * - darwin + arm64/x64 -> darwin_arm64 / darwin_amd64
+ * - linux  + x64/arm64 -> linux_amd64 / linux_arm64（musl 追加 _musl）
+ * - win32  + x64/arm64 -> windows_amd64 / windows_arm64
+ */
+export function resolveAgyPlatform(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+  opts?: AgyPlatformOptions,
+): string {
+  const cpu = arch === "arm64" ? "arm64" : arch === "x64" ? "amd64" : null;
+  if (!cpu) {
+    throw new Error(`Unsupported architecture for Antigravity (agy): ${arch}`);
+  }
+  if (platform === "darwin") return `darwin_${cpu}`;
+  if (platform === "linux") {
+    const musl = opts?.isMusl ?? detectMuslLinux();
+    return `linux_${cpu}${musl ? "_musl" : ""}`;
+  }
+  if (platform === "win32") return `windows_${cpu}`;
+  throw new Error(`Unsupported platform for Antigravity (agy): ${platform}`);
+}
+
+export function resolveAgyManifestUrl(opts?: {
+  manifestBaseUrl?: string;
+  platform?: NodeJS.Platform;
+  arch?: string;
+  isMusl?: boolean;
+  env?: Record<string, string | undefined>;
+}): string {
+  const env = opts?.env ?? process.env;
+  const base = (
+    opts?.manifestBaseUrl?.trim() ||
+    env.AGY_INSTALL_MANIFEST_BASE?.trim() ||
+    AGY_DEFAULT_MANIFEST_BASE
+  ).replace(/\/+$/, "");
+  const platformKey = resolveAgyPlatform(
+    opts?.platform ?? process.platform,
+    opts?.arch ?? process.arch,
+    opts?.isMusl !== undefined ? { isMusl: opts.isMusl } : undefined,
+  );
+  return `${base}/${platformKey}.json`;
+}
+
+export function resolveAgyInstallTarget(opts?: AgyInstallTargetOptions): {
+  binDir: string;
+  binPath: string;
+} {
+  const env = opts?.env ?? process.env;
+  const platform = opts?.platform ?? process.platform;
+  const home = opts?.home || env.HOME || env.USERPROFILE || homedir();
+  const binaryName = platform === "win32" ? "agy.exe" : "agy";
+  const customDir = opts?.targetDir?.trim() || env.AGY_INSTALL_DIR?.trim();
+  if (customDir) {
+    return {
+      binDir: customDir,
+      binPath: joinAgyPath(platform, customDir, binaryName),
+    };
+  }
+  if (platform === "win32") {
+    const localAppData = env.LOCALAPPDATA?.trim() || joinAgyPath("win32", home, "AppData", "Local");
+    const binDir = joinAgyPath("win32", localAppData, "agy", "bin");
+    return {
+      binDir,
+      binPath: joinAgyPath("win32", binDir, binaryName),
+    };
+  }
+  const binDir = joinAgyPath(platform, home, ".local", "bin");
+  return {
+    binDir,
+    binPath: joinAgyPath(platform, binDir, binaryName),
+  };
+}
+
+export function isDirOnPath(
+  dir: string,
+  pathEnv: string | undefined = process.env.PATH,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (!pathEnv) return false;
+  const sep = platform === "win32" ? ";" : ":";
+  const norm = (value: string) => value.replace(/[\\/]+$/, "");
+  const target = norm(dir);
+  return pathEnv.split(sep).some((entry) => {
+    const cleaned = norm(entry.trim());
+    if (!cleaned) return false;
+    return platform === "win32"
+      ? cleaned.toLowerCase() === target.toLowerCase()
+      : cleaned === target;
+  });
+}
+
+export async function computeFileSha512(filePath: string): Promise<string> {
+  const fs = await import("node:fs");
+  return new Promise<string>((resolve, reject) => {
+    const hash = createHash("sha512");
+    const stream = fs.createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
+export async function fetchAgyManifest(opts?: {
+  manifestBaseUrl?: string;
+  platform?: NodeJS.Platform;
+  arch?: string;
+  isMusl?: boolean;
+  env?: Record<string, string | undefined>;
+}): Promise<AgyManifest> {
+  const url = resolveAgyManifestUrl(opts);
+  const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  if (!res.ok) {
+    throw new Error(`获取 Antigravity manifest 失败: HTTP ${res.status} (${url})`);
+  }
+  const json = (await res.json()) as Record<string, unknown>;
+  if (typeof json?.url !== "string" || !json.url.trim()) {
+    throw new Error("Antigravity manifest 缺少有效的 url 字段");
+  }
+  if (typeof json?.sha512 !== "string" || !json.sha512.trim()) {
+    throw new Error("Antigravity manifest 缺少有效的 sha512 字段");
+  }
+  return {
+    version: typeof json.version === "string" ? json.version : undefined,
+    url: json.url.trim(),
+    sha512: json.sha512.trim(),
+  };
+}
+
+async function findExtractedAgyBinary(rootDir: string): Promise<string | null> {
+  const fs = await import("node:fs/promises");
+  for (const name of ["antigravity", "agy", "antigravity.exe", "agy.exe"]) {
+    const direct = join(rootDir, name);
+    try {
+      const st = await fs.stat(direct);
+      if (st.isFile()) return direct;
+    } catch {
+      // continue
+    }
+  }
+  const entries = await fs.readdir(rootDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      const nested = await findExtractedAgyBinary(join(rootDir, entry.name));
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
+/**
+ * 根据 manifest 下载、校验 sha512 并安装 agy 二进制。
+ * 校验失败时立即删除临时下载文件并抛错，绝不写入目标路径。
+ */
+export async function installAgyFromManifest(
+  manifest: AgyManifest,
+  opts?: AgyInstallTargetOptions & { quiet?: boolean },
+): Promise<{ binPath: string; version?: string; onPath: boolean }> {
+  if (!manifest?.url || !manifest?.sha512) {
+    throw new Error("Invalid Antigravity manifest: url and sha512 are required");
+  }
+  const fs = await import("node:fs/promises");
+  const env = opts?.env ?? process.env;
+  const platform = opts?.platform ?? process.platform;
+  const { binDir, binPath } = resolveAgyInstallTarget({
+    targetDir: opts?.targetDir,
+    platform,
+    home: opts?.home,
+    env,
+  });
+
+  const s = opts?.quiet ? null : createSpinner();
+  const verLabel = manifest.version ? ` v${manifest.version}` : "";
+  s?.start(`正在下载 Antigravity (agy)${verLabel}...`);
+
+  const tmpDir = await fs.mkdtemp(join(tmpdir(), "tako-agy-install-"));
+  const isTarGz = /\.tar\.gz($|\?)|\.tgz($|\?)/i.test(manifest.url);
+  const archiveName = platform === "win32" && !isTarGz ? "agy-download.exe" : "agy-download.tar.gz";
+  const tmpFile = join(tmpDir, archiveName);
+
+  try {
+    await downloadFile(manifest.url, tmpFile, (done, total) => {
+      if (!s) return;
+      if (total) {
+        s.update(
+          `正在下载 Antigravity (agy)${verLabel} ${Math.floor((done / total) * 100)}% (${formatMb(done)}/${formatMb(total)} MB)`,
+        );
+      } else {
+        s.update(`正在下载 Antigravity (agy)${verLabel} ${formatMb(done)} MB`);
+      }
+    });
+
+    s?.update("正在校验 SHA-512 完整性...");
+    const actualSha512 = await computeFileSha512(tmpFile);
+    const expectedSha512 = manifest.sha512.trim().toLowerCase();
+    if (actualSha512.toLowerCase() !== expectedSha512) {
+      await fs.rm(tmpFile, { force: true }).catch(() => {});
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+      throw new Error(
+        `Antigravity 安装包 sha512 校验失败（expected ${expectedSha512.slice(0, 16)}..., got ${actualSha512.slice(0, 16)}...）`,
+      );
+    }
+
+    await fs.mkdir(binDir, { recursive: true });
+    const stagingPath = joinAgyPath(
+      platform,
+      binDir,
+      `.agy-staging-${process.pid}-${Date.now()}${platform === "win32" ? ".exe" : ""}`,
+    );
+
+    try {
+      if (platform === "win32" && !isTarGz) {
+        await fs.copyFile(tmpFile, stagingPath);
+      } else {
+        s?.update("正在解压 Antigravity (agy)...");
+        const extractDir = join(tmpDir, "extract");
+        await fs.mkdir(extractDir, { recursive: true });
+        const proc = Bun.spawn(["tar", "-xzf", tmpFile, "-C", extractDir], {
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const stderr = await new Response(proc.stderr).text();
+        const code = await proc.exited;
+        if (code !== 0) {
+          throw new Error(`解压 Antigravity 安装包失败 (exit ${code}): ${stderr.slice(0, 200).trim()}`);
+        }
+        const extractedBin = await findExtractedAgyBinary(extractDir);
+        if (!extractedBin) {
+          throw new Error("解压后的归档中未找到 antigravity 可执行文件");
+        }
+        await fs.copyFile(extractedBin, stagingPath);
+        if (platform !== "win32") {
+          await fs.chmod(stagingPath, 0o755);
+        }
+      }
+
+      if (platform === "win32") {
+        await fs.rm(binPath, { force: true }).catch(() => {});
+      }
+      await fs.rename(stagingPath, binPath);
+      if (platform !== "win32") {
+        await fs.chmod(binPath, 0o755);
+      }
+    } catch (err) {
+      await fs.rm(stagingPath, { force: true }).catch(() => {});
+      throw err;
+    }
+
+    s?.stop(`Antigravity (agy)${verLabel} 已安装到 ${binPath}`);
+
+    const onPath = isDirOnPath(binDir, env.PATH, platform);
+    if (!opts?.quiet) {
+      if (platform !== "win32" && !onPath) {
+        log.warn(
+          `${binDir} 当前不在 PATH 中；如需直接运行 agy，请将以下内容加入 shell 配置（~/.zshrc 或 ~/.bashrc）：\n  export PATH="${binDir}:$PATH"`,
+        );
+      }
+      log.info("可使用 `tako --agy` 直接启动 Antigravity CLI！");
+    }
+
+    return { binPath, version: manifest.version, onPath };
+  } catch (err) {
+    s?.stop();
+    throw err;
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export async function installAgy(opts?: AgyInstallOptions): Promise<{
+  success: boolean;
+  binPath?: string;
+  version?: string;
+  error?: string;
+}> {
+  try {
+    const manifest = await fetchAgyManifest(opts);
+    if (opts?.version && opts.version !== "latest" && manifest.version && manifest.version !== opts.version) {
+      return {
+        success: false,
+        error: `官方更新源当前提供版本为 ${manifest.version}，无法安装指定旧版本 ${opts.version}`,
+      };
+    }
+    const installed = await installAgyFromManifest(manifest, opts);
+    if (installed.version) {
+      try {
+        const config = await loadConfig();
+        await updateConfig({
+          installedClients: {
+            ...config.installedClients,
+            agy: {
+              version: installed.version,
+              installedAt: new Date().toISOString(),
+            },
+          },
+        });
+        track("client_installed", {
+          client_id: "agy",
+          client_version: installed.version,
+        });
+      } catch {
+        // best-effort config persistence
+      }
+    }
+    return {
+      success: true,
+      binPath: installed.binPath,
+      version: installed.version,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }

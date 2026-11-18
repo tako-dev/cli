@@ -53,7 +53,11 @@ export async function launchClient(
 
     const clientEnvVars = client.getEnvVars(providerContext);
     const extraEnv = { ...clientEnvVars, ...(options?.envVars ?? {}) };
-    const env = { ...process.env, ...extraEnv };
+    const env: Record<string, string | undefined> = { ...process.env };
+    for (const key of client.unsetEnvVars ?? []) {
+      delete env[key];
+    }
+    Object.assign(env, extraEnv);
 
     const command = buildClientLaunchCommand(
       client,
@@ -77,6 +81,7 @@ export async function launchClient(
             command,
             cwd: workingDir,
             env: extraEnv,
+            unsetEnv: client.unsetEnvVars,
             cleanupFiles,
           },
         );
@@ -105,6 +110,7 @@ export async function launchClient(
             command,
             cwd: workingDir,
             env: extraEnv,
+            unsetEnv: client.unsetEnvVars,
             relaunchCommand,
             cleanupFiles,
           },

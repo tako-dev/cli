@@ -137,10 +137,13 @@ export async function setClientProvider(clientId: string, providerId: string): P
 
 // --- ProviderContext 解析 ---
 
-export function resolveProviderContext(provider: Provider): ProviderContext {
+export function resolveProviderContext(provider: Provider, fallbackAgyApiKey?: string): ProviderContext {
   return {
     type: provider.type,
     apiKey: provider.apiKey,
+    ...(provider.agyApiKey || fallbackAgyApiKey
+      ? { agyApiKey: provider.agyApiKey || fallbackAgyApiKey }
+      : {}),
     baseUrl: provider.baseUrl,
     authData: provider.authData,
     model: provider.model,
@@ -320,6 +323,7 @@ export async function migrateIfNeeded(): Promise<boolean> {
     name: "Tako 官方",
     type: "tako",
     apiKey: config.apiKey,
+    ...(config.agyApiKey ? { agyApiKey: config.agyApiKey } : {}),
     baseUrl: PROXY_BASE_URL,
     apiId: config.apiId,
     supportedClients: getDefaultSupportedClients("tako"),
@@ -349,6 +353,10 @@ export async function fixupProviders(): Promise<void> {
       p.builtin = true;
       changed = true;
     }
+    if (p.type === "tako" && config.agyApiKey && !p.agyApiKey) {
+      p.agyApiKey = config.agyApiKey;
+      changed = true;
+    }
     if (
       (p.type === "tako" || p.type === "custom")
       && Array.isArray(p.supportedClients)
@@ -367,6 +375,7 @@ export async function fixupProviders(): Promise<void> {
       name: "Tako 官方",
       type: "tako",
       apiKey: config.apiKey,
+      ...(config.agyApiKey ? { agyApiKey: config.agyApiKey } : {}),
       baseUrl: PROXY_BASE_URL,
       apiId: config.apiId,
       supportedClients: getDefaultSupportedClients("tako"),

@@ -10,6 +10,7 @@ import { getLastSelectedOptionsForClient } from "../project-history";
 export const INHERITED_DANGEROUS_FLAGS: Record<string, { optionId: string; flag: string }> = {
   "claude-code": { optionId: "skip-permissions", flag: "--dangerously-skip-permissions" },
   codex: { optionId: "bypass-sandbox", flag: "--dangerously-bypass-approvals-and-sandbox" },
+  agy: { optionId: "skip-permissions", flag: "--dangerously-skip-permissions" },
 };
 
 export interface InheritDangerousFlagOptions {

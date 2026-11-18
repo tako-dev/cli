@@ -1,10 +1,11 @@
-// 导入所有客户端（顺序 = tab 顺序：Codex / Claude / Pi / Grok / Gemini）
+// 导入所有客户端（顺序 = tab 顺序：Codex / Claude / Pi / Grok / Gemini / Antigravity）
 import "./codex";
 import "./claude-code";
 import "./pi";
 import "./pi-web"; // hidden: launched from Pi's Web UI option
 import "./grok";
 import "./gemini";
+import "./agy";
 
 // 导出基础模块
 export * from "./base";

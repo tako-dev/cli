@@ -51,6 +51,7 @@ ${t("cli.shortcutPi")}
 ${t("cli.shortcutPiWeb")}
 ${t("cli.shortcutGrok")}
 ${t("cli.shortcutGemini")}
+${t("cli.shortcutAgy")}
 
 Commands:
   tako update                Update Tako CLI to the latest version
@@ -71,6 +72,7 @@ ${t("cli.examplePi")}
 ${t("cli.examplePiWeb")}
 ${t("cli.exampleGrok")}
 ${t("cli.exampleGemini")}
+${t("cli.exampleAgy")}
 `);
 }
 
@@ -94,7 +96,7 @@ async function runInstallCommand(rest: string[]): Promise<void> {
   }
 
   if (client.install === "system") {
-    if (!version) {
+    if (!version && !client.oneClickInstall) {
       const current = await getInstalledVersion(client);
       console.log(`${client.name} 使用官方系统安装，不走 npm。`);
       console.log(current ? `当前版本: ${current}` : "未安装");
@@ -102,9 +104,10 @@ async function runInstallCommand(rest: string[]): Promise<void> {
       console.log(`安装指定版本: tako install ${clientId} 0.2.93`);
       return;
     }
-    console.log(`正在安装 ${client.name}${version === "latest" ? "" : `@${version}`}...`);
+    const targetVersion = version || "latest";
+    console.log(`正在安装 ${client.name}${targetVersion === "latest" ? "" : `@${targetVersion}`}...`);
     try {
-      await installAtVersion(client, version);
+      await installAtVersion(client, targetVersion);
       const current = await getInstalledVersion(client);
       console.log(`✓ ${client.name} 已就绪${current ? `（${current}）` : ""}`);
     } catch (e) {
@@ -294,6 +297,11 @@ export async function runCli(main: UiMain): Promise<void> {
   if (args.includes("--grok")) {
     await maybeStartupUpdate(isDev);
     await quickLaunch("grok", "Grok Build", await buildPassthroughArgs("grok", args, "--grok"));
+    return;
+  }
+  if (args.includes("--agy")) {
+    await maybeStartupUpdate(isDev);
+    await quickLaunch("agy", "Antigravity (agy)", await buildPassthroughArgs("agy", args, "--agy"));
     return;
   }
 

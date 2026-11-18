@@ -25,6 +25,8 @@ export interface WindowsHandoffScriptOptions {
    * 传空对象即可，避免 token 明文落盘。
    */
   env?: Record<string, string | undefined>;
+  /** 需要从继承环境中删除（unset）的冲突变量名 */
+  unsetEnv?: readonly string[];
   /**
    * 子进程退出后要重新执行的命令（如重开 Tako 面板）。
    *
@@ -72,6 +74,11 @@ export function buildWindowsHandoffScript(options: WindowsHandoffScriptOptions):
     "$ErrorActionPreference = 'Stop'",
     "$scriptPath = $PSCommandPath",
   ];
+
+  for (const key of options.unsetEnv ?? []) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    lines.push(`Remove-Item -Path Env:${key} -ErrorAction SilentlyContinue`);
+  }
 
   for (const [key, value] of Object.entries(options.env ?? {})) {
     if (value === undefined) continue;

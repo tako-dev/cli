@@ -24,6 +24,7 @@ export const TAB_STYLE: Record<string, { icon: string; color: string }> = {
   codex:         { icon: "◈", color: "blue" },
   grok:          { icon: "✶", color: "white" },
   gemini:        { icon: "◆", color: "cyan" },
+  agy:           { icon: "▲", color: "green" },
   pi:            { icon: "π", color: "magenta" },
   "pi-web":      { icon: "◎", color: "magenta" },
 };
