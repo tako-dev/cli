@@ -881,6 +881,21 @@ writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
       delete cleanParentEnv.AGY_LLM_GATEWAY_TIER_PRO;
       delete cleanParentEnv.AGY_LLM_GATEWAY_TIER_FLASH;
       delete cleanParentEnv.AGY_LLM_GATEWAY_TIER_FLASH_LITE;
+      for (const proxyKey of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]) {
+        delete cleanParentEnv[proxyKey];
+      }
+
+      // Seed telemetryEnabled: false before `tako install agy` so `track("client_installed")`
+      // never opens an outbound OpenPanel HTTP connection during hermetic unit tests.
+      writeFileSync(
+        join(takoHome, "config.json"),
+        JSON.stringify({
+          apiKey: "",
+          apiId: "",
+          telemetryEnabled: false,
+          installedClients: {},
+        }),
+      );
 
       // Step 1: `tako install agy` installs into platform target location
       const installProc = Bun.spawn([process.execPath, cliEntry, "install", "agy"], {
@@ -984,6 +999,83 @@ writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
       server.stop(true);
     }
   }, 15000);
+
+  it("cold-starts launchClient(agyClient) in milliseconds without probing Tako bun or node binaries", async () => {
+    const isWin = process.platform === "win32";
+    const takoHome = join(tmp, "cold-launch-tako");
+    const bunMarker = join(tmp, "bun-probed");
+    const nodeMarker = join(tmp, "node-probed");
+    const mockAgy = join(tmp, isWin ? "agy.exe" : "agy");
+
+    if (isWin) {
+      mkdirSync(join(takoHome, "bun", "bin"), { recursive: true });
+      mkdirSync(join(takoHome, "node"), { recursive: true });
+      writeFileSync(join(takoHome, "bun", "bin", "bun.exe"), "not-a-valid-exe");
+      writeFileSync(join(takoHome, "node", "node.exe"), "not-a-valid-exe");
+      writeFileSync(mockAgy, "MZ-mock-agy");
+    } else {
+      mkdirSync(join(takoHome, "bun", "bin"), { recursive: true });
+      mkdirSync(join(takoHome, "node", "bin"), { recursive: true });
+      writeFileSync(
+        join(takoHome, "bun", "bin", "bun"),
+        `#!/bin/sh\necho 1 > ${JSON.stringify(bunMarker)}\nsleep 5\nexit 1\n`,
+        { mode: 0o755 },
+      );
+      writeFileSync(
+        join(takoHome, "node", "bin", "node"),
+        `#!/bin/sh\necho 1 > ${JSON.stringify(nodeMarker)}\nsleep 5\nexit 1\n`,
+        { mode: 0o755 },
+      );
+      writeFileSync(mockAgy, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    }
+
+    const launcherUrl = new URL("../src/launcher-legacy.ts", import.meta.url).href;
+    const agyUrl = new URL("../src/clients/agy.ts", import.meta.url).href;
+    const handoffFile = join(tmp, "cold-handoff.ps1");
+    const script = `
+      const { launchClient } = await import(${JSON.stringify(launcherUrl)});
+      const { agyClient } = await import(${JSON.stringify(agyUrl)});
+      const t0 = performance.now();
+      const res = await launchClient(agyClient, {
+        projectPath: ${JSON.stringify(tmp)},
+        args: ["--version"],
+        handoffOnWindows: true,
+        providerContext: {
+          type: "tako",
+          baseUrl: "https://tako.shiroha.tech/v1",
+          apiKey: "cr_main",
+          agyApiKey: "cr_agy",
+        },
+      });
+      const elapsedMs = performance.now() - t0;
+      console.log(JSON.stringify({ res, elapsedMs }));
+    `;
+
+    const proc = Bun.spawn([process.execPath, "-e", script], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        TAKO_HOME: takoHome,
+        TAKO_DEV: "1",
+        AGY_PATH: mockAgy,
+        ...(isWin ? { TAKO_WINDOWS_HANDOFF_FILE: handoffFile } : {}),
+      },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const { res, elapsedMs } = JSON.parse(stdout.trim());
+    expect(res.success).toBe(true);
+    expect(elapsedMs).toBeLessThan(200);
+    expect(existsSync(bunMarker)).toBe(false);
+    expect(existsSync(nodeMarker)).toBe(false);
+  });
 });
 
 describe("Gemini CLI retirement and config migration", () => {
