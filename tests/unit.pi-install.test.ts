@@ -11,7 +11,6 @@ import {
 } from "../src/clients/base";
 import { claudeCodeClient } from "../src/clients/claude-code";
 import { codexClient } from "../src/clients/codex";
-import { geminiClient } from "../src/clients/gemini";
 import { piClient } from "../src/clients/pi";
 import { piWebClient } from "../src/clients/pi-web";
 import {
@@ -153,7 +152,7 @@ describe("Pi / Pi Web launch command across OS", () => {
     });
 
     it(`always launches bun-runtime clients with bun on ${os}`, () => {
-      for (const client of [codexClient, geminiClient]) {
+      for (const client of [codexClient]) {
         const bin = os === "win32"
           ? `C:\\tako\\tools\\${client.id}\\cli.js`
           : `/tako/tools/${client.id}/cli.js`;

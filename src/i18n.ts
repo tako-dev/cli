@@ -266,10 +266,6 @@ const translations = {
       en: "  --codex [args...]    Launch Codex (passes extra args through)",
       zh: "  --codex [参数...]    启动 Codex（额外参数透传给 codex）",
     },
-    shortcutGemini: {
-      en: "  --gemini [args...]   Launch Gemini CLI (passes extra args through)",
-      zh: "  --gemini [参数...]   启动 Gemini CLI（额外参数透传给 gemini）",
-    },
     shortcutAgy: {
       en: "  --agy [args...]      Launch Antigravity (agy) (passes extra args through)",
       zh: "  --agy [参数...]      启动 Antigravity (agy)（额外参数透传给 agy）",
@@ -306,10 +302,6 @@ const translations = {
       en: "  tako --codex      Launch Codex directly",
       zh: "  tako --codex      直接启动 Codex",
     },
-    exampleGemini: {
-      en: "  tako --gemini     Launch Gemini CLI directly",
-      zh: "  tako --gemini     直接启动 Gemini CLI",
-    },
     exampleAgy: {
       en: "  tako --agy        Launch Antigravity (agy) directly",
       zh: "  tako --agy        直接启动 Antigravity (agy)",
@@ -325,6 +317,10 @@ const translations = {
     examplePiWeb: {
       en: "  tako --pi-web     Launch Pi Web in the browser",
       zh: "  tako --pi-web     在浏览器里启动 Pi Web",
+    },
+    geminiRetired: {
+      en: "Gemini CLI has been retired and replaced by Antigravity CLI (agy).\n  Install: tako install agy\n  Launch:  tako --agy",
+      zh: "Gemini CLI 支持已下线，已替换为 Antigravity CLI (agy)（Gemini CLI has been retired and replaced by Antigravity CLI）。\n  安装：tako install agy\n  启动：tako --agy",
     },
     clientNotFound: {
       en: "{client} client not found",

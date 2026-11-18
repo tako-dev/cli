@@ -11,6 +11,7 @@ import { statusLineCommand, injectStatusLineConfig } from "./statusline";
 import { selectProviderForClient } from "./ui/providers";
 import { buildPassthroughArgs } from "./quick-launch-args";
 import { loadCatalog, refreshCatalog } from "./models";
+import { getGeminiRetiredMessage } from "./installer";
 import { listAvailableVersions, installAtVersion, getInstalledVersion } from "./installer-versions";
 import { IS_DEV } from "./config";
 
@@ -50,7 +51,6 @@ ${t("cli.shortcutCodex")}
 ${t("cli.shortcutPi")}
 ${t("cli.shortcutPiWeb")}
 ${t("cli.shortcutGrok")}
-${t("cli.shortcutGemini")}
 ${t("cli.shortcutAgy")}
 
 Commands:
@@ -71,7 +71,6 @@ ${t("cli.exampleCodex")}
 ${t("cli.examplePi")}
 ${t("cli.examplePiWeb")}
 ${t("cli.exampleGrok")}
-${t("cli.exampleGemini")}
 ${t("cli.exampleAgy")}
 `);
 }
@@ -87,6 +86,10 @@ async function runInstallCommand(rest: string[]): Promise<void> {
     console.error("用法: tako install <client> [version]");
     console.error("  tako install claude-code              # 列出所有可用版本");
     console.error("  tako install claude-code 1.0.5        # 安装指定版本");
+    process.exit(1);
+  }
+  if (clientId === "gemini") {
+    console.error(getGeminiRetiredMessage());
     process.exit(1);
   }
   const client = getClient(clientId);
@@ -147,7 +150,7 @@ async function runInstallCommand(rest: string[]): Promise<void> {
 }
 
 /**
- * 快捷启动（--claude, --codex, --pi, --pi-web, --gemini, --grok）
+ * 快捷启动（--claude, --codex, --pi, --pi-web, --grok, --agy）
  * 自动选 Provider，不弹交互式菜单
  */
 async function quickLaunch(
@@ -245,6 +248,11 @@ export async function runCli(main: UiMain): Promise<void> {
     return;
   }
 
+  if (args.includes("--gemini")) {
+    console.error(getGeminiRetiredMessage());
+    process.exit(1);
+  }
+
   if (args.includes("-v") || args.includes("--version")) {
     console.log(`Tako CLI v${VERSION}`);
     return;
@@ -277,11 +285,6 @@ export async function runCli(main: UiMain): Promise<void> {
   if (args.includes("--codex")) {
     await maybeStartupUpdate(isDev);
     await quickLaunch("codex", "Codex", await buildPassthroughArgs("codex", args, "--codex"));
-    return;
-  }
-  if (args.includes("--gemini")) {
-    await maybeStartupUpdate(isDev);
-    await quickLaunch("gemini", "Gemini CLI", await buildPassthroughArgs("gemini", args, "--gemini"));
     return;
   }
   if (args.includes("--pi")) {

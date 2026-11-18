@@ -16,6 +16,7 @@ import {
   ensureBunInstalled,
   ensureNativeBinary,
   getBunPath,
+  getGeminiRetiredMessage,
 } from "./installer";
 import { getNpmRegistry, detectRegion } from "./region";
 import { streamBunInstall } from "./bun-progress";
@@ -73,6 +74,9 @@ export async function listAvailableVersions(packageName: string): Promise<Versio
  *   4. 更新 ~/.tako/config.json 的 installedClients[client.id]
  */
 export async function installAtVersion(client: ClientConfig, version: string): Promise<void> {
+  if (client.id === "gemini") {
+    throw new Error(getGeminiRetiredMessage());
+  }
   if (client.install === "system") {
     if (!client.installSystem) throw new Error(`${client.name} 不支持 tako install 切换版本`);
     const result = await client.installSystem(version === "latest" ? undefined : version);

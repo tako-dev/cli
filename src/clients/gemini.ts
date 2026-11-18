@@ -1,6 +1,6 @@
 import { homedir } from "os";
 import { join } from "path";
-import { ClientConfig, registerClient, type LaunchOption, type ClientLaunchSetupContext } from "./base";
+import { ClientConfig, type LaunchOption, type ClientLaunchSetupContext } from "./base";
 import { readGeminiSettings, setupGeminiNativeMenu } from "./gemini-native";
 import type { ProviderContext, Provider } from "../providers/types";
 import { getTakoModels } from "../models/tako";
@@ -68,6 +68,3 @@ export const geminiClient: ClientConfig = {
   setupConfigFiles: setupGeminiConfigFiles,
   launchOptions: buildGeminiModelOptions,
 };
-
-// 自动注册
-registerClient(geminiClient);

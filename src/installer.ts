@@ -10,6 +10,11 @@ import { getNpmRegistry, getBunInstallCommand, detectRegion, showRegionInfo, get
 import { track } from "./analytics";
 import { streamBunInstall } from "./bun-progress";
 import { summarizeInstallError } from "./error-format";
+import { t } from "./i18n";
+
+export function getGeminiRetiredMessage(): string {
+  return t("cli.geminiRetired");
+}
 
 // Tako 专属 Bun 路径（完全隔离，不使用系统 Bun）
 // 重要：永远不要使用系统 Bun，只使用 Tako 专属的
@@ -952,6 +957,9 @@ export async function installClient(
   client: ClientConfig,
   forceUpdate = false
 ): Promise<{ success: boolean; error?: string; skippedUpdate?: boolean }> {
+  if (client.id === "gemini") {
+    return { success: false, error: getGeminiRetiredMessage() };
+  }
   if (client.install === "system") {
     if (client.installSystem) return client.installSystem();
     return { success: false, error: `${client.name} 需要系统安装，未提供安装器` };
@@ -1187,6 +1195,9 @@ export async function ensureNativeBinary(
 export async function ensureClientReady(
   client: ClientConfig
 ): Promise<{ success: boolean; error?: string; skippedUpdate?: boolean }> {
+  if (client.id === "gemini") {
+    return { success: false, error: getGeminiRetiredMessage() };
+  }
   if (client.install === "system") {
     if (await isClientInstalled(client)) return { success: true };
     if (client.installSystem) return client.installSystem();

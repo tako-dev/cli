@@ -1,5 +1,5 @@
 /**
- * tako --claude / --codex / --gemini 参数透传
+ * tako --claude / --codex / --pi / --grok / --agy 参数透传
  *
  * 设计：buildPassthroughArgs 是 quickLaunch 用的纯函数，
  * 负责剥掉 shortcut 标志本身，并对 claude-code 的 --model 自动补 [1m]
@@ -105,12 +105,12 @@ describe("buildPassthroughArgs", () => {
     ).toEqual(["--dangerously-bypass-approvals-and-sandbox", "--model", "claude-opus-4-7"]);
   });
 
-  it("gemini: --model 不补 [1m]，且不在危险白名单内不补任何 flag", async () => {
+  it("pi: --model 不补 [1m]，且不在危险白名单内不补任何 flag", async () => {
     expect(
       await buildPassthroughArgs(
-        "gemini",
-        ["--gemini", "--model", "claude-opus-4-7"],
-        "--gemini",
+        "pi",
+        ["--pi", "--model", "claude-opus-4-7"],
+        "--pi",
         noInherit,
       ),
     ).toEqual(["--model", "claude-opus-4-7"]);
@@ -223,9 +223,9 @@ describe("buildPassthroughArgs", () => {
       ).toEqual([]);
     });
 
-    it("gemini: 不在白名单内 → 不继承任何 flag", async () => {
+    it("pi: 不在白名单内 → 不继承任何 flag", async () => {
       expect(
-        await buildPassthroughArgs("gemini", ["--gemini"], "--gemini", {
+        await buildPassthroughArgs("pi", ["--pi"], "--pi", {
           getLastSelectedOptionIds: async () => ["skip-permissions", "bypass-sandbox"],
         }),
       ).toEqual([]);
