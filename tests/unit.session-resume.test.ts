@@ -10,11 +10,12 @@ function session(source: UnifiedSession["source"]): UnifiedSession {
 }
 
 describe("native session resume", () => {
-  it("builds native Claude, Codex, Grok, and Pi resume commands", () => {
+  it("builds native Claude, Codex, Grok, Pi, and Antigravity (agy) resume commands", () => {
     expect(resumeArgs(session("claude"))).toEqual({ clientId: "claude-code", args: ["--resume", "id"] });
     expect(resumeArgs(session("codex"))).toEqual({ clientId: "codex", args: ["resume", "id", "-C", "/work/app"] });
     expect(resumeArgs(session("grok"))).toEqual({ clientId: "grok", args: ["--resume", "id"] });
     expect(resumeArgs(session("pi"))).toEqual({ clientId: "pi", args: ["--session", "id"] });
+    expect(resumeArgs(session("agy"))).toEqual({ clientId: "agy", args: ["--conversation", "id"] });
     expect(() => resumeArgs(session("gemini"))).toThrow("does not support resuming Gemini");
   });
 

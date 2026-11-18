@@ -13,6 +13,7 @@ export function resumeArgs(session: UnifiedSession, cwd = session.cwd): { client
   if (session.source === "codex") return { clientId: "codex", args: ["resume", session.nativeId, ...(cwd ? ["-C", cwd] : [])] };
   if (session.source === "grok") return { clientId: "grok", args: ["--resume", session.nativeId] };
   if (session.source === "pi") return { clientId: "pi", args: ["--session", session.nativeId] };
+  if (session.source === "agy") return { clientId: "agy", args: ["--conversation", session.nativeId] };
   throw new Error("Tako does not support resuming Gemini sessions yet; use search or detail view instead.");
 }
 

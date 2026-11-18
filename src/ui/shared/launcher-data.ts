@@ -1,8 +1,8 @@
-import { getAllClients } from "../../clients";
-import { getClientLaunchOptions } from "../../clients/base";
+import { getAllClients, type ClientConfig } from "../../clients";
+import { getClientBinPath, getClientEntryPath, getClientLaunchOptions } from "../../clients/base";
 import { GROK_DEFAULT_MODEL } from "../../clients/grok";
 import { PI_DEFAULT_MODEL } from "../../clients/pi";
-import { enabledWithProviderDefaultModel } from "./launch-options";
+import { enabledWithProviderDefaultModel, EXPLICIT_DEFAULT_MODEL_SENTINEL } from "./launch-options";
 import { getLocale } from "../../i18n";
 import { getModelPickCounts } from "../../model-usage";
 import {
@@ -15,6 +15,20 @@ import {
 } from "../../project-history";
 import { getClientProvider, getDefaultProvider, getProvidersForClient } from "../../providers";
 import type { LauncherClientData, LauncherLoadResult, ProjectItem } from "./types";
+
+export async function isClientInstalledFast(client: ClientConfig): Promise<boolean> {
+  try {
+    if (client.resolveBin) {
+      return Boolean(await client.resolveBin());
+    }
+    if (await getClientEntryPath(client)) {
+      return true;
+    }
+    return await Bun.file(getClientBinPath(client)).exists();
+  } catch {
+    return false;
+  }
+}
 
 /** Tab 顺序保持注册序。有本目录历史就停在上次用的，否则默认 Pi。 */
 export function resolveDefaultClientIndex(
@@ -34,12 +48,16 @@ export function resolveDefaultClientIndex(
 
 export async function loadLauncherData(projectPathWidth = 45): Promise<LauncherLoadResult> {
   const all = getAllClients();
-  const lastId = await getLastClientForCwd();
-  const defaultProvider = await getDefaultProvider();
+  const [lastId, defaultProvider, installedFlags] = await Promise.all([
+    getLastClientForCwd(),
+    getDefaultProvider(),
+    Promise.all(all.map((client) => isClientInstalledFast(client))),
+  ]);
   const zh = getLocale() === "zh";
 
   const clients: LauncherClientData[] = [];
-  for (const client of all) {
+  for (let i = 0; i < all.length; i++) {
+    const client = all[i];
     const recent = await getRecentProjectsForClient(client.id, DISPLAY_PER_CLIENT, true);
     const cwd = process.cwd();
     const projects: ProjectItem[] = [
@@ -66,7 +84,7 @@ export async function loadLauncherData(projectPathWidth = 45): Promise<LauncherL
     const validIds = new Set(launchOptions.map((option) => option.id));
     const savedIds = await getLastSelectedOptionsForClient(client.id);
     const lastSelectedOptionIds = [...enabledWithProviderDefaultModel(
-      new Set(savedIds.filter((id) => validIds.has(id))),
+      new Set(savedIds.filter((id) => validIds.has(id) || id === EXPLICIT_DEFAULT_MODEL_SENTINEL)),
       launchOptions,
       activeProvider?.model,
       client.id === "pi" ? `model-${PI_DEFAULT_MODEL}`
@@ -82,6 +100,7 @@ export async function loadLauncherData(projectPathWidth = 45): Promise<LauncherL
       activeProvIdx: Math.max(activeIdx, 0),
       launchOptions,
       lastSelectedOptionIds,
+      installed: installedFlags[i],
     });
   }
 

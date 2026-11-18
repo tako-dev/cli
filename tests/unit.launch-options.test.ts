@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   enabledWithProviderDefaultModel,
+  EXPLICIT_DEFAULT_MODEL_SENTINEL,
   selectedArgs,
   selectedArgsWithGroupOverride,
 } from "../src/ui/shared/launch-options";
@@ -138,5 +139,34 @@ describe("enabledWithProviderDefaultModel", () => {
     );
     expect(next).toBe(previous);
     expect(next.has(catalogFirst)).toBe(true);
+  });
+
+  it("respects EXPLICIT_DEFAULT_MODEL_SENTINEL without auto-filling provider or fallback model, and persists sentinel in selectedArgs", () => {
+    expect(EXPLICIT_DEFAULT_MODEL_SENTINEL).toBe("__default_model__");
+
+    const explicitDefault = new Set(["search", EXPLICIT_DEFAULT_MODEL_SENTINEL]);
+    const next = enabledWithProviderDefaultModel(
+      explicitDefault,
+      catalogOptions,
+      "gpt-5.5",
+      "model-grok-4.6",
+    );
+    expect([...next]).toEqual(["search", EXPLICIT_DEFAULT_MODEL_SENTINEL]);
+
+    const launchSelected = selectedArgs({ launchOptions: catalogOptions, enabled: next });
+    expect(launchSelected).toEqual({
+      args: ["--search"],
+      envVars: {},
+      selectedOptionIds: ["search", EXPLICIT_DEFAULT_MODEL_SENTINEL],
+    });
+
+    // When a real model-* is also present, EXPLICIT_DEFAULT_MODEL_SENTINEL is dropped
+    const withRealModel = enabledWithProviderDefaultModel(
+      new Set(["search", catalogFirst, EXPLICIT_DEFAULT_MODEL_SENTINEL]),
+      catalogOptions,
+      "gpt-5.5",
+      "model-grok-4.6",
+    );
+    expect([...withRealModel]).toEqual(["search", catalogFirst]);
   });
 });

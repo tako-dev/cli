@@ -1,7 +1,14 @@
 import { clearSessionIndex, openSessionDatabase, rebuildSessionIndex, refreshSessionIndex } from "./index";
 import { searchSessions } from "./search";
 import { resumeNativeSession } from "./resume";
-import { isNativeSessionSource, type NativeSessionSource } from "./types";
+import {
+  isNativeSessionSource,
+  sessionSourceColor,
+  sessionSourceLabel,
+  type NativeSessionSource,
+} from "./types";
+
+export { sessionSourceColor, sessionSourceLabel };
 
 function flag(args: string[], name: string): string | undefined { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; }
 

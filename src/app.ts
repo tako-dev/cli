@@ -29,10 +29,61 @@ export function isOfficialCliEntry(entryPath: string): boolean {
   return entryPath.replace(/\\/g, "/").includes("/cli/node_modules/tako-cli/");
 }
 
-async function maybeStartupUpdate(isDev: boolean): Promise<void> {
+async function maybeStartupUpdate(
+  isDev: boolean,
+  opts?: { spawnBackgroundRefresh?: boolean },
+): Promise<void> {
   if (!shouldRunStartupUpdate(isDev)) return;
   if (!isOfficialCliEntry(process.argv[1] ?? "")) return;
-  await checkAndUpdate();
+  await checkAndUpdate(opts);
+}
+
+const SUBCOMMAND_CLIENTS: Record<string, { clientId: string; clientName: string }> = {
+  agy: { clientId: "agy", clientName: "Antigravity (agy)" },
+  claude: { clientId: "claude-code", clientName: "Claude Code" },
+  "claude-code": { clientId: "claude-code", clientName: "Claude Code" },
+  codex: { clientId: "codex", clientName: "Codex" },
+  pi: { clientId: "pi", clientName: "Pi" },
+  "pi-web": { clientId: "pi-web", clientName: "Pi Web" },
+  grok: { clientId: "grok", clientName: "Grok Build" },
+};
+
+const FLAG_CLIENTS: ReadonlyArray<{ flag: string; clientId: string; clientName: string }> = [
+  { flag: "--claude", clientId: "claude-code", clientName: "Claude Code" },
+  { flag: "--codex", clientId: "codex", clientName: "Codex" },
+  { flag: "--pi", clientId: "pi", clientName: "Pi" },
+  { flag: "--pi-web", clientId: "pi-web", clientName: "Pi Web" },
+  { flag: "--grok", clientId: "grok", clientName: "Grok Build" },
+  { flag: "--agy", clientId: "agy", clientName: "Antigravity (agy)" },
+];
+
+export function resolveQuickLaunchClient(args: string[]): {
+  clientId: string;
+  clientName: string;
+  triggerArg: string;
+  isSubcommand: boolean;
+} | null {
+  const first = args[0];
+  if (first && Object.prototype.hasOwnProperty.call(SUBCOMMAND_CLIENTS, first)) {
+    const entry = SUBCOMMAND_CLIENTS[first];
+    return {
+      clientId: entry.clientId,
+      clientName: entry.clientName,
+      triggerArg: first,
+      isSubcommand: true,
+    };
+  }
+  for (const entry of FLAG_CLIENTS) {
+    if (args.includes(entry.flag)) {
+      return {
+        clientId: entry.clientId,
+        clientName: entry.clientName,
+        triggerArg: entry.flag,
+        isSubcommand: false,
+      };
+    }
+  }
+  return null;
 }
 
 function showHelp() {
@@ -248,17 +299,19 @@ export async function runCli(main: UiMain): Promise<void> {
     return;
   }
 
-  if (args.includes("--gemini")) {
+  const quick = resolveQuickLaunchClient(args);
+
+  if (!quick?.isSubcommand && (args[0] === "gemini" || args.includes("--gemini"))) {
     console.error(getGeminiRetiredMessage());
     process.exit(1);
   }
 
-  if (args.includes("-v") || args.includes("--version")) {
+  if (!quick && (args.includes("-v") || args.includes("--version"))) {
     console.log(`Tako CLI v${VERSION}`);
     return;
   }
 
-  if (args.includes("-h") || args.includes("--help")) {
+  if (!quick && (args.includes("-h") || args.includes("--help"))) {
     showHelp();
     return;
   }
@@ -276,35 +329,15 @@ export async function runCli(main: UiMain): Promise<void> {
   identify();
   track("cli_started");
 
-  // 快捷启动命令
-  if (args.includes("--claude")) {
-    await maybeStartupUpdate(isDev);
-    await quickLaunch("claude-code", "Claude Code", await buildPassthroughArgs("claude-code", args, "--claude"));
-    return;
-  }
-  if (args.includes("--codex")) {
-    await maybeStartupUpdate(isDev);
-    await quickLaunch("codex", "Codex", await buildPassthroughArgs("codex", args, "--codex"));
-    return;
-  }
-  if (args.includes("--pi")) {
-    await maybeStartupUpdate(isDev);
-    await quickLaunch("pi", "Pi", await buildPassthroughArgs("pi", args, "--pi"));
-    return;
-  }
-  if (args.includes("--pi-web")) {
-    await maybeStartupUpdate(isDev);
-    await quickLaunch("pi-web", "Pi Web", await buildPassthroughArgs("pi-web", args, "--pi-web"));
-    return;
-  }
-  if (args.includes("--grok")) {
-    await maybeStartupUpdate(isDev);
-    await quickLaunch("grok", "Grok Build", await buildPassthroughArgs("grok", args, "--grok"));
-    return;
-  }
-  if (args.includes("--agy")) {
-    await maybeStartupUpdate(isDev);
-    await quickLaunch("agy", "Antigravity (agy)", await buildPassthroughArgs("agy", args, "--agy"));
+  // 快捷启动命令（支持 `tako <client> [args...]` 与 `tako --<client> [args...]`）
+  if (quick) {
+    await maybeStartupUpdate(isDev, { spawnBackgroundRefresh: false });
+    loadCatalog();
+    await quickLaunch(
+      quick.clientId,
+      quick.clientName,
+      await buildPassthroughArgs(quick.clientId, args, quick.triggerArg),
+    );
     return;
   }
 

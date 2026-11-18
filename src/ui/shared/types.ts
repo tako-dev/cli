@@ -15,6 +15,7 @@ export interface LauncherClientData {
   activeProvIdx: number;
   launchOptions: LaunchOption[];
   lastSelectedOptionIds: string[];
+  installed?: boolean;
 }
 
 export type LauncherResult =
@@ -34,7 +35,8 @@ export type LauncherResult =
   | { type: "stats" }
   | { type: "config" }
   | { type: "language" }
-  | { type: "providers" }
+  | { type: "providers"; clientId?: string; rekeyProviderId?: string }
+  | { type: "client-versions"; clientId?: string }
   | { type: "provider-login"; tool: "claude" | "codex" }
   | { type: "exit" };
 

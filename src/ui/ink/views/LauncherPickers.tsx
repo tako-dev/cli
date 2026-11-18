@@ -8,18 +8,36 @@ import React from "react";
 import { Box, Text } from "ink";
 import type { LaunchOption } from "../../../clients";
 import type { Provider } from "../../../providers/types";
-import { listedModelOptions, MODEL_PAGE_SIZE, modelPickerWindow } from "../../shared/model-picker";
+import {
+  MODEL_PAGE_SIZE,
+  modelPickerWindow,
+  resolveModelPickerEntries,
+} from "../../shared/model-picker";
 
-const PICKER_FOOTER_HINTS = [
+const GROUP_PICKER_FOOTER_HINTS = [
   ["↑↓", "选择", "select"],
   ["Enter", "确认", "confirm"],
   ["Esc", "取消", "cancel"],
 ] as const;
 
-function PickerFooter({ zh }: { zh: boolean }) {
+const PROVIDER_PICKER_FOOTER_HINTS = [
+  ["↑↓", "选择", "select"],
+  ["Enter", "切换", "switch"],
+  ["k", "改Key", "edit key"],
+  ["m", "管理", "manage"],
+  ["Esc", "取消", "cancel"],
+] as const;
+
+function HintFooter({
+  hints,
+  zh,
+}: {
+  hints: ReadonlyArray<readonly [string, string, string]>;
+  zh: boolean;
+}) {
   return (
     <Box marginTop={0} justifyContent="center" gap={2}>
-      {PICKER_FOOTER_HINTS.flatMap((h, i) => {
+      {hints.flatMap((h, i) => {
         const sep = i > 0 ? <Text key={`s${i}`} dimColor>│</Text> : null;
         return [
           sep,
@@ -78,7 +96,7 @@ export function ProviderPicker({
           );
         })()}
       </Box>
-      <PickerFooter zh={zh} />
+      <HintFooter hints={PROVIDER_PICKER_FOOTER_HINTS} zh={zh} />
     </Box>
   );
 }
@@ -99,19 +117,19 @@ export function GroupPicker({
 }) {
   const groupOpts = options.filter((o) => o.group === group);
   const isModelGroup = group === "model";
-  const list = isModelGroup
-    ? listedModelOptions(groupOpts, pickCounts, query, zh)
-    : groupOpts;
+  const modelEntries = isModelGroup
+    ? resolveModelPickerEntries(groupOpts, pickCounts, query, zh)
+    : [];
   const window = isModelGroup
-    ? modelPickerWindow(pickerIdx, list.length)
-    : { start: 0, end: list.length };
-  const page = list.slice(window.start, window.end);
+    ? modelPickerWindow(pickerIdx, modelEntries.length)
+    : { start: 0, end: groupOpts.length };
   const title = isModelGroup
     ? (zh ? "选择模型" : "Pick Model")
     : group === "subagent-model"
       ? (zh ? "子代理模型" : "Subagent Model")
       : group;
   const isDefaultCur = !groupOpts.some((o) => enabled.has(o.id));
+
   return (
     <Box flexDirection="column" marginTop={0} borderStyle="round" borderColor={color} paddingX={1} paddingY={0}>
       <Text bold color={color}>▣ {title}</Text>
@@ -125,56 +143,100 @@ export function GroupPicker({
         </Box>
       )}
       <Box flexDirection="column" marginTop={0}>
-        {!isModelGroup && (() => {
-          const focused = pickerIdx === 0;
-          return (
-            <Box paddingLeft={1}>
-              <Text color={focused ? color : undefined} bold={focused}>
-                {focused ? "▸" : " "}
-              </Text>
-              <Text bold={focused} color={focused ? color : undefined}>
-                {" "}{zh ? "默认（不指定）" : "Default (none)"}
-              </Text>
-              {isDefaultCur && <Text color="green"> ★</Text>}
-            </Box>
-          );
-        })()}
-        {page.map((opt, i) => {
-          const idx = window.start + i;
-          const focused = pickerIdx === (isModelGroup ? idx : idx + 1);
-          const isCur = enabled.has(opt.id);
-          return (
-            <Box key={opt.id} paddingLeft={1} flexDirection="column">
-              <Box>
-                <Text color={focused ? color : undefined} bold={focused}>
-                  {focused ? "▸" : " "}
-                </Text>
-                <Text bold={focused} color={focused ? color : undefined}>
-                  {" "}{opt.label[zh ? "zh" : "en"] || opt.label.en}
-                </Text>
-                {isCur && <Text color="green"> ★</Text>}
-                <Text dimColor>  {opt.flag}</Text>
-              </Box>
-              {focused && (
-                <Box paddingLeft={3}>
-                  <Text dimColor>{opt.description[zh ? "zh" : "en"] || opt.description.en}</Text>
+        {isModelGroup ? (
+          <>
+            {modelEntries.slice(window.start, window.end).map((entry, i) => {
+              const idx = window.start + i;
+              const focused = pickerIdx === idx;
+              if (entry.kind === "default" || !entry.option) {
+                return (
+                  <Box key="__default__" paddingLeft={1}>
+                    <Text color={focused ? color : undefined} bold={focused}>
+                      {focused ? "▸" : " "}
+                    </Text>
+                    <Text bold={focused} color={focused ? color : undefined}>
+                      {" "}{zh ? "默认（跟随客户端，不传 --model）" : "Default (client built-in, no --model)"}
+                    </Text>
+                    {isDefaultCur && <Text color="green"> ★</Text>}
+                  </Box>
+                );
+              }
+              const opt = entry.option;
+              const isCur = enabled.has(opt.id);
+              return (
+                <Box key={opt.id} paddingLeft={1} flexDirection="column">
+                  <Box>
+                    <Text color={focused ? color : undefined} bold={focused}>
+                      {focused ? "▸" : " "}
+                    </Text>
+                    <Text bold={focused} color={focused ? color : undefined}>
+                      {" "}{opt.label[zh ? "zh" : "en"] || opt.label.en}
+                    </Text>
+                    {isCur && <Text color="green"> ★</Text>}
+                    <Text dimColor>  {opt.flag}</Text>
+                  </Box>
+                  {focused && (
+                    <Box paddingLeft={3}>
+                      <Text dimColor>{opt.description[zh ? "zh" : "en"] || opt.description.en}</Text>
+                    </Box>
+                  )}
                 </Box>
-              )}
-            </Box>
-          );
-        })}
-        {isModelGroup && list.length === 0 && (
-          <Box paddingLeft={1}>
-            <Text dimColor>{zh ? "无匹配模型" : "No matching models"}</Text>
-          </Box>
-        )}
-        {isModelGroup && list.length > MODEL_PAGE_SIZE && (
-          <Box paddingLeft={1}>
-            <Text dimColor>{pickerIdx + 1}/{list.length}</Text>
-          </Box>
+              );
+            })}
+            {modelEntries.length === 0 && (
+              <Box paddingLeft={1}>
+                <Text dimColor>{zh ? "无匹配模型" : "No matching models"}</Text>
+              </Box>
+            )}
+            {modelEntries.length > MODEL_PAGE_SIZE && (
+              <Box paddingLeft={1}>
+                <Text dimColor>{pickerIdx + 1}/{modelEntries.length}</Text>
+              </Box>
+            )}
+          </>
+        ) : (
+          <>
+            {(() => {
+              const focused = pickerIdx === 0;
+              return (
+                <Box paddingLeft={1}>
+                  <Text color={focused ? color : undefined} bold={focused}>
+                    {focused ? "▸" : " "}
+                  </Text>
+                  <Text bold={focused} color={focused ? color : undefined}>
+                    {" "}{zh ? "默认（不指定）" : "Default (none)"}
+                  </Text>
+                  {isDefaultCur && <Text color="green"> ★</Text>}
+                </Box>
+              );
+            })()}
+            {groupOpts.map((opt, idx) => {
+              const focused = pickerIdx === idx + 1;
+              const isCur = enabled.has(opt.id);
+              return (
+                <Box key={opt.id} paddingLeft={1} flexDirection="column">
+                  <Box>
+                    <Text color={focused ? color : undefined} bold={focused}>
+                      {focused ? "▸" : " "}
+                    </Text>
+                    <Text bold={focused} color={focused ? color : undefined}>
+                      {" "}{opt.label[zh ? "zh" : "en"] || opt.label.en}
+                    </Text>
+                    {isCur && <Text color="green"> ★</Text>}
+                    <Text dimColor>  {opt.flag}</Text>
+                  </Box>
+                  {focused && (
+                    <Box paddingLeft={3}>
+                      <Text dimColor>{opt.description[zh ? "zh" : "en"] || opt.description.en}</Text>
+                    </Box>
+                  )}
+                </Box>
+              );
+            })}
+          </>
         )}
       </Box>
-      <PickerFooter zh={zh} />
+      <HintFooter hints={GROUP_PICKER_FOOTER_HINTS} zh={zh} />
     </Box>
   );
 }

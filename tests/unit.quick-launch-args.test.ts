@@ -12,6 +12,7 @@
  */
 import { describe, it, expect } from "bun:test";
 import { buildPassthroughArgs } from "../src/quick-launch-args";
+import { resolveQuickLaunchClient } from "../src/app";
 
 import "../src/clients";
 
@@ -270,6 +271,80 @@ describe("buildPassthroughArgs", () => {
           noInherit,
         ),
       ).toEqual(["-m", "tako-grok-4.6"]);
+    });
+  });
+
+  describe("resolveQuickLaunchClient & bare subcommands", () => {
+    it("resolves bare client subcommand aliases with isSubcommand: true", () => {
+      expect(resolveQuickLaunchClient(["agy", "--help"])).toEqual({
+        clientId: "agy",
+        clientName: "Antigravity (agy)",
+        triggerArg: "agy",
+        isSubcommand: true,
+      });
+      expect(resolveQuickLaunchClient(["claude", "-p", "hi"])).toEqual({
+        clientId: "claude-code",
+        clientName: "Claude Code",
+        triggerArg: "claude",
+        isSubcommand: true,
+      });
+      expect(resolveQuickLaunchClient(["claude-code", "--continue"])).toEqual({
+        clientId: "claude-code",
+        clientName: "Claude Code",
+        triggerArg: "claude-code",
+        isSubcommand: true,
+      });
+      expect(resolveQuickLaunchClient(["codex"])).toEqual({
+        clientId: "codex",
+        clientName: "Codex",
+        triggerArg: "codex",
+        isSubcommand: true,
+      });
+      expect(resolveQuickLaunchClient(["pi"])).toEqual({
+        clientId: "pi",
+        clientName: "Pi",
+        triggerArg: "pi",
+        isSubcommand: true,
+      });
+      expect(resolveQuickLaunchClient(["pi-web"])).toEqual({
+        clientId: "pi-web",
+        clientName: "Pi Web",
+        triggerArg: "pi-web",
+        isSubcommand: true,
+      });
+      expect(resolveQuickLaunchClient(["grok"])).toEqual({
+        clientId: "grok",
+        clientName: "Grok Build",
+        triggerArg: "grok",
+        isSubcommand: true,
+      });
+    });
+
+    it("resolves --<client> flags with isSubcommand: false and returns null otherwise", () => {
+      expect(resolveQuickLaunchClient(["--agy", "--help"])).toEqual({
+        clientId: "agy",
+        clientName: "Antigravity (agy)",
+        triggerArg: "--agy",
+        isSubcommand: false,
+      });
+      expect(resolveQuickLaunchClient(["--claude"])).toEqual({
+        clientId: "claude-code",
+        clientName: "Claude Code",
+        triggerArg: "--claude",
+        isSubcommand: false,
+      });
+      expect(resolveQuickLaunchClient([])).toBeNull();
+      expect(resolveQuickLaunchClient(["--help"])).toBeNull();
+      expect(resolveQuickLaunchClient(["install", "claude-code"])).toBeNull();
+    });
+
+    it("strips only args[0] for bare subcommands so positional args matching client name survive", async () => {
+      expect(
+        await buildPassthroughArgs("claude-code", ["claude", "-p", "claude"], "claude", noInherit),
+      ).toEqual(["--dangerously-skip-permissions", "-p", "claude"]);
+      expect(
+        await buildPassthroughArgs("agy", ["agy", "--help"], "agy", noInherit),
+      ).toEqual(["--dangerously-skip-permissions", "--help"]);
     });
   });
 });

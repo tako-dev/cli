@@ -72,7 +72,13 @@ export function ProviderCard({ provider, focused, bound, isDefault, zh }: {
       </Box>
       {focused && (
         <Box marginTop={0}>
-          <Text color={ps.color} dimColor>Enter {zh ? "绑定到当前工具" : "bind to this tool"}  ·  d {zh ? "详情/操作" : "detail/actions"}</Text>
+          <Text color={ps.color} dimColor>
+            Enter {zh ? "绑定到当前工具" : "bind to this tool"}
+            {provider.type !== "claude-subscription" && provider.type !== "codex-subscription"
+              ? `  ·  k ${zh ? "修改 Key" : "edit key"}`
+              : ""}
+            {"  ·  "}d {zh ? "详情/操作" : "detail/actions"}
+          </Text>
         </Box>
       )}
     </Box>
@@ -231,6 +237,135 @@ export function DetailScreen({ provider, defaultId, detailActions, detailIdx, zh
         <Text dimColor bold>←→</Text><Text dimColor>{zh ? "选择" : "select"}</Text>
         <Text dimColor>│</Text>
         <Text dimColor bold>Enter</Text><Text dimColor>{zh ? "确认" : "confirm"}</Text>
+        <Text dimColor>│</Text>
+        <Text dimColor bold>Esc</Text><Text dimColor>{zh ? "返回" : "back"}</Text>
+      </Box>
+    </Box>
+  );
+}
+
+export function AddTypeScreen({ rowIdx, zh }: { rowIdx: number; zh: boolean }) {
+  return (
+    <Box flexDirection="column" paddingX={2} paddingY={1}>
+      <Box borderStyle="round" borderColor="gray" paddingX={3} paddingY={0}>
+        <Text bold>➕ {zh ? "添加服务商" : "Add Provider"}</Text>
+      </Box>
+      <Box flexDirection="column" marginTop={1} gap={0}>
+        {ADD_TYPES.map((tp, i) => {
+          const s = PROV_STYLE[tp] || PROV_STYLE.custom;
+          const focused = rowIdx === i;
+          const typeName = zh ? PROVIDER_TYPE_NAMES[tp]?.zh : PROVIDER_TYPE_NAMES[tp]?.en;
+          const isLogin = tp === "claude-subscription" || tp === "codex-subscription";
+          return (
+            <Box
+              key={tp}
+              borderStyle={focused ? "bold" : "round"}
+              borderColor={focused ? s.color : "gray"}
+              paddingX={2}
+              paddingY={0}
+            >
+              <Box gap={1}>
+                <Text color={s.color} bold>{s.icon}</Text>
+                <Text bold={focused} color={focused ? s.color : undefined}>{typeName}</Text>
+                {isLogin && <Text dimColor>({zh ? "登录授权" : "login auth"})</Text>}
+                {!isLogin && <Text dimColor>({zh ? "填写 Key" : "enter key"})</Text>}
+              </Box>
+            </Box>
+          );
+        })}
+      </Box>
+      <Box marginTop={1} borderStyle="round" borderColor="gray" paddingX={2} justifyContent="center" gap={2}>
+        <Text dimColor bold>↑↓</Text><Text dimColor>{zh ? "选择" : "select"}</Text>
+        <Text dimColor>│</Text>
+        <Text dimColor bold>Enter</Text><Text dimColor>{zh ? "确认" : "confirm"}</Text>
+        <Text dimColor>│</Text>
+        <Text dimColor bold>Esc</Text><Text dimColor>{zh ? "返回" : "back"}</Text>
+      </Box>
+    </Box>
+  );
+}
+
+export function SubmodelScreen({
+  provider,
+  rowIdx,
+  zh,
+}: {
+  provider: Provider;
+  rowIdx: number;
+  zh: boolean;
+}) {
+  const cur = provider.subagentModel;
+  const curIdx = cur === SUBAGENT_MODEL_CC_DEFAULT ? 1 : cur ? 2 : 0;
+  const items = [
+    {
+      key: "follow",
+      label: zh ? "跟随主模型" : "Follow main model",
+      desc: zh ? "subagent / 别名 / utility 全部锁定到主模型（推荐）" : "Pin subagent / alias / utility to main model (recommended)",
+    },
+    {
+      key: "cc-default",
+      label: zh ? "Claude Code 默认" : "Claude Code default",
+      desc: zh ? "不锁定，由 Claude Code 自己解析（settings.json / 环境变量可接管）" : "No pinning; Claude Code resolves on its own (settings.json / env can take over)",
+    },
+    {
+      key: "custom",
+      label: zh ? "指定模型…" : "Custom model…",
+      desc: zh ? "锁定到你填写的模型 ID（如主模型便宜 + subagent 强力）" : "Pin to a model ID you enter (e.g. cheap main + strong subagent)",
+    },
+  ];
+  return (
+    <Box flexDirection="column" paddingX={2} paddingY={1}>
+      <Box borderStyle="bold" borderColor="cyan" paddingX={3} paddingY={1} flexDirection="column">
+        <Box gap={1} marginBottom={1}>
+          <Text bold color="cyan">🧩 {zh ? "子代理模型" : "Subagent Model"}</Text>
+          <Text dimColor>— Claude Code</Text>
+        </Box>
+        {items.map((it, i) => {
+          const focused = rowIdx === i;
+          return (
+            <Box key={it.key} flexDirection="column" paddingLeft={1}>
+              <Box gap={1}>
+                <Text color={focused ? "cyan" : undefined} bold={focused}>{focused ? "▸" : " "}</Text>
+                <Text bold={focused} color={focused ? "cyan" : undefined}>
+                  {it.label}{i === curIdx ? (zh ? "（当前）" : " (current)") : ""}
+                </Text>
+              </Box>
+              {focused && <Text dimColor>  {it.desc}</Text>}
+            </Box>
+          );
+        })}
+        {curIdx === 2 && (
+          <Box marginTop={1}><Text dimColor>{zh ? "当前指定" : "Current"}: {cur}</Text></Box>
+        )}
+      </Box>
+      <Box marginTop={1} borderStyle="round" borderColor="gray" paddingX={2} justifyContent="center" gap={2}>
+        <Text dimColor bold>↑↓</Text><Text dimColor>{zh ? "选择" : "select"}</Text>
+        <Text dimColor>│</Text>
+        <Text dimColor bold>Enter</Text><Text dimColor>{zh ? "确认" : "confirm"}</Text>
+        <Text dimColor>│</Text>
+        <Text dimColor bold>Esc</Text><Text dimColor>{zh ? "返回" : "back"}</Text>
+      </Box>
+    </Box>
+  );
+}
+
+export function SubmodelCustomScreen({ subModelInput, zh }: { subModelInput: string; zh: boolean }) {
+  return (
+    <Box flexDirection="column" paddingX={2} paddingY={1}>
+      <Box borderStyle="bold" borderColor="cyan" paddingX={3} paddingY={1} flexDirection="column">
+        <Box gap={1} marginBottom={1}>
+          <Text bold color="cyan">🧩 {zh ? "指定子代理模型" : "Custom Subagent Model"}</Text>
+          <Text dimColor>— Claude Code</Text>
+        </Box>
+        <Text dimColor>  {zh ? "输入模型 ID；留空保存 = 恢复跟随主模型" : "Enter a model ID; save empty = follow main model"}</Text>
+        <Box marginTop={1}>
+          <Text color="cyan" bold>{"›"} </Text>
+          <Text>{subModelInput}</Text>
+          <Text color="cyan">█</Text>
+        </Box>
+      </Box>
+      <Box marginTop={1} borderStyle="round" borderColor="gray" paddingX={2} justifyContent="center" gap={2}>
+        <Text dimColor bold>Enter</Text><Text dimColor>{zh ? "保存" : "save"}</Text>
         <Text dimColor>│</Text>
         <Text dimColor bold>Esc</Text><Text dimColor>{zh ? "返回" : "back"}</Text>
       </Box>

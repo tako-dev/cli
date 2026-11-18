@@ -32,6 +32,10 @@ interface AppProps {
 
 function App({ onLaunch, onExit, initialView = "launcher", initialSessionSearch = false }: AppProps) {
   const [view, setView] = useState<View>(initialView);
+  const [providerNav, setProviderNav] = useState<{ clientId?: string; rekeyProviderId?: string }>({});
+  const [versionNav, setVersionNav] = useState<{ clientId?: string; returnTo: View }>({
+    returnTo: "providers",
+  });
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -102,7 +106,17 @@ function App({ onLaunch, onExit, initialView = "launcher", initialSessionSearch 
               switch (result.type) {
                 case "launch": onLaunch(result); break;
                 case "agent": setView("agents"); break;
-                case "providers": setView("providers"); break;
+                case "providers":
+                  setProviderNav({
+                    clientId: result.clientId,
+                    rekeyProviderId: result.rekeyProviderId,
+                  });
+                  setView("providers");
+                  break;
+                case "client-versions":
+                  setVersionNav({ clientId: result.clientId, returnTo: "launcher" });
+                  setView("client-versions");
+                  break;
                 case "stats": setView("stats"); break;
                 case "config": setView("config"); break;
                 case "language": setView("language"); break;
@@ -112,14 +126,33 @@ function App({ onLaunch, onExit, initialView = "launcher", initialSessionSearch 
           />
         );
       case "providers":
-        return <ProviderMenuView onDone={(action) => {
-          if (action === "client-versions") setView("client-versions");
-          else goBack();
-        }} />;
+        return (
+          <ProviderMenuView
+            initialClientId={providerNav.clientId}
+            initialRekeyProviderId={providerNav.rekeyProviderId}
+            onDone={(action, clientId) => {
+              if (action === "client-versions") {
+                setVersionNav({
+                  clientId: clientId ?? providerNav.clientId,
+                  returnTo: "providers",
+                });
+                setView("client-versions");
+              } else {
+                setProviderNav({});
+                goBack();
+              }
+            }}
+          />
+        );
       case "agents":
         return <AgentsView onDone={goBack} />;
       case "client-versions":
-        return <ClientVersionView onDone={() => setView("providers")} />;
+        return (
+          <ClientVersionView
+            initialClientId={versionNav.clientId}
+            onDone={() => setView(versionNav.returnTo)}
+          />
+        );
       case "stats":
         return <StatsViewComponent onExit={goBack} />;
       case "config":
