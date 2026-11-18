@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getClientLaunchOptions } from "../src/clients/base";
-import { agyClient } from "../src/clients/agy";
+import { agyClient, DEFAULT_AGY_GATEWAY_MODELS } from "../src/clients/agy";
 import { claudeCodeClient } from "../src/clients/claude-code";
 import { codexClient } from "../src/clients/codex";
 import { grokClient } from "../src/clients/grok";
@@ -24,7 +24,9 @@ const provider = (apiKey: string, baseUrl = BASE): Provider => ({
   id: "qualification", name: "Fixture", type: "custom", baseUrl, apiKey, createdAt: "2026-11-16",
 });
 const key = (baseUrl: string, apiType: TakoApiType, apiKey: string) =>
-  `${baseUrl}#${apiType}#${createHash("sha256").update(apiKey).digest("hex")}`;
+  `${baseUrl}#${apiType === "gemini" ? "agy-v2" : apiType}#${createHash("sha256").update(apiKey).digest("hex")}`;
+const fixturePrefix = (apiType: TakoApiType) => (apiType === "gemini" ? "gemini-4" : `grok-${apiType}`);
+const defaultAgyOptionIds = DEFAULT_AGY_GATEWAY_MODELS.map((id) => `model-${id}`);
 
 // These are launcher/adapter checks, NOT claims of native TUI or inference eligibility.
 describe("cross-client launcher catalog qualification", () => {
@@ -48,32 +50,48 @@ describe("cross-client launcher catalog qualification", () => {
     it(`${client.id}: isolates endpoint, account and protocol without leaking another catalog`, () => {
       const buckets = Object.fromEntries(protocols.flatMap(apiType => [
         [key(BASE, apiType, KEY_A), { fetchedAt: Date.now(), entries: [
-          entry(`grok-${apiType}-account-a`), ...(apiType === "gemini" ? [] : [entry("grok-image-fixture", "image")]),
+          entry(`${fixturePrefix(apiType)}-account-a`),
+          ...(apiType === "gemini" ? [entry("deepseek-v4-flash"), entry("gemini-3-pro-image")] : [entry("grok-image-fixture", "image")]),
         ] }],
-        [key(BASE, apiType, KEY_B), { fetchedAt: Date.now(), entries: [entry(`grok-${apiType}-account-b`)] }],
-        [key(`${BASE}/other`, apiType, KEY_A), { fetchedAt: Date.now(), entries: [entry(`grok-${apiType}-other-endpoint`)] }],
+        [key(BASE, apiType, KEY_B), { fetchedAt: Date.now(), entries: [entry(`${fixturePrefix(apiType)}-account-b`)] }],
+        [key(`${BASE}/other`, apiType, KEY_A), { fetchedAt: Date.now(), entries: [entry(`${fixturePrefix(apiType)}-other-endpoint`)] }],
       ]));
       writeFileSync(cache, JSON.stringify({ version: 2, buckets }));
-      const apiType = client.id === "agy" ? "gemini" : ["codex", "grok"].includes(client.id) ? "openai" : "claude";
-      expect(models(client, provider(KEY_A))).toEqual([`model-grok-${apiType}-account-a`]);
-      expect(models(client, provider(KEY_B))).toEqual([`model-grok-${apiType}-account-b`]);
-      expect(models(client, provider(KEY_A, `${BASE}/other`))).toEqual([`model-grok-${apiType}-other-endpoint`]);
+      const apiType: TakoApiType = client.id === "agy" ? "gemini" : ["codex", "grok"].includes(client.id) ? "openai" : "claude";
+      const prefix = fixturePrefix(apiType);
+      expect(models(client, provider(KEY_A))).toEqual([`model-${prefix}-account-a`]);
+      expect(models(client, provider(KEY_B))).toEqual([`model-${prefix}-account-b`]);
+      expect(models(client, provider(KEY_A, `${BASE}/other`))).toEqual([`model-${prefix}-other-endpoint`]);
       expect(models(client, provider("unseen-account")).some(id => id.includes("account-a") || id.includes("account-b")))
         .toBe(false);
     });
 
     it(`${client.id}: does not borrow model IDs from a different protocol's catalog`, () => {
-      const apiType = client.id === "agy" ? "gemini" : ["codex", "grok"].includes(client.id) ? "openai" : "claude";
+      const apiType: TakoApiType = client.id === "agy" ? "gemini" : ["codex", "grok"].includes(client.id) ? "openai" : "claude";
       writeFileSync(cache, JSON.stringify({ version: 2, buckets: Object.fromEntries(
         protocols.filter(protocol => protocol !== apiType).map(protocol => [
-          key(BASE, protocol, KEY_A), { fetchedAt: Date.now(), entries: [entry(`grok-unqualified-${protocol}`)] },
+          key(BASE, protocol, KEY_A),
+          {
+            fetchedAt: Date.now(),
+            entries: [entry(client.id === "agy" ? `gemini-4-unqualified-${protocol}` : `grok-unqualified-${protocol}`)],
+          },
         ]),
       ) }));
       expect(models(client, provider(KEY_A)).some(id => id.includes("unqualified"))).toBe(false);
     });
 
-    it(`${client.id}: a known empty or non-chat catalog does not re-enable static fallback models`, () => {
-      for (const entries of client.id === "agy" ? [[]] : [[], [entry("grok-image-fixture", "image")]]) {
+    it(`${client.id}: handles empty or non-eligible catalogs appropriately`, () => {
+      if (client.id === "agy") {
+        for (const entries of [[], [entry("deepseek-v4-flash"), entry("gemini-3-pro-image")]]) {
+          writeFileSync(cache, JSON.stringify({ version: 2, buckets: Object.fromEntries(protocols.map(apiType => [
+            key(BASE, apiType, KEY_A), { fetchedAt: Date.now(), entries },
+          ])) }));
+          _resetTakoCatalog();
+          expect(models(client, provider(KEY_A))).toEqual(defaultAgyOptionIds);
+        }
+        return;
+      }
+      for (const entries of [[], [entry("grok-image-fixture", "image")]]) {
         writeFileSync(cache, JSON.stringify({ version: 2, buckets: Object.fromEntries(protocols.map(apiType => [
           key(BASE, apiType, KEY_A), { fetchedAt: Date.now(), entries },
         ])) }));
@@ -83,10 +101,11 @@ describe("cross-client launcher catalog qualification", () => {
     });
   }
 
-  it("keeps legacy static launcher fallbacks only when no account catalog is available", () => {
+  it("keeps static launcher fallbacks when no account catalog is available", () => {
     for (const client of [claudeCodeClient, codexClient, piClient, grokClient]) {
       expect(models(client, provider("unseen-account")).length).toBeGreaterThan(0);
     }
-    expect(models(agyClient, provider("unseen-account"))).toEqual([]);
+    expect(models(agyClient, provider("unseen-account"))).toEqual(defaultAgyOptionIds);
+    expect(models(agyClient, { ...provider("unseen-account"), apiKey: "" })).toEqual([]);
   });
 });

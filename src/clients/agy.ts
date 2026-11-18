@@ -95,13 +95,103 @@ export function resolveAgyApiKey(
   );
 }
 
+export const DEFAULT_AGY_GATEWAY_MODELS = [
+  "claude-opus-4-6",
+  "claude-sonnet-4-6",
+  "gemini-3.8-flash",
+  "gemini-3.5-flash-lite",
+] as const;
+
+const AGY_NON_CHAT_MODEL_RE = /(?:^|-)(?:image|video|audio|tts|asr|embedding|veo|lyria|aqa)(?:$|-)/i;
+const AGY_GEMMA_MODEL_RE = /^gemma-/i;
+const AGY_SUPPORTED_MODEL_PATTERNS = [
+  /^claude-(?:opus|sonnet|haiku)-\d+(?:-\d+)*(?:-(?:thinking|low|medium|high|minimal|xhigh|max))?$/,
+  /^gemini-3\.8-flash(?:-(?:low|medium|high|minimal|xhigh|max))?$/,
+  /^gemini-3\.5-flash-lite(?:-(?:low|medium|high|minimal|xhigh|max))?$/,
+  /^gemini-4-[a-z0-9-]+$/,
+  /^gpt-oss-\d+[a-z0-9-]*$/,
+] as const;
+
+/** 剥离可能残留的 `models/` 前缀（例如 `models/claude-opus-4-6` -> `claude-opus-4-6`） */
+export function normalizeAgyModelId(modelId: string): string {
+  const trimmed = modelId.trim();
+  return /^models\//i.test(trimmed) ? trimmed.slice("models/".length) : trimmed;
+}
+
+export function isAgySupportedModelId(modelId: string): boolean {
+  const id = normalizeAgyModelId(modelId).toLowerCase();
+  if (!id || id.includes("/")) return false;
+  if (AGY_NON_CHAT_MODEL_RE.test(id) || AGY_GEMMA_MODEL_RE.test(id)) return false;
+  return AGY_SUPPORTED_MODEL_PATTERNS.some((pattern) => pattern.test(id));
+}
+
+export function resolveAgyGatewayModels(
+  providerOrConfig?: { type?: string; baseUrl?: string; agyApiKey?: string; apiKey?: string },
+  fallbackApiKey?: string,
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const key = resolveAgyApiKey(providerOrConfig, fallbackApiKey, env);
+  const gatewayUrl = resolveAgyGatewayUrl(providerOrConfig?.baseUrl, env);
+  const raw =
+    (gatewayUrl ? getTakoModels(gatewayUrl, "gemini", key) : null) ??
+    (providerOrConfig?.baseUrl && gatewayUrl !== providerOrConfig.baseUrl
+      ? getTakoModels(providerOrConfig.baseUrl, "gemini", key)
+      : null);
+
+  if (raw) {
+    const seen = new Set<string>();
+    const filtered: string[] = [];
+    for (const entry of filterChatModels(raw)) {
+      if (!isAgySupportedModelId(entry.id)) continue;
+      const normalized = normalizeAgyModelId(entry.id).toLowerCase();
+      if (!seen.has(normalized)) {
+        seen.add(normalized);
+        filtered.push(normalized);
+      }
+    }
+    if (filtered.length > 0) return filtered;
+  }
+
+  return [...DEFAULT_AGY_GATEWAY_MODELS];
+}
+
+export function resolveAgyTierModels(
+  models: readonly string[],
+): { pro: string; flash: string; flashLite: string } {
+  const list = models.length > 0 ? models : DEFAULT_AGY_GATEWAY_MODELS;
+  const pro = list.find((m) => /^claude-opus-|^gemini-4-/.test(m)) ?? list[0];
+  const flash = list.find((m) => /^claude-sonnet-|^gemini-3\.8-flash/.test(m)) ?? list[0];
+  const flashLite = list.find((m) => /flash-lite|^gpt-oss-/.test(m)) ?? flash;
+  return { pro, flash, flashLite };
+}
+
+function computeAgyGatewayEnvVars(
+  providerOrConfig?: { type?: string; baseUrl?: string; agyApiKey?: string; apiKey?: string },
+  fallbackApiKey?: string,
+  baseEnv: Record<string, string | undefined> = process.env,
+): Record<string, string> {
+  const gatewayUrl = resolveAgyGatewayUrl(providerOrConfig?.baseUrl, baseEnv);
+  const gatewayKey = resolveAgyApiKey(providerOrConfig, fallbackApiKey, baseEnv);
+  const models = resolveAgyGatewayModels(providerOrConfig, fallbackApiKey, baseEnv);
+  const tiers = resolveAgyTierModels(models);
+
+  const envVars: Record<string, string> = {};
+  if (gatewayUrl) envVars.AGY_LLM_GATEWAY_URL = gatewayUrl;
+  envVars.AGY_LLM_GATEWAY_API_KEY = gatewayKey;
+  envVars.AGY_LLM_GATEWAY_MODELS = baseEnv.AGY_LLM_GATEWAY_MODELS?.trim() || models.join(",");
+  envVars.AGY_LLM_GATEWAY_TIER_PRO = baseEnv.AGY_LLM_GATEWAY_TIER_PRO?.trim() || tiers.pro;
+  envVars.AGY_LLM_GATEWAY_TIER_FLASH = baseEnv.AGY_LLM_GATEWAY_TIER_FLASH?.trim() || tiers.flash;
+  envVars.AGY_LLM_GATEWAY_TIER_FLASH_LITE = baseEnv.AGY_LLM_GATEWAY_TIER_FLASH_LITE?.trim() || tiers.flashLite;
+  return envVars;
+}
+
 /**
  * 克隆子进程环境变量，删除所有冲突的 Gemini / Google / AICode 变量，
- * 并注入 AGY_LLM_GATEWAY_URL 与 AGY_LLM_GATEWAY_API_KEY。
+ * 并注入 AGY_LLM_GATEWAY_URL、AGY_LLM_GATEWAY_API_KEY、AGY_LLM_GATEWAY_MODELS 及 TIER_*。
  */
 export function prepareAgyEnv(
   baseEnv: Record<string, string | undefined>,
-  providerOrConfig?: { baseUrl?: string; agyApiKey?: string; apiKey?: string },
+  providerOrConfig?: { type?: string; baseUrl?: string; agyApiKey?: string; apiKey?: string },
   fallbackApiKey?: string,
 ): Record<string, string> {
   const env: Record<string, string> = {};
@@ -112,17 +202,8 @@ export function prepareAgyEnv(
     delete env[key];
   }
 
-  const gatewayUrl = resolveAgyGatewayUrl(providerOrConfig?.baseUrl, baseEnv);
-  const gatewayKey = resolveAgyApiKey(providerOrConfig, fallbackApiKey, baseEnv);
-  if (gatewayUrl) env.AGY_LLM_GATEWAY_URL = gatewayUrl;
-  env.AGY_LLM_GATEWAY_API_KEY = gatewayKey;
+  Object.assign(env, computeAgyGatewayEnvVars(providerOrConfig, fallbackApiKey, baseEnv));
   return env;
-}
-
-/** 剥离可能残留的 `models/` 前缀（例如 `models/gemini-2.5-pro` -> `gemini-2.5-pro`） */
-export function normalizeAgyModelId(modelId: string): string {
-  const trimmed = modelId.trim();
-  return trimmed.startsWith("models/") ? trimmed.slice("models/".length) : trimmed;
 }
 
 export function buildAgyArgs(opts?: {
@@ -273,11 +354,22 @@ export function buildAgyModelOptions(provider?: Provider): LaunchOption[] {
   const raw =
     getTakoModels(gatewayUrl, "gemini", key) ??
     (gatewayUrl !== provider.baseUrl ? getTakoModels(provider.baseUrl, "gemini", key) : null);
-  if (!raw) return [];
 
-  return filterChatModels(raw).map((entry) => {
-    const modelId = normalizeAgyModelId(entry.id);
-    return {
+  const filtered = raw
+    ? filterChatModels(raw).filter((entry) => isAgySupportedModelId(entry.id))
+    : [];
+  const entries: Array<{ id: string; displayName: string; description: string }> =
+    filtered.length > 0
+      ? filtered
+      : DEFAULT_AGY_GATEWAY_MODELS.map((id) => ({ id, displayName: id, description: "" }));
+
+  const seen = new Set<string>();
+  const options: LaunchOption[] = [];
+  for (const entry of entries) {
+    const modelId = normalizeAgyModelId(entry.id).toLowerCase();
+    if (seen.has(modelId)) continue;
+    seen.add(modelId);
+    options.push({
       id: `model-${modelId}`,
       label: { en: entry.displayName, zh: entry.displayName },
       shortLabel: entry.displayName,
@@ -288,8 +380,9 @@ export function buildAgyModelOptions(provider?: Provider): LaunchOption[] {
       flag: `--model ${modelId}`,
       args: ["--model", modelId],
       group: "model",
-    };
-  });
+    });
+  }
+  return options;
 }
 
 const AGY_BASE_FLAGS: LaunchOption[] = [
@@ -328,8 +421,8 @@ export const agyClient: ClientConfig = {
 
   getEnvVars(provider: ProviderContext) {
     return {
-      AGY_LLM_GATEWAY_URL: resolveAgyGatewayUrl(provider.baseUrl),
-      AGY_LLM_GATEWAY_API_KEY: resolveAgyApiKey(provider),
+      AGY_LLM_GATEWAY_URL: resolveAgyGatewayUrl(provider.baseUrl, process.env),
+      ...computeAgyGatewayEnvVars(provider, undefined, process.env),
     };
   },
 

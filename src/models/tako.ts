@@ -56,8 +56,9 @@ let diskLoaded = false;
 const inflight = new Map<string, Promise<void>>();
 
 function bucketKey(baseUrl: string, apiType: TakoApiType, apiKey: string): string {
+  const bucketType = apiType === "gemini" ? "agy-v2" : apiType;
   const fingerprint = createHash("sha256").update(apiKey).digest("hex");
-  return `${baseUrl.replace(/\/+$/, "")}#${apiType}#${fingerprint}`;
+  return `${baseUrl.replace(/\/+$/, "")}#${bucketType}#${fingerprint}`;
 }
 
 function loadDiskOnce(): void {
@@ -211,13 +212,15 @@ export function parseGeminiModels(json: unknown): TakoModelEntry[] {
 
 /** Read every page from the same Gemini endpoint without persisting keys in URLs. */
 async function fetchGeminiModels(baseUrl: string, apiKey: string): Promise<TakoModelEntry[] | null> {
-  const endpoint = `${baseUrl.replace(/\/+$/, "")}/v1beta/models`;
+  const base = new URL(baseUrl);
+  base.pathname = `${base.pathname.replace(/\/+$/, "")}/v1beta/models`;
   const signal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
   const entries = new Map<string, TakoModelEntry>();
   const seen = new Set<string>();
   let token: string | undefined;
   for (let page = 0; page < 100; page++) {
-    const url = new URL(endpoint);
+    const url = new URL(base);
+    url.searchParams.set("client", "agy");
     url.searchParams.set("pageSize", "1000");
     if (token) url.searchParams.set("pageToken", token);
     const response = await fetch(url, {

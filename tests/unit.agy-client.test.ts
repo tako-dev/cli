@@ -11,13 +11,18 @@ import {
   agyClient,
   agyStandardCandidates,
   buildAgyArgs,
+  buildAgyModelOptions,
+  DEFAULT_AGY_GATEWAY_MODELS,
   findAgyBinary,
+  isAgySupportedModelId,
   normalizeAgyGatewayUrl,
   normalizeAgyModelId,
   parseAgyVersion,
   prepareAgyEnv,
   resolveAgyApiKey,
+  resolveAgyGatewayModels,
   resolveAgyGatewayUrl,
+  resolveAgyTierModels,
   splitAgyPathEnv,
 } from "../src/clients/agy";
 import {
@@ -220,6 +225,66 @@ describe("Antigravity environment & gateway URL preparation", () => {
     expect(childEnv.PATH).toBe("/usr/bin:/bin");
     expect(childEnv.AGY_LLM_GATEWAY_URL).toBe("https://tako.shiroha.tech");
     expect(childEnv.AGY_LLM_GATEWAY_API_KEY).toBe("cr_dedicated_agy_key");
+    expect(childEnv.AGY_LLM_GATEWAY_MODELS).toBe(DEFAULT_AGY_GATEWAY_MODELS.join(","));
+    expect(childEnv.AGY_LLM_GATEWAY_TIER_PRO).toBe("claude-opus-4-6");
+    expect(childEnv.AGY_LLM_GATEWAY_TIER_FLASH).toBe("claude-sonnet-4-6");
+    expect(childEnv.AGY_LLM_GATEWAY_TIER_FLASH_LITE).toBe("gemini-3.5-flash-lite");
+  });
+
+  it("preserves non-empty user overrides for AGY_LLM_GATEWAY_MODELS and TIER_* in prepareAgyEnv and getEnvVars", () => {
+    const childEnv = prepareAgyEnv(
+      {
+        AGY_LLM_GATEWAY_MODELS: "  claude-opus-5-5,gemini-3.8-flash  ",
+        AGY_LLM_GATEWAY_TIER_PRO: "claude-opus-5-5",
+        AGY_LLM_GATEWAY_TIER_FLASH: "   ",
+        AGY_LLM_GATEWAY_TIER_FLASH_LITE: "gpt-oss-120b",
+      },
+      {
+        baseUrl: "https://tako.shiroha.tech/v1",
+        apiKey: "cr_main",
+      },
+    );
+
+    expect(childEnv.AGY_LLM_GATEWAY_MODELS).toBe("claude-opus-5-5,gemini-3.8-flash");
+    expect(childEnv.AGY_LLM_GATEWAY_TIER_PRO).toBe("claude-opus-5-5");
+    expect(childEnv.AGY_LLM_GATEWAY_TIER_FLASH).toBe("claude-sonnet-4-6");
+    expect(childEnv.AGY_LLM_GATEWAY_TIER_FLASH_LITE).toBe("gpt-oss-120b");
+
+    const saved: Record<string, string | undefined> = {};
+    const keys = [
+      "AGY_LLM_GATEWAY_MODELS",
+      "AGY_LLM_GATEWAY_TIER_PRO",
+      "AGY_LLM_GATEWAY_TIER_FLASH",
+      "AGY_LLM_GATEWAY_TIER_FLASH_LITE",
+      "TAKO_AGY_GATEWAY_URL",
+      "TAKO_AGY_API_KEY",
+    ];
+    for (const k of keys) saved[k] = process.env[k];
+    try {
+      for (const k of keys) delete process.env[k];
+      process.env.AGY_LLM_GATEWAY_MODELS = "claude-sonnet-5-5,gemini-3.5-flash-lite";
+      process.env.AGY_LLM_GATEWAY_TIER_PRO = "gemini-4-pro";
+
+      const envVars = agyClient.getEnvVars({
+        type: "tako",
+        baseUrl: "https://tako.shiroha.tech/v1",
+        apiKey: "cr_main",
+        agyApiKey: "cr_agy_key",
+      });
+      expect(envVars).toEqual({
+        AGY_LLM_GATEWAY_URL: "https://tako.shiroha.tech",
+        AGY_LLM_GATEWAY_API_KEY: "cr_agy_key",
+        AGY_LLM_GATEWAY_MODELS: "claude-sonnet-5-5,gemini-3.5-flash-lite",
+        AGY_LLM_GATEWAY_TIER_PRO: "gemini-4-pro",
+        AGY_LLM_GATEWAY_TIER_FLASH: "claude-sonnet-4-6",
+        AGY_LLM_GATEWAY_TIER_FLASH_LITE: "gemini-3.5-flash-lite",
+      });
+    } finally {
+      for (const k of keys) {
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
+      }
+    }
   });
 
   it("emits Remove-Item for conflicting env vars in Windows PowerShell handoff scripts", () => {
@@ -239,7 +304,7 @@ describe("Antigravity environment & gateway URL preparation", () => {
   });
 });
 
-describe("Antigravity models, dangerous flag & quick-launch args", () => {
+describe("Antigravity models, filtering, tier resolution & quick-launch args", () => {
   let tmpDir: string;
   const BASE = "https://agy-models.example.test";
   const KEY = "cr_agy_models";
@@ -254,24 +319,64 @@ describe("Antigravity models, dangerous flag & quick-launch args", () => {
       JSON.stringify({
         version: 2,
         buckets: {
-          [`${BASE}#gemini#${FP}`]: {
+          [`${BASE}#agy-v2#${FP}`]: {
             fetchedAt: Date.now(),
             entries: [
               {
-                id: "models/gemini-2.5-pro",
-                displayName: "Gemini 2.5 Pro",
-                description: "Pro reasoning model",
-                contextWindow: 1048576,
+                id: "models/claude-opus-4-6",
+                displayName: "Claude Opus 4.6",
+                description: "Flagship reasoning model",
+                contextWindow: 1000000,
                 sortOrder: 0,
                 category: "chat",
               },
               {
-                id: "gemini-2.5-flash",
-                displayName: "Gemini 2.5 Flash",
-                description: "Fast model",
-                contextWindow: 1048576,
+                id: "claude-opus-4-6",
+                displayName: "Duplicate Claude Opus 4.6",
+                description: "Duplicate",
+                contextWindow: 1000000,
                 sortOrder: 1,
                 category: "chat",
+              },
+              {
+                id: "gemini-3.8-flash",
+                displayName: "Gemini 3.8 Flash",
+                description: "Fast multimodal model",
+                contextWindow: 1048576,
+                sortOrder: 2,
+                category: "chat",
+              },
+              {
+                id: "gpt-oss-120b",
+                displayName: "GPT OSS 120B",
+                description: "Open-weight fast model",
+                contextWindow: 128000,
+                sortOrder: 3,
+                category: "chat",
+              },
+              {
+                id: "deepseek-v4-flash",
+                displayName: "DeepSeek V4 Flash",
+                description: "Non-agy chat model",
+                contextWindow: 128000,
+                sortOrder: 4,
+                category: "chat",
+              },
+              {
+                id: "gemini-3-pro-image",
+                displayName: "Gemini 3 Pro Image",
+                description: "Image generation",
+                contextWindow: 32000,
+                sortOrder: 5,
+                category: "chat",
+              },
+              {
+                id: "claude-sonnet-4-6",
+                displayName: "Claude Sonnet Image Category",
+                description: "Marked non-chat",
+                contextWindow: 200000,
+                sortOrder: 6,
+                category: "image",
               },
             ],
           },
@@ -286,15 +391,185 @@ describe("Antigravity models, dangerous flag & quick-launch args", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("strips models/ prefix in normalizeAgyModelId and buildAgyArgs", () => {
-    expect(normalizeAgyModelId("models/gemini-2.5-pro")).toBe("gemini-2.5-pro");
-    expect(normalizeAgyModelId("gemini-2.5-pro")).toBe("gemini-2.5-pro");
-    expect(
-      buildAgyArgs({ model: "models/gemini-2.5-pro", skipPermissions: true, extraArgs: ["-c"] }),
-    ).toEqual(["--dangerously-skip-permissions", "--model", "gemini-2.5-pro", "-c"]);
+  it("matches only Antigravity-supported model families in isAgySupportedModelId", () => {
+    expect(DEFAULT_AGY_GATEWAY_MODELS).toEqual([
+      "claude-opus-4-6",
+      "claude-sonnet-4-6",
+      "gemini-3.8-flash",
+      "gemini-3.5-flash-lite",
+    ]);
+
+    const supported = [
+      "claude-opus-4-6",
+      "models/claude-opus-4-6",
+      "claude-sonnet-4-6",
+      "claude-opus-5-5",
+      "claude-sonnet-5-5",
+      "claude-haiku-4-5",
+      "claude-opus-4-6-thinking",
+      "claude-sonnet-4-6-high",
+      "claude-haiku-4-5-20251001",
+      "gemini-3.8-flash",
+      "gemini-3.8-flash-high",
+      "gemini-3.5-flash-lite",
+      "gemini-3.5-flash-lite-low",
+      "gemini-4-pro",
+      "gemini-4-flash-preview",
+      "gpt-oss-120b",
+      "gpt-oss-20b-medium",
+    ];
+    for (const id of supported) {
+      expect(isAgySupportedModelId(id)).toBe(true);
+    }
+
+    const rejected = [
+      "",
+      "   ",
+      "models/",
+      "anthropic/claude-opus-4-6",
+      "claude-opus-4.6",
+      "claude-opus-4-6[1m]",
+      "gemini-2.5-pro",
+      "gemini-2.5-flash",
+      "gemini-3.1-pro-preview",
+      "gemini-3-pro-image",
+      "gemini-3.1-flash-image",
+      "gemini-4-image",
+      "gemini-4-pro-video",
+      "gemini-4-tts",
+      "gemini-4-embedding",
+      "veo-3",
+      "lyria-2",
+      "aqa",
+      "gemma-4-31b-it",
+      "glm-5.3",
+      "deepseek-v4-flash",
+      "kimi-k3",
+      "gpt-6-sol",
+      "gpt-5.6",
+      "grok-4.6",
+      "mimo-v2.6-pro",
+      "minimax-m3",
+      "swe-2-flash",
+      "tako-auto",
+      "composer-2.5",
+    ];
+    for (const id of rejected) {
+      expect(isAgySupportedModelId(id)).toBe(false);
+    }
   });
 
-  it("exposes skip-permissions and stripped Gemini model options even when provider baseUrl has /v1", () => {
+  it("resolves tier models with expected fallbacks in resolveAgyTierModels", () => {
+    expect(resolveAgyTierModels(DEFAULT_AGY_GATEWAY_MODELS)).toEqual({
+      pro: "claude-opus-4-6",
+      flash: "claude-sonnet-4-6",
+      flashLite: "gemini-3.5-flash-lite",
+    });
+
+    expect(resolveAgyTierModels([])).toEqual({
+      pro: "claude-opus-4-6",
+      flash: "claude-sonnet-4-6",
+      flashLite: "gemini-3.5-flash-lite",
+    });
+
+    expect(resolveAgyTierModels(["gemini-4-pro", "gemini-3.8-flash", "gpt-oss-120b"])).toEqual({
+      pro: "gemini-4-pro",
+      flash: "gemini-3.8-flash",
+      flashLite: "gpt-oss-120b",
+    });
+
+    expect(resolveAgyTierModels(["claude-haiku-4-5", "claude-sonnet-4-6"])).toEqual({
+      pro: "claude-haiku-4-5",
+      flash: "claude-sonnet-4-6",
+      flashLite: "claude-sonnet-4-6",
+    });
+  });
+
+  it("resolves filtered Agy gateway models from #agy-v2# cache and injects into prepareAgyEnv / getEnvVars", () => {
+    const models = resolveAgyGatewayModels(
+      { baseUrl: `${BASE}/v1`, apiKey: "cr_unused", agyApiKey: KEY },
+      undefined,
+      {},
+    );
+    expect(models).toEqual(["claude-opus-4-6", "gemini-3.8-flash", "gpt-oss-120b"]);
+
+    const env = prepareAgyEnv({}, { baseUrl: `${BASE}/v1`, apiKey: "cr_unused", agyApiKey: KEY });
+    expect(env.AGY_LLM_GATEWAY_URL).toBe(BASE);
+    expect(env.AGY_LLM_GATEWAY_API_KEY).toBe(KEY);
+    expect(env.AGY_LLM_GATEWAY_MODELS).toBe("claude-opus-4-6,gemini-3.8-flash,gpt-oss-120b");
+    expect(env.AGY_LLM_GATEWAY_TIER_PRO).toBe("claude-opus-4-6");
+    expect(env.AGY_LLM_GATEWAY_TIER_FLASH).toBe("gemini-3.8-flash");
+    expect(env.AGY_LLM_GATEWAY_TIER_FLASH_LITE).toBe("gpt-oss-120b");
+  });
+
+  it("falls back to DEFAULT_AGY_GATEWAY_MODELS on cold cache, stale #gemini# cache, or non-agy-only cache", () => {
+    const coldProv: Provider = {
+      id: "p-cold",
+      name: "Cold",
+      type: "tako",
+      baseUrl: "https://cold.example.test/v1",
+      apiKey: "cr_cold",
+      createdAt: "2026-11-18T00:00:00.000Z",
+    };
+    expect(resolveAgyGatewayModels(coldProv, undefined, {})).toEqual([...DEFAULT_AGY_GATEWAY_MODELS]);
+    expect(buildAgyModelOptions(coldProv).map((o) => o.id)).toEqual(
+      DEFAULT_AGY_GATEWAY_MODELS.map((id) => `model-${id}`),
+    );
+
+    // Stale v0.3.54 #gemini# bucket + #agy-v2# with only non-agy models
+    const staleKey = "cr_stale_v0354";
+    const staleFp = createHash("sha256").update(staleKey).digest("hex");
+    const nonAgyKey = "cr_non_agy_only";
+    const nonAgyFp = createHash("sha256").update(nonAgyKey).digest("hex");
+    writeFileSync(
+      join(tmpDir, "models-cache.json"),
+      JSON.stringify({
+        version: 2,
+        buckets: {
+          [`${BASE}#gemini#${staleFp}`]: {
+            fetchedAt: Date.now(),
+            entries: [
+              { id: "deepseek-v4-flash", displayName: "DeepSeek", description: "", contextWindow: 128000, sortOrder: 0, category: "chat" },
+              { id: "glm-5.3", displayName: "GLM 5.3", description: "", contextWindow: 128000, sortOrder: 1, category: "chat" },
+            ],
+          },
+          [`${BASE}#agy-v2#${nonAgyFp}`]: {
+            fetchedAt: Date.now(),
+            entries: [
+              { id: "deepseek-v4-flash", displayName: "DeepSeek", description: "", contextWindow: 128000, sortOrder: 0, category: "chat" },
+              { id: "gemini-3.1-pro-preview", displayName: "Gemini 3.1 Pro", description: "", contextWindow: 1000000, sortOrder: 1, category: "chat" },
+            ],
+          },
+        },
+      }),
+    );
+    _resetTakoCatalog();
+
+    for (const apiKey of [staleKey, nonAgyKey]) {
+      const prov: Provider = {
+        id: "p-fallback",
+        name: "Tako",
+        type: "tako",
+        baseUrl: `${BASE}/v1`,
+        apiKey,
+        createdAt: "2026-11-18T00:00:00.000Z",
+      };
+      expect(resolveAgyGatewayModels(prov, undefined, {})).toEqual([...DEFAULT_AGY_GATEWAY_MODELS]);
+      expect(buildAgyModelOptions(prov).map((o) => o.id)).toEqual(
+        DEFAULT_AGY_GATEWAY_MODELS.map((id) => `model-${id}`),
+      );
+    }
+  });
+
+  it("strips models/ prefix in normalizeAgyModelId and buildAgyArgs", () => {
+    expect(normalizeAgyModelId("models/claude-opus-4-6")).toBe("claude-opus-4-6");
+    expect(normalizeAgyModelId("claude-opus-4-6")).toBe("claude-opus-4-6");
+    expect(
+      buildAgyArgs({ model: "models/claude-opus-4-6", skipPermissions: true, extraArgs: ["-c"] }),
+    ).toEqual(["--dangerously-skip-permissions", "--model", "claude-opus-4-6", "-c"]);
+  });
+
+  it("exposes skip-permissions and filtered Agy model options even when provider baseUrl has /v1", () => {
     const prov: Provider = {
       id: "p-agy",
       name: "Tako",
@@ -311,22 +586,27 @@ describe("Antigravity models, dangerous flag & quick-launch args", () => {
     expect(options[0]?.defaultOn).toBe(true);
 
     const modelOpts = options.filter((o) => o.group === "model");
-    expect(modelOpts.map((o) => o.id)).toEqual(["model-gemini-2.5-pro", "model-gemini-2.5-flash"]);
-    expect(modelOpts[0]?.args).toEqual(["--model", "gemini-2.5-pro"]);
+    expect(modelOpts.map((o) => o.id)).toEqual([
+      "model-claude-opus-4-6",
+      "model-gemini-3.8-flash",
+      "model-gpt-oss-120b",
+    ]);
+    expect(modelOpts[0]?.args).toEqual(["--model", "claude-opus-4-6"]);
+    expect(modelOpts[0]?.shortLabel).toBe("Claude Opus 4.6");
   });
 
   it("wires --agy passthrough args with inherited --dangerously-skip-permissions and model normalization", async () => {
     expect(
-      await buildPassthroughArgs("agy", ["--agy", "--model", "models/gemini-2.5-pro"], "--agy", {
+      await buildPassthroughArgs("agy", ["--agy", "--model", "models/claude-opus-4-6"], "--agy", {
         getLastSelectedOptionIds: async () => [],
       }),
-    ).toEqual(["--dangerously-skip-permissions", "--model", "gemini-2.5-pro"]);
+    ).toEqual(["--dangerously-skip-permissions", "--model", "claude-opus-4-6"]);
 
     expect(
-      await buildPassthroughArgs("agy", ["--agy", "--model=models/gemini-2.5-flash"], "--agy", {
-        getLastSelectedOptionIds: async () => ["model-gemini-2.5-flash"],
+      await buildPassthroughArgs("agy", ["--agy", "--model=models/gemini-3.8-flash"], "--agy", {
+        getLastSelectedOptionIds: async () => ["model-gemini-3.8-flash"],
       }),
-    ).toEqual(["--model=gemini-2.5-flash"]);
+    ).toEqual(["--model=gemini-3.8-flash"]);
 
     expect(
       await buildPassthroughArgs("agy", ["--agy", "--dangerously-skip-permissions"], "--agy", {
@@ -534,6 +814,10 @@ writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
   argv: process.argv.slice(2),
   AGY_LLM_GATEWAY_URL: process.env.AGY_LLM_GATEWAY_URL ?? null,
   AGY_LLM_GATEWAY_API_KEY: process.env.AGY_LLM_GATEWAY_API_KEY ?? null,
+  AGY_LLM_GATEWAY_MODELS: process.env.AGY_LLM_GATEWAY_MODELS ?? null,
+  AGY_LLM_GATEWAY_TIER_PRO: process.env.AGY_LLM_GATEWAY_TIER_PRO ?? null,
+  AGY_LLM_GATEWAY_TIER_FLASH: process.env.AGY_LLM_GATEWAY_TIER_FLASH ?? null,
+  AGY_LLM_GATEWAY_TIER_FLASH_LITE: process.env.AGY_LLM_GATEWAY_TIER_FLASH_LITE ?? null,
   hasGeminiBase: Object.hasOwn(process.env, "GOOGLE_GEMINI_BASE_URL"),
   hasGeminiKey: Object.hasOwn(process.env, "GEMINI_API_KEY"),
   hasGoogleKey: Object.hasOwn(process.env, "GOOGLE_API_KEY"),
@@ -591,6 +875,27 @@ writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
       delete cleanParentEnv.AGY_INSTALL_DIR;
       delete cleanParentEnv.TAKO_AGY_API_KEY;
       delete cleanParentEnv.TAKO_AGY_GATEWAY_URL;
+      delete cleanParentEnv.AGY_LLM_GATEWAY_URL;
+      delete cleanParentEnv.AGY_LLM_GATEWAY_API_KEY;
+      delete cleanParentEnv.AGY_LLM_GATEWAY_MODELS;
+      delete cleanParentEnv.AGY_LLM_GATEWAY_TIER_PRO;
+      delete cleanParentEnv.AGY_LLM_GATEWAY_TIER_FLASH;
+      delete cleanParentEnv.AGY_LLM_GATEWAY_TIER_FLASH_LITE;
+      for (const proxyKey of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]) {
+        delete cleanParentEnv[proxyKey];
+      }
+
+      // Seed telemetryEnabled: false before `tako install agy` so `track("client_installed")`
+      // never opens an outbound OpenPanel HTTP connection during hermetic unit tests.
+      writeFileSync(
+        join(takoHome, "config.json"),
+        JSON.stringify({
+          apiKey: "",
+          apiId: "",
+          telemetryEnabled: false,
+          installedClients: {},
+        }),
+      );
 
       // Step 1: `tako install agy` installs into platform target location
       const installProc = Bun.spawn([process.execPath, cliEntry, "install", "agy"], {
@@ -619,6 +924,7 @@ writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
           apiKey: "cr_claude_main",
           agyApiKey: "cr_agy_dedicated",
           apiId: "uuid-e2e",
+          telemetryEnabled: false,
           installedClients: {},
           providers: [
             {
@@ -666,6 +972,10 @@ writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
         expect(handoffText).toContain("'--dangerously-skip-permissions', '--model', 'gemini-2.5-pro', '-p', 'hi'");
         expect(handoffText).toContain("$env:AGY_LLM_GATEWAY_URL = 'https://tako.shiroha.tech'");
         expect(handoffText).toContain("$env:AGY_LLM_GATEWAY_API_KEY = 'cr_agy_dedicated'");
+        expect(handoffText).toContain(`$env:AGY_LLM_GATEWAY_MODELS = '${DEFAULT_AGY_GATEWAY_MODELS.join(",")}'`);
+        expect(handoffText).toContain("$env:AGY_LLM_GATEWAY_TIER_PRO = 'claude-opus-4-6'");
+        expect(handoffText).toContain("$env:AGY_LLM_GATEWAY_TIER_FLASH = 'claude-sonnet-4-6'");
+        expect(handoffText).toContain("$env:AGY_LLM_GATEWAY_TIER_FLASH_LITE = 'gemini-3.5-flash-lite'");
         for (const conflictKey of AGY_CONFLICTING_ENV_KEYS) {
           expect(handoffText).toContain(`Remove-Item -Path Env:${conflictKey} -ErrorAction SilentlyContinue`);
         }
@@ -675,6 +985,10 @@ writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
           argv: ["--dangerously-skip-permissions", "--model", "gemini-2.5-pro", "-p", "hi"],
           AGY_LLM_GATEWAY_URL: "https://tako.shiroha.tech",
           AGY_LLM_GATEWAY_API_KEY: "cr_agy_dedicated",
+          AGY_LLM_GATEWAY_MODELS: DEFAULT_AGY_GATEWAY_MODELS.join(","),
+          AGY_LLM_GATEWAY_TIER_PRO: "claude-opus-4-6",
+          AGY_LLM_GATEWAY_TIER_FLASH: "claude-sonnet-4-6",
+          AGY_LLM_GATEWAY_TIER_FLASH_LITE: "gemini-3.5-flash-lite",
           hasGeminiBase: false,
           hasGeminiKey: false,
           hasGoogleKey: false,
@@ -684,6 +998,83 @@ writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
     } finally {
       server.stop(true);
     }
+  }, 15000);
+
+  it("cold-starts launchClient(agyClient) in milliseconds without probing Tako bun or node binaries", async () => {
+    const isWin = process.platform === "win32";
+    const takoHome = join(tmp, "cold-launch-tako");
+    const bunMarker = join(tmp, "bun-probed");
+    const nodeMarker = join(tmp, "node-probed");
+    const mockAgy = join(tmp, isWin ? "agy.exe" : "agy");
+
+    if (isWin) {
+      mkdirSync(join(takoHome, "bun", "bin"), { recursive: true });
+      mkdirSync(join(takoHome, "node"), { recursive: true });
+      writeFileSync(join(takoHome, "bun", "bin", "bun.exe"), "not-a-valid-exe");
+      writeFileSync(join(takoHome, "node", "node.exe"), "not-a-valid-exe");
+      writeFileSync(mockAgy, "MZ-mock-agy");
+    } else {
+      mkdirSync(join(takoHome, "bun", "bin"), { recursive: true });
+      mkdirSync(join(takoHome, "node", "bin"), { recursive: true });
+      writeFileSync(
+        join(takoHome, "bun", "bin", "bun"),
+        `#!/bin/sh\necho 1 > ${JSON.stringify(bunMarker)}\nsleep 5\nexit 1\n`,
+        { mode: 0o755 },
+      );
+      writeFileSync(
+        join(takoHome, "node", "bin", "node"),
+        `#!/bin/sh\necho 1 > ${JSON.stringify(nodeMarker)}\nsleep 5\nexit 1\n`,
+        { mode: 0o755 },
+      );
+      writeFileSync(mockAgy, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    }
+
+    const launcherUrl = new URL("../src/launcher-legacy.ts", import.meta.url).href;
+    const agyUrl = new URL("../src/clients/agy.ts", import.meta.url).href;
+    const handoffFile = join(tmp, "cold-handoff.ps1");
+    const script = `
+      const { launchClient } = await import(${JSON.stringify(launcherUrl)});
+      const { agyClient } = await import(${JSON.stringify(agyUrl)});
+      const t0 = performance.now();
+      const res = await launchClient(agyClient, {
+        projectPath: ${JSON.stringify(tmp)},
+        args: ["--version"],
+        handoffOnWindows: true,
+        providerContext: {
+          type: "tako",
+          baseUrl: "https://tako.shiroha.tech/v1",
+          apiKey: "cr_main",
+          agyApiKey: "cr_agy",
+        },
+      });
+      const elapsedMs = performance.now() - t0;
+      console.log(JSON.stringify({ res, elapsedMs }));
+    `;
+
+    const proc = Bun.spawn([process.execPath, "-e", script], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        TAKO_HOME: takoHome,
+        TAKO_DEV: "1",
+        AGY_PATH: mockAgy,
+        ...(isWin ? { TAKO_WINDOWS_HANDOFF_FILE: handoffFile } : {}),
+      },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const { res, elapsedMs } = JSON.parse(stdout.trim());
+    expect(res.success).toBe(true);
+    expect(elapsedMs).toBeLessThan(200);
+    expect(existsSync(bunMarker)).toBe(false);
+    expect(existsSync(nodeMarker)).toBe(false);
   });
 });
 

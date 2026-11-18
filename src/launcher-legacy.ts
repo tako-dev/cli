@@ -59,13 +59,20 @@ export async function launchClient(
     }
     Object.assign(env, extraEnv);
 
+    const needsNode = client.runtime === "node";
+    const needsBun =
+      !needsNode &&
+      (client.runtime !== "native" || (isWindows && binPath.toLowerCase().endsWith(".js")));
+    const bunPath = needsBun ? await getBunPath() : "";
+    const nodePath = needsNode ? await getNodePath() : undefined;
+
     const command = buildClientLaunchCommand(
       client,
       binPath,
-      await getBunPath(),
+      bunPath,
       options?.args ?? [],
       isWindows ? "win32" : process.platform,
-      await getNodePath(),
+      nodePath,
     );
 
     if (isWindows && options?.handoffOnWindows) {
