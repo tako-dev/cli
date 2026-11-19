@@ -6,12 +6,22 @@ import { PassThrough } from "node:stream";
 import {
   DEFAULT_AGY_GATEWAY_MODELS,
   GEMINI_38_FLASH_EFFORT_VARIANTS,
+  agyClient,
   buildAgyModelOptions,
   expandAgyGatewayModelsWithEffort,
+  isAgySupportedModelId,
   prepareAgyEnv,
+  resolveAgyGatewayEffortMap,
   resolveAgyGatewayModels,
   resolveAgyTierModels,
 } from "../src/clients/agy";
+import {
+  _resetTakoCatalog,
+  _setCachePathForTest,
+  getTakoModels,
+  parseGeminiModels,
+  refreshTakoModels,
+} from "../src/models/tako";
 import {
   MIN_MCP_VERSION,
   TAKO_MCP_SERVER_NAME,
@@ -104,6 +114,334 @@ describe("Feature 1: Official Effort Slider expansion for gemini-3.8-flash", () 
       provider,
     );
     expect(overridden.AGY_LLM_GATEWAY_MODELS).toBe("claude-opus-4-6,gemini-3.8-flash");
+  });
+});
+
+describe("Feature 1b: Server-driven supportedEffortLevels parsing & dynamic agy effort expansion", () => {
+  const originalFetch = globalThis.fetch;
+  let tmp: string;
+  let cacheFile: string;
+  const savedEnv: Record<string, string | undefined> = {};
+  const envKeys = [
+    "AGY_LLM_GATEWAY_MODELS",
+    "AGY_LLM_GATEWAY_TIER_PRO",
+    "AGY_LLM_GATEWAY_TIER_FLASH",
+    "AGY_LLM_GATEWAY_TIER_FLASH_LITE",
+    "TAKO_AGY_GATEWAY_URL",
+    "TAKO_AGY_API_KEY",
+  ] as const;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "tako-agy-server-effort-"));
+    cacheFile = join(tmp, "tako-models-cache.json");
+    _setCachePathForTest(cacheFile);
+    _resetTakoCatalog();
+    for (const k of envKeys) {
+      savedEnv[k] = process.env[k];
+      delete process.env[k];
+    }
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    _setCachePathForTest(null);
+    _resetTakoCatalog();
+    for (const k of envKeys) {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k];
+    }
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("parses and sanitizes supportedEffortLevels in parseGeminiModels and omits when empty/invalid", () => {
+    const parsed = parseGeminiModels({
+      models: [
+        {
+          name: "models/claude-opus-4-6",
+          displayName: "Claude Opus 4.6",
+          inputTokenLimit: 1000000,
+          supportedGenerationMethods: ["generateContent"],
+          supportedEffortLevels: [" low ", "HIGH", "off", "medium", "low", "XHIGH", "max", "minimal", "turbo", 42, null],
+        },
+        {
+          name: "models/gemini-3.9-flash",
+          displayName: "Gemini 3.9 Flash",
+          inputTokenLimit: 1048576,
+          supportedGenerationMethods: ["generateContent"],
+          supportedEffortLevels: ["off", "unknown", "", 123],
+        },
+        {
+          name: "models/gemini-3.5-flash-lite",
+          displayName: "Gemini 3.5 Flash Lite",
+          inputTokenLimit: 1048576,
+          supportedGenerationMethods: ["generateContent"],
+          supportedEffortLevels: "high",
+        },
+        {
+          name: "models/claude-sonnet-4-6",
+          displayName: "Claude Sonnet 4.6",
+          inputTokenLimit: 1000000,
+          supportedGenerationMethods: ["generateContent"],
+        },
+      ],
+    });
+
+    expect(parsed).toEqual([
+      {
+        id: "claude-opus-4-6",
+        displayName: "Claude Opus 4.6",
+        description: "",
+        contextWindow: 1000000,
+        sortOrder: 0,
+        category: "chat",
+        supportedEffortLevels: ["low", "high", "medium", "xhigh", "max", "minimal"],
+      },
+      {
+        id: "gemini-3.9-flash",
+        displayName: "Gemini 3.9 Flash",
+        description: "",
+        contextWindow: 1048576,
+        sortOrder: 1,
+        category: "chat",
+      },
+      {
+        id: "gemini-3.5-flash-lite",
+        displayName: "Gemini 3.5 Flash Lite",
+        description: "",
+        contextWindow: 1048576,
+        sortOrder: 2,
+        category: "chat",
+      },
+      {
+        id: "claude-sonnet-4-6",
+        displayName: "Claude Sonnet 4.6",
+        description: "",
+        contextWindow: 1000000,
+        sortOrder: 3,
+        category: "chat",
+      },
+    ]);
+
+    expect(Object.hasOwn(parsed[0]!, "supportedEffortLevels")).toBe(true);
+    expect(Object.hasOwn(parsed[1]!, "supportedEffortLevels")).toBe(false);
+    expect(Object.hasOwn(parsed[2]!, "supportedEffortLevels")).toBe(false);
+    expect(Object.hasOwn(parsed[3]!, "supportedEffortLevels")).toBe(false);
+  });
+
+  it("supports future gemini-3.x-flash models in allowlist and flash tier without matching flash-lite or image models", () => {
+    for (const ok of [
+      "gemini-3.9-flash",
+      "gemini-3.9-flash-high",
+      "gemini-3.10-flash-xhigh",
+      "gemini-3.0-flash-minimal",
+      "gemini-3.5-flash-lite",
+      "gemini-3.5-flash-lite-low",
+    ]) {
+      expect(isAgySupportedModelId(ok)).toBe(true);
+    }
+
+    for (const bad of [
+      "gemini-3.9-flash-image",
+      "gemini-3.1-flash-image",
+      "gemini-2.5-flash",
+      "gemini-3.1-pro-preview",
+    ]) {
+      expect(isAgySupportedModelId(bad)).toBe(false);
+    }
+
+    expect(
+      resolveAgyTierModels(["claude-opus-4-6", "gemini-3.5-flash-lite", "gemini-3.9-flash"]),
+    ).toEqual({
+      pro: "claude-opus-4-6",
+      flash: "gemini-3.9-flash",
+      flashLite: "gemini-3.5-flash-lite",
+    });
+  });
+
+  it("expands models dynamically via effortByModel in canonical highest->lowest order with per-base explicit-sibling guard", () => {
+    const effortMap = new Map<string, readonly string[]>([
+      ["claude-opus-4-6", ["low", "max", "medium", "off", "xhigh", "high", "HIGH"]],
+      ["gemini-3.9-flash", ["minimal", "low", "high"]],
+      ["gemini-3.8-flash", ["low", "minimal", "medium", "high"]],
+    ]);
+
+    expect(
+      expandAgyGatewayModelsWithEffort(
+        ["claude-opus-4-6", "gemini-3.9-flash", "gemini-3.8-flash", "gemini-3.5-flash-lite"],
+        effortMap,
+      ),
+    ).toEqual([
+      "claude-opus-4-6-max",
+      "claude-opus-4-6-xhigh",
+      "claude-opus-4-6-high",
+      "claude-opus-4-6-medium",
+      "claude-opus-4-6-low",
+      "gemini-3.9-flash-high",
+      "gemini-3.9-flash-low",
+      "gemini-3.9-flash-minimal",
+      "gemini-3.8-flash-high",
+      "gemini-3.8-flash-medium",
+      "gemini-3.8-flash-low",
+      "gemini-3.8-flash-minimal",
+      "gemini-3.5-flash-lite",
+    ]);
+
+    // Explicit suffixed sibling only suppresses expansion for that base model
+    expect(
+      expandAgyGatewayModelsWithEffort(
+        ["claude-opus-4-6", "gemini-3.9-flash", "gemini-3.9-flash-low"],
+        new Map([
+          ["claude-opus-4-6", ["low", "high"]],
+          ["gemini-3.9-flash", ["low", "high"]],
+        ]),
+      ),
+    ).toEqual([
+      "claude-opus-4-6-high",
+      "claude-opus-4-6-low",
+      "gemini-3.9-flash",
+      "gemini-3.9-flash-low",
+    ]);
+
+    // Already-suffixed models are never double-suffixed
+    expect(
+      expandAgyGatewayModelsWithEffort(
+        ["claude-opus-4-6-max"],
+        new Map([["claude-opus-4-6-max", ["low", "high"]]]),
+      ),
+    ).toEqual(["claude-opus-4-6-max"]);
+
+    // Explicit empty / off-only entry in effortByModel keeps bare model as-is (even for gemini-3.8-flash)
+    expect(
+      expandAgyGatewayModelsWithEffort(
+        ["gemini-3.8-flash"],
+        new Map([["gemini-3.8-flash", ["off", "invalid"]]]),
+      ),
+    ).toEqual(["gemini-3.8-flash"]);
+
+    // When gemini-3.8-flash is NOT in effortByModel, it still falls back to default high/medium/low
+    expect(
+      expandAgyGatewayModelsWithEffort(
+        ["claude-opus-4-6", "gemini-3.8-flash"],
+        new Map([["claude-opus-4-6", ["low", "max"]]]),
+      ),
+    ).toEqual([
+      "claude-opus-4-6-max",
+      "claude-opus-4-6-low",
+      "gemini-3.8-flash-high",
+      "gemini-3.8-flash-medium",
+      "gemini-3.8-flash-low",
+    ]);
+  });
+
+  it("persists supportedEffortLevels through #agy-v2# disk cache and wires end-to-end env injection without bloating picker", async () => {
+    const baseUrl = "https://server-effort.example.test";
+    const apiKey = "cr_server_effort_key";
+    const provider: Provider = {
+      id: "prov-effort",
+      name: "Tako",
+      type: "tako",
+      baseUrl: `${baseUrl}/v1`,
+      apiKey: "cr_unused_main",
+      agyApiKey: apiKey,
+      createdAt: "2026-11-19T00:00:00.000Z",
+    };
+
+    // Cold cache -> effort map is undefined
+    expect(resolveAgyGatewayEffortMap(provider, undefined, {})).toBeUndefined();
+
+    globalThis.fetch = (async () =>
+      Response.json({
+        models: [
+          {
+            name: "models/claude-opus-4-6",
+            displayName: "Claude Opus 4.6",
+            inputTokenLimit: 1000000,
+            supportedGenerationMethods: ["generateContent"],
+            supportedEffortLevels: ["low", "medium", "high", "max"],
+          },
+          {
+            name: "models/gemini-3.9-flash",
+            displayName: "Gemini 3.9 Flash",
+            inputTokenLimit: 1048576,
+            supportedGenerationMethods: ["generateContent"],
+            supportedEffortLevels: ["minimal", "low", "medium", "high"],
+          },
+          {
+            name: "models/gemini-3.5-flash-lite",
+            displayName: "Gemini 3.5 Flash Lite",
+            inputTokenLimit: 1048576,
+            supportedGenerationMethods: ["generateContent"],
+          },
+          {
+            name: "models/deepseek-v4-flash",
+            displayName: "DeepSeek V4 Flash",
+            inputTokenLimit: 128000,
+            supportedGenerationMethods: ["generateContent"],
+            supportedEffortLevels: ["low", "high"],
+          },
+        ],
+      })) as unknown as typeof fetch;
+
+    await refreshTakoModels(baseUrl, apiKey, "gemini");
+
+    // Verify disk cache stays on #agy-v2# and survives full memory reset round-trip
+    const rawDisk = readFileSync(cacheFile, "utf8");
+    expect(rawDisk).toContain("#agy-v2#");
+    expect(rawDisk).toContain("supportedEffortLevels");
+
+    _resetTakoCatalog();
+    const reloaded = getTakoModels(baseUrl, "gemini", apiKey);
+    expect(reloaded?.find((e) => e.id === "claude-opus-4-6")?.supportedEffortLevels).toEqual([
+      "low",
+      "medium",
+      "high",
+      "max",
+    ]);
+
+    const effortMap = resolveAgyGatewayEffortMap(provider, undefined, {});
+    expect(effortMap).toBeDefined();
+    expect(effortMap?.get("claude-opus-4-6")).toEqual(["low", "medium", "high", "max"]);
+    expect(effortMap?.get("gemini-3.9-flash")).toEqual(["minimal", "low", "medium", "high"]);
+    expect(effortMap?.has("gemini-3.5-flash-lite")).toBe(false);
+    expect(effortMap?.has("deepseek-v4-flash")).toBe(false);
+
+    // Launcher picker & resolveAgyGatewayModels remain bare single-row IDs
+    expect(resolveAgyGatewayModels(provider, undefined, {})).toEqual([
+      "claude-opus-4-6",
+      "gemini-3.9-flash",
+      "gemini-3.5-flash-lite",
+    ]);
+    expect(buildAgyModelOptions(provider).map((o) => o.id)).toEqual([
+      "model-claude-opus-4-6",
+      "model-gemini-3.9-flash",
+      "model-gemini-3.5-flash-lite",
+    ]);
+
+    // Gateway env expands dynamically while keeping TIER_* bare canonical
+    const expectedModelsCsv = [
+      "claude-opus-4-6-max",
+      "claude-opus-4-6-high",
+      "claude-opus-4-6-medium",
+      "claude-opus-4-6-low",
+      "gemini-3.9-flash-high",
+      "gemini-3.9-flash-medium",
+      "gemini-3.9-flash-low",
+      "gemini-3.9-flash-minimal",
+      "gemini-3.5-flash-lite",
+    ].join(",");
+
+    const prepared = prepareAgyEnv({}, provider);
+    const clientVars = agyClient.getEnvVars(provider);
+    for (const env of [prepared, clientVars]) {
+      expect(env.AGY_LLM_GATEWAY_MODELS).toBe(expectedModelsCsv);
+      expect(env.AGY_LLM_GATEWAY_TIER_PRO).toBe("claude-opus-4-6");
+      expect(env.AGY_LLM_GATEWAY_TIER_FLASH).toBe("gemini-3.9-flash");
+      expect(env.AGY_LLM_GATEWAY_TIER_FLASH_LITE).toBe("gemini-3.5-flash-lite");
+    }
+
+    // Explicit env override still wins verbatim
+    const overridden = prepareAgyEnv({ AGY_LLM_GATEWAY_MODELS: "claude-opus-4-6,gemini-3.9-flash" }, provider);
+    expect(overridden.AGY_LLM_GATEWAY_MODELS).toBe("claude-opus-4-6,gemini-3.9-flash");
   });
 });
 
