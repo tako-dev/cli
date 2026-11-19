@@ -8,6 +8,7 @@ import { launchClientUnified } from "./launcher";
 import { t } from "./i18n";
 import { track, identify, shutdown } from "./analytics";
 import { statusLineCommand, injectStatusLineConfig, injectAgyStatusLineConfig } from "./statusline";
+import { runTakoMcpServer, injectAgyMcpConfig } from "./mcp";
 import { selectProviderForClient } from "./ui/providers";
 import { buildPassthroughArgs } from "./quick-launch-args";
 import { loadCatalog, refreshCatalog } from "./models";
@@ -223,6 +224,9 @@ async function quickLaunch(
 
   if (clientId === "agy") {
     await injectAgyStatusLineConfig().catch(() => {});
+    if (providerContext.type === "tako") {
+      await injectAgyMcpConfig().catch(() => {});
+    }
   }
 
   const result = await launchClientUnified(client, {
@@ -248,6 +252,12 @@ export async function runCli(main: UiMain): Promise<void> {
   if (args[0] === "statusline") {
     loadCatalog(); // 同步加载模型目录（统计窗口大小用）
     await statusLineCommand();
+    return;
+  }
+
+  // mcp-server 命令（被 agy 等客户端以 stdio JSON-RPC 模式调用，绝不可输出杂讯到 stdout）
+  if (args[0] === "mcp-server") {
+    await runTakoMcpServer();
     return;
   }
 
@@ -347,8 +357,9 @@ export async function runCli(main: UiMain): Promise<void> {
 
   await maybeStartupUpdate(isDev);
 
-  // 注入 statusline 配置到 Claude Code
+  // 注入 statusline 配置到 Claude Code，并同步 agy MCP 配置
   injectStatusLineConfig().catch(() => {});
+  injectAgyMcpConfig().catch(() => {});
 
   // 模型目录：先同步加载本地缓存，再后台刷新最新（不阻塞主程序）
   loadCatalog();

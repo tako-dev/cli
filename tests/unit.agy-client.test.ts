@@ -13,6 +13,7 @@ import {
   buildAgyArgs,
   buildAgyModelOptions,
   DEFAULT_AGY_GATEWAY_MODELS,
+  expandAgyGatewayModelsWithEffort,
   findAgyBinary,
   isAgySupportedModelId,
   normalizeAgyGatewayUrl,
@@ -206,7 +207,9 @@ describe("Antigravity environment & gateway URL preparation", () => {
     expect(childEnv.PATH).toBe("/usr/bin:/bin");
     expect(childEnv.AGY_LLM_GATEWAY_URL).toBe("https://tako.shiroha.tech");
     expect(childEnv.AGY_LLM_GATEWAY_API_KEY).toBe("cr_dedicated_agy_key");
-    expect(childEnv.AGY_LLM_GATEWAY_MODELS).toBe(DEFAULT_AGY_GATEWAY_MODELS.join(","));
+    expect(childEnv.AGY_LLM_GATEWAY_MODELS).toBe(
+      expandAgyGatewayModelsWithEffort(DEFAULT_AGY_GATEWAY_MODELS).join(","),
+    );
     expect(childEnv.AGY_LLM_GATEWAY_TIER_PRO).toBe("claude-opus-4-6");
     expect(childEnv.AGY_LLM_GATEWAY_TIER_FLASH).toBe("claude-sonnet-4-6");
     expect(childEnv.AGY_LLM_GATEWAY_TIER_FLASH_LITE).toBe("gemini-3.5-flash-lite");
@@ -477,7 +480,9 @@ describe("Antigravity models, filtering, tier resolution & quick-launch args", (
     const env = prepareAgyEnv({}, { baseUrl: `${BASE}/v1`, apiKey: "cr_unused", agyApiKey: KEY });
     expect(env.AGY_LLM_GATEWAY_URL).toBe(BASE);
     expect(env.AGY_LLM_GATEWAY_API_KEY).toBe(KEY);
-    expect(env.AGY_LLM_GATEWAY_MODELS).toBe("claude-opus-4-6,gemini-3.8-flash,gpt-oss-120b");
+    expect(env.AGY_LLM_GATEWAY_MODELS).toBe(
+      "claude-opus-4-6,gemini-3.8-flash-high,gemini-3.8-flash-medium,gemini-3.8-flash-low,gpt-oss-120b",
+    );
     expect(env.AGY_LLM_GATEWAY_TIER_PRO).toBe("claude-opus-4-6");
     expect(env.AGY_LLM_GATEWAY_TIER_FLASH).toBe("gemini-3.8-flash");
     expect(env.AGY_LLM_GATEWAY_TIER_FLASH_LITE).toBe("gpt-oss-120b");
