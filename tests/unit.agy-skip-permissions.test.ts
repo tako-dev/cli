@@ -181,6 +181,46 @@ describe("resolveInitialClientOptionIds & loadLauncherData defaultOn preservatio
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("resolveGrokBin does not leak stderr when grok is missing (Bun.which and execSync fallback)", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "tako-grok-missing-"));
+    try {
+      const toolsDir = join(tmp, "tools");
+      const grokUrl = new URL("../src/clients/grok.ts", import.meta.url).href;
+      const otherPlatform = process.platform === "win32" ? "linux" : "win32";
+      const proc = Bun.spawn(
+        [
+          process.execPath,
+          "-e",
+          `process.env.PATH = "";
+           const { resolveGrokBin } = await import(${JSON.stringify(grokUrl)});
+           const fast = await resolveGrokBin({ home: ${JSON.stringify(tmp)}, toolsDir: ${JSON.stringify(toolsDir)} });
+           const fallback = await resolveGrokBin({
+             home: ${JSON.stringify(tmp)},
+             toolsDir: ${JSON.stringify(toolsDir)},
+             platform: ${JSON.stringify(otherPlatform)},
+           });
+           console.log(JSON.stringify({ fast, fallback }));`,
+        ],
+        {
+          cwd: tmp,
+          env: { ...process.env, TAKO_HOME: join(tmp, ".tako"), TAKO_DEV: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const [out, err, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      expect(err).toBe("");
+      expect(code).toBe(0);
+      expect(JSON.parse(out.trim())).toEqual({ fast: null, fallback: null });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("Session resume preserves lastSelectedOptionIds", () => {
