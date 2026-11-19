@@ -11,6 +11,32 @@
  * 同时叠一个心跳定时器，每秒刷新 elapsed 时间，让用户视觉上知道进程没卡死。
  */
 
+export function renderProgressBar(percent: number, width = 18): string {
+  const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+  const filled = Math.round((clamped / 100) * width);
+  const empty = Math.max(0, width - filled);
+  return `[${"█".repeat(filled)}${"░".repeat(empty)}] ${clamped}%`;
+}
+
+export function formatDownloadProgress(
+  prefix: string,
+  downloaded: number,
+  total: number | null,
+  elapsedSec?: number,
+): string {
+  const dlMb = (downloaded / 1024 / 1024).toFixed(1);
+  const speed =
+    elapsedSec && elapsedSec > 0
+      ? ` · ${(downloaded / 1024 / 1024 / elapsedSec).toFixed(1)} MB/s`
+      : "";
+  if (total && total > 0) {
+    const pct = Math.min(100, Math.round((downloaded / total) * 100));
+    const totalMb = (total / 1024 / 1024).toFixed(1);
+    return `${prefix} ${renderProgressBar(pct)} (${dlMb}/${totalMb} MB${speed})`;
+  }
+  return `${prefix} (${dlMb} MB${speed})`;
+}
+
 export interface PhaseState {
   phase: string;
   pkgCount: number;
@@ -22,12 +48,28 @@ const RE_RESOLVED = /^Resolved, downloaded and extracted \[(\d+)\]/;
 const RE_LOCKFILE = /^Saved lockfile/;
 const RE_INSTALLED = /^(\d+) packages? installed/;
 
+function phasePercent(s: PhaseState): number {
+  switch (s.phase) {
+    case "完成":
+      return 100;
+    case "写入 lockfile":
+      return 92;
+    case "下载并解压":
+      return Math.min(85, 48 + s.elapsedSec * 2);
+    case "解析依赖":
+      return Math.min(38, 20 + s.elapsedSec * 2);
+    default:
+      return Math.min(15, 8 + s.elapsedSec);
+  }
+}
+
 function formatPhase(prefix: string, s: PhaseState): string {
   const parts: string[] = [];
   if (s.phase) parts.push(s.phase);
+  else parts.push("准备中");
   if (s.pkgCount > 0) parts.push(`已处理 ${s.pkgCount} 个包`);
   parts.push(`${s.elapsedSec}s`);
-  return `${prefix} · ${parts.join(" · ")}`;
+  return `${prefix} ${renderProgressBar(phasePercent(s))} · ${parts.join(" · ")}`;
 }
 
 /**

@@ -73,3 +73,94 @@ describe("installer/buildBunInstallEnv — INV-INST-02 cache 隔离", () => {
     expect(env.BUN_CONFIG_REGISTRY).toBe("https://registry.example.com");
   });
 });
+
+describe("client version detection and semver comparison", () => {
+  it("validates strict semver strings and rejects tags like latest", async () => {
+    const { isStrictSemver } = await import("../src/installer");
+    expect(isStrictSemver("0.170.0")).toBe(true);
+    expect(isStrictSemver("v1.2.3")).toBe(true);
+    expect(isStrictSemver("1.2.3-beta.1")).toBe(true);
+    expect(isStrictSemver("latest")).toBe(false);
+    expect(isStrictSemver("未知")).toBe(false);
+    expect(isStrictSemver("")).toBe(false);
+    expect(isStrictSemver(null)).toBe(false);
+  });
+
+  it("compares versions using semver rather than naive string inequality", async () => {
+    const { isClientVersionOutdated } = await import("../src/installer");
+    expect(isClientVersionOutdated("0.170.0", "0.170.0")).toBe(false);
+    expect(isClientVersionOutdated("v0.170.0", "0.170.0")).toBe(false);
+    expect(isClientVersionOutdated("0.170.0", "0.171.0")).toBe(true);
+    expect(isClientVersionOutdated("0.171.0", "0.170.0")).toBe(false);
+    expect(isClientVersionOutdated("0.170.0-alpha.1", "0.170.0")).toBe(true);
+    expect(isClientVersionOutdated("latest", "0.170.0")).toBe(true);
+    expect(isClientVersionOutdated(null, "0.170.0")).toBe(true);
+    expect(isClientVersionOutdated("0.170.0", null)).toBe(false);
+  });
+
+  it("auto-heals stale 'latest' in config.json from node_modules package.json and avoids false update prompt", async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+    const fakeHome = mkdtempSync(join(tmpdir(), "tako-version-heal-"));
+    try {
+      mkdirSync(join(fakeHome, "tools", "codex", "node_modules", "@openai", "codex"), { recursive: true });
+      writeFileSync(
+        join(fakeHome, "config.json"),
+        JSON.stringify({
+          apiKey: "",
+          apiId: "",
+          installedClients: {
+            codex: { version: "latest", installedAt: "2026-11-19T17:29:31.806Z" },
+          },
+        }),
+      );
+      writeFileSync(
+        join(fakeHome, "tools", "codex", "node_modules", "@openai", "codex", "package.json"),
+        JSON.stringify({ name: "@openai/codex", version: "0.170.0" }),
+      );
+
+      const script = `
+        import { codexClient } from "./src/clients/codex";
+        import { getLocalVersion, needsUpdate } from "./src/installer";
+        import { getInstalledVersion } from "./src/installer-versions";
+        globalThis.fetch = (async () =>
+          new Response(JSON.stringify({ version: "0.170.0" }), { status: 200 })) as unknown as typeof fetch;
+        const local = await getLocalVersion(codexClient);
+        const installed = await getInstalledVersion(codexClient);
+        const outdatedSame = await needsUpdate(codexClient);
+        globalThis.fetch = (async () =>
+          new Response(JSON.stringify({ version: "0.171.0" }), { status: 200 })) as unknown as typeof fetch;
+        const outdatedNewer = await needsUpdate(codexClient);
+        globalThis.fetch = (async () =>
+          new Response(JSON.stringify({ version: "0.169.0" }), { status: 200 })) as unknown as typeof fetch;
+        const outdatedOlder = await needsUpdate(codexClient);
+        console.log(JSON.stringify({ local, installed, outdatedSame, outdatedNewer, outdatedOlder }));
+      `;
+      const proc = Bun.spawn(["bun", "-e", script], {
+        cwd: process.cwd(),
+        env: { ...process.env, TAKO_HOME: fakeHome, TAKO_REGION: "global" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const exitCode = await proc.exited;
+      const stdout = await new Response(proc.stdout).text();
+      const stderr = await new Response(proc.stderr).text();
+      expect(exitCode).toBe(0);
+      if (exitCode !== 0) throw new Error(stderr);
+      const parsed = JSON.parse(stdout.trim());
+      expect(parsed).toEqual({
+        local: "0.170.0",
+        installed: "0.170.0",
+        outdatedSame: false,
+        outdatedNewer: true,
+        outdatedOlder: false,
+      });
+
+      const healedConfig = JSON.parse(readFileSync(join(fakeHome, "config.json"), "utf8"));
+      expect(healedConfig.installedClients.codex.version).toBe("0.170.0");
+    } finally {
+      rmSync(fakeHome, { recursive: true, force: true });
+    }
+  });
+});

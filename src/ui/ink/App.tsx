@@ -47,12 +47,18 @@ function App({ onLaunch, onExit, initialView = "launcher", initialSessionSearch 
     shouldShowKeyGuide().then((show) => { if (show) setView("key-guide"); });
   }, [initialView]);
 
-  // 自动清除日志
+  // 自动清除非进行中的日志，保留活跃 spin 进度条不被 5s 超时清掉
+  const scheduleLogClear = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      setLogs((prev) => prev.filter((e) => e.type === "spin"));
+    }, 5000);
+  }, []);
+
   const pushLog = useCallback((entry: LogEntry) => {
     setLogs((prev) => [...prev.slice(-4), entry]); // 最多保留5条
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => setLogs([]), 5000);
-  }, []);
+    scheduleLogClear();
+  }, [scheduleLogClear]);
 
   // 注入 Ink 日志处理器
   useEffect(() => {
@@ -73,19 +79,17 @@ function App({ onLaunch, onExit, initialView = "launcher", initialSessionSearch 
               if (m) next.push({ text: m, type: "success" });
               return next.slice(-5);
             });
-            if (timerRef.current) clearTimeout(timerRef.current);
-            timerRef.current = setTimeout(() => setLogs([]), 5000);
+            scheduleLogClear();
           },
           update: (m: string) => {
             setLogs((prev) => prev.map((e) => (e.id === id ? { ...e, text: m } : e)));
-            if (timerRef.current) clearTimeout(timerRef.current);
-            timerRef.current = setTimeout(() => setLogs([]), 5000);
+            scheduleLogClear();
           },
         };
       },
     });
     return () => resetLogHandler();
-  }, [pushLog]);
+  }, [pushLog, scheduleLogClear]);
 
   const goBack = useCallback(() => setView("launcher"), []);
 

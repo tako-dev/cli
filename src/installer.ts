@@ -8,7 +8,7 @@ import { ClientConfig, getClientDir } from "./clients/base";
 import { loadConfig, updateConfig, TAKO_DIR, TAKO_BUN_DIR, TAKO_BUN_BIN, TAKO_BUN_CACHE_DIR, TAKO_NODE_BIN, TAKO_NODE_DIR, TAKO_NODE_VERSION } from "./config";
 import { getNpmRegistry, getBunInstallCommand, detectRegion, showRegionInfo, getBunMirrorDownloadUrl, MIRRORS } from "./region";
 import { track } from "./analytics";
-import { streamBunInstall } from "./bun-progress";
+import { streamBunInstall, formatDownloadProgress } from "./bun-progress";
 import { summarizeInstallError } from "./error-format";
 import { t } from "./i18n";
 
@@ -137,7 +137,7 @@ async function ensureSystemDeps(): Promise<boolean> {
 /**
  * 从 npmmirror 直接下载安装 Bun（国内专用，跨平台）
  */
-async function installBunFromMirror(targetDir: string): Promise<boolean> {
+async function installBunFromMirror(targetDir: string, onProgress?: (msg: string) => void): Promise<boolean> {
   const fs = await import("fs/promises");
   const { join } = await import("path");
 
@@ -145,16 +145,17 @@ async function installBunFromMirror(targetDir: string): Promise<boolean> {
   const bunName = isWindows ? "bun.exe" : "bun";
 
   const downloadUrl = await getBunMirrorDownloadUrl();
-  log.info(`从 npmmirror 下载: ${downloadUrl}`);
-
-  // 下载 zip
-  const response = await fetch(downloadUrl);
-  if (!response.ok) throw new Error(`下载失败: ${response.status}`);
+  if (!onProgress) {
+    log.info(`从 npmmirror 下载: ${downloadUrl}`);
+  }
 
   const zipPath = join(targetDir, "bun-download.zip");
-  await Bun.write(zipPath, response);
+  await downloadFile(downloadUrl, zipPath, (done, total, elapsedSec) => {
+    onProgress?.(formatDownloadProgress("正在下载 Tako 专属 Bun", done, total, elapsedSec));
+  });
 
   // 解压
+  onProgress?.("正在解压 Tako 专属 Bun...");
   const binDir = join(targetDir, "bin");
   await fs.mkdir(binDir, { recursive: true });
 
@@ -228,7 +229,7 @@ async function installBun(): Promise<boolean> {
 
     if (region === "cn") {
       // 国内用户：直接从 npmmirror 下载，不经过 bun.sh/GitHub（全平台统一）
-      await installBunFromMirror(TAKO_BUN_DIR);
+      await installBunFromMirror(TAKO_BUN_DIR, (msg) => s.update(msg));
     } else if (process.platform === "win32") {
       // 海外 Windows：使用 PowerShell 官方脚本
       const psCmd = `$env:BUN_INSTALL="${TAKO_BUN_DIR}"; irm bun.sh/install.ps1 | iex`;
@@ -289,7 +290,7 @@ async function upgradeBun(): Promise<boolean> {
 
     if (region === "cn") {
       // 国内：直接从 npmmirror 下载（全平台统一）
-      await installBunFromMirror(TAKO_BUN_DIR);
+      await installBunFromMirror(TAKO_BUN_DIR, (msg) => s.update(msg));
     } else if (process.platform === "win32") {
       const psCmd = `$env:BUN_INSTALL="${TAKO_BUN_DIR}"; irm bun.sh/install.ps1 | iex`;
       const proc = Bun.spawn(["powershell", "-Command", psCmd], {
@@ -495,14 +496,10 @@ async function flattenNodeExtract(destDir: string): Promise<void> {
   await fs.rm(nestedDir, { recursive: true, force: true });
 }
 
-function formatMb(bytes: number): string {
-  return (bytes / 1024 / 1024).toFixed(1);
-}
-
 async function downloadFile(
   url: string,
   dest: string,
-  onProgress?: (downloaded: number, total: number | null) => void,
+  onProgress?: (downloaded: number, total: number | null, elapsedSec?: number) => void,
 ): Promise<void> {
   const response = await fetch(url, { signal: AbortSignal.timeout(180_000) });
   if (!response.ok) throw new Error(`下载失败: ${response.status} ${url}`);
@@ -514,6 +511,9 @@ async function downloadFile(
   const reader = body.getReader();
   let downloaded = 0;
   let lastTick = 0;
+  let lastTime = Date.now();
+  const startTime = lastTime;
+  onProgress?.(0, total, 0);
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -522,12 +522,14 @@ async function downloadFile(
       await new Promise<void>((resolve, reject) => {
         writer.write(Buffer.from(value), (err) => (err ? reject(err) : resolve()));
       });
-      if (downloaded - lastTick >= 512 * 1024) {
+      const now = Date.now();
+      if (downloaded - lastTick >= 256 * 1024 || now - lastTime >= 150) {
         lastTick = downloaded;
-        onProgress?.(downloaded, total);
+        lastTime = now;
+        onProgress?.(downloaded, total, (now - startTime) / 1000);
       }
     }
-    onProgress?.(downloaded, total);
+    onProgress?.(downloaded, total, (Date.now() - startTime) / 1000);
   } finally {
     await new Promise<void>((resolve, reject) => {
       writer.end((err?: Error | null) => (err ? reject(err) : resolve()));
@@ -536,12 +538,12 @@ async function downloadFile(
 }
 
 async function installNode(): Promise<boolean> {
+  await showRegionInfo();
   const s = createSpinner();
   s.start(`正在安装 Tako 专属 Node ${TAKO_NODE_VERSION}...`);
   try {
     const fs = await import("fs/promises");
     const { join } = await import("path");
-    await showRegionInfo();
     const region = await detectRegion();
     const spec = nodeDownloadSpec(TAKO_NODE_VERSION, process.platform, process.arch, region);
     await fs.mkdir(TAKO_NODE_DIR, { recursive: true });
@@ -550,13 +552,8 @@ async function installNode(): Promise<boolean> {
     let lastError: unknown;
     for (const url of nodeDownloadUrls(TAKO_NODE_VERSION, process.platform, process.arch, region)) {
       try {
-        log.info(`下载 Node: ${url}`);
-        await downloadFile(url, archivePath, (done, total) => {
-          if (total) {
-            s.update(`正在下载 Node ${TAKO_NODE_VERSION} ${Math.floor((done / total) * 100)}% (${formatMb(done)}/${formatMb(total)} MB)`);
-          } else {
-            s.update(`正在下载 Node ${TAKO_NODE_VERSION} ${formatMb(done)} MB`);
-          }
+        await downloadFile(url, archivePath, (done, total, elapsedSec) => {
+          s.update(formatDownloadProgress(`正在下载 Node ${TAKO_NODE_VERSION}`, done, total, elapsedSec));
         });
         downloaded = true;
         lastError = null;
@@ -629,9 +626,89 @@ async function getLatestVersion(packageName: string): Promise<string | null> {
 /**
  * 获取本地安装的版本
  */
-async function getLocalVersion(client: ClientConfig): Promise<string | null> {
+export async function getLocalVersion(client: ClientConfig): Promise<string | null> {
   const config = await loadConfig();
-  return config.installedClients[client.id]?.version || null;
+  const recorded = config.installedClients[client.id]?.version;
+  const onDisk = await getInstalledClientVersion(client);
+  if (onDisk) {
+    if (!recorded || recorded === "latest" || recorded !== onDisk) {
+      try {
+        await updateConfig({
+          installedClients: {
+            ...config.installedClients,
+            [client.id]: {
+              version: onDisk,
+              installedAt: config.installedClients[client.id]?.installedAt || new Date().toISOString(),
+            },
+          },
+        });
+      } catch {
+        // Ignore config heal failure during read
+      }
+    }
+    return onDisk;
+  }
+  if (recorded && recorded !== "latest") {
+    return recorded;
+  }
+  return null;
+}
+
+const STRICT_SEMVER_RE = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+
+export function isStrictSemver(version: string | null | undefined): boolean {
+  if (!version) return false;
+  return STRICT_SEMVER_RE.test(version.trim());
+}
+
+function compareSemverFull(a: string, b: string): number {
+  const ma = STRICT_SEMVER_RE.exec(a.trim());
+  const mb = STRICT_SEMVER_RE.exec(b.trim());
+  if (!ma || !mb) return compareVersions(a.replace(/^v/, ""), b.replace(/^v/, ""));
+  for (let i = 1; i <= 3; i++) {
+    const na = Number(ma[i]);
+    const nb = Number(mb[i]);
+    if (na !== nb) return na < nb ? -1 : 1;
+  }
+  const preA = ma[4];
+  const preB = mb[4];
+  if (!preA && !preB) return 0;
+  if (!preA) return 1;
+  if (!preB) return -1;
+  const partsA = preA.split(".");
+  const partsB = preB.split(".");
+  for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+    const pa = partsA[i];
+    const pb = partsB[i];
+    if (pa === undefined) return -1;
+    if (pb === undefined) return 1;
+    const isNumA = /^\d+$/.test(pa);
+    const isNumB = /^\d+$/.test(pb);
+    if (isNumA && isNumB) {
+      const diff = Number(pa) - Number(pb);
+      if (diff !== 0) return diff < 0 ? -1 : 1;
+    } else if (isNumA !== isNumB) {
+      return isNumA ? -1 : 1;
+    } else if (pa !== pb) {
+      return pa < pb ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+export function isClientVersionOutdated(
+  localVersion: string | null | undefined,
+  latestVersion: string | null | undefined,
+): boolean {
+  if (!latestVersion) return false;
+  const latest = latestVersion.trim().replace(/^v/, "");
+  if (!localVersion) return true;
+  const local = localVersion.trim().replace(/^v/, "");
+  if (local.toLowerCase() === "latest") return true;
+  if (isStrictSemver(local) && isStrictSemver(latest)) {
+    return compareSemverFull(local, latest) < 0;
+  }
+  return local !== latest;
 }
 
 /** 从 Tako 管理的真实客户端包读取版本；缺少包或版本时返回 null。 */
@@ -704,7 +781,7 @@ export async function needsUpdate(client: ClientConfig): Promise<boolean> {
   const latestVersion = await getLatestVersion(client.package);
   if (!latestVersion) return false;
 
-  return localVersion !== latestVersion;
+  return isClientVersionOutdated(localVersion, latestVersion);
 }
 
 /**
@@ -735,7 +812,8 @@ async function ensurePlatformDep(
   client: ClientConfig,
   clientDir: string,
   bunPath: string,
-  registry: string
+  registry: string,
+  onProgress?: (msg: string) => void,
 ): Promise<void> {
   const packageJsonPath = join(clientDir, "node_modules", client.package, "package.json");
   try {
@@ -769,7 +847,9 @@ async function ensurePlatformDep(
     if (depVersionMatches && await depBinFile.exists() && depBinFile.size > 1024) return;
 
     // 未安装，显式安装平台包
-    log.info(`正在安装平台包 ${dep.pkg}...`);
+    const depPrefix = `正在安装平台包 ${dep.pkg}`;
+    if (onProgress) onProgress(`${depPrefix}...`);
+    else log.info(`${depPrefix}...`);
 
     // 先尝试精确版本，失败则降级为 @latest（镜像源可能未同步特定版本）
     for (const version of [dep.version, "latest"]) {
@@ -782,7 +862,7 @@ async function ensurePlatformDep(
           env: buildBunInstallEnv(registry),
         }
       );
-      const output = await streamBunInstall(proc, `正在安装平台包 ${dep.pkg}`, () => {});
+      const output = await streamBunInstall(proc, depPrefix, (msg) => onProgress?.(msg));
       const exitCode = await proc.exited;
       if (exitCode === 0) break;
       if (version === "latest") {
@@ -798,8 +878,16 @@ async function ensurePlatformDep(
  * 直接从 npm registry 下载平台原生二进制并放置到目标位置
  * 不依赖 bun add（bun 可能不完整提取 200MB 大二进制），直接下载 tarball 解压
  */
-async function placeNativeBinary(client: ClientConfig, clientDir: string): Promise<boolean> {
+async function placeNativeBinary(
+  client: ClientConfig,
+  clientDir: string,
+  onProgress?: (msg: string) => void,
+): Promise<boolean> {
   const fs = await import("fs/promises");
+  const report = (msg: string) => {
+    if (onProgress) onProgress(msg);
+    else log.info(msg);
+  };
 
   const packageJsonPath = join(clientDir, "node_modules", client.package, "package.json");
   try {
@@ -834,14 +922,14 @@ async function placeNativeBinary(client: ClientConfig, clientDir: string): Promi
     // 方案 A：用 Tako Bun 运行 install.cjs（不依赖系统 node）
     const postinstallScript = join(clientDir, "node_modules", client.package, "install.cjs");
     if (await Bun.file(postinstallScript).exists()) {
-      log.info("正在通过 postinstall 安装原生二进制...");
+      report("正在通过 postinstall 安装原生二进制...");
       const bunPath = await getBunPath();
       const proc = Bun.spawn([bunPath, postinstallScript], {
         cwd: join(clientDir, "node_modules", client.package),
         stdout: "pipe",
         stderr: "pipe",
       });
-      const output = await streamBunInstall(proc, "正在通过 postinstall 安装原生二进制", () => {});
+      const output = await streamBunInstall(proc, "正在安装原生二进制", (msg) => onProgress?.(msg));
       const exitCode = await proc.exited;
       if (exitCode !== 0) {
         log.warn(`postinstall 失败: ${output.slice(0, 200)}`);
@@ -854,8 +942,8 @@ async function placeNativeBinary(client: ClientConfig, clientDir: string): Promi
       }
     }
 
-    // 方案 B：用 curl | tar 流式下载并提取二进制（不依赖 Bun fetch 处理大文件）
-    log.info("正在从 registry 下载原生二进制...");
+    // 方案 B：流式下载 tarball 并提取二进制（失败时降级 curl）
+    report("正在从 registry 下载原生二进制...");
     const registry = await getNpmRegistry();
     for (const ver of [dep.version, "latest"]) {
       try {
@@ -865,20 +953,34 @@ async function placeNativeBinary(client: ClientConfig, clientDir: string): Promi
         const tarballUrl = meta.dist?.tarball;
         if (!tarballUrl) continue;
 
-        // 1. 用 curl 下载 tarball 到临时文件
         const tmpDir = join(TAKO_DIR, ".tmp-extract-" + Date.now());
         await fs.mkdir(tmpDir, { recursive: true });
         const tgzPath = join(tmpDir, "pkg.tgz");
 
-        const dlProc = Bun.spawn(
-          ["curl", "-fsSL", "-o", tgzPath, tarballUrl],
-          { stdout: "pipe", stderr: "pipe" }
-        );
-        await dlProc.exited;
+        let fetchedOk = false;
+        try {
+          await downloadFile(tarballUrl, tgzPath, (done, total, elapsedSec) => {
+            onProgress?.(formatDownloadProgress(`正在下载 ${dep.pkg}`, done, total, elapsedSec));
+          });
+          fetchedOk = true;
+        } catch (fetchErr) {
+          onProgress?.(`正在下载 ${dep.pkg}...`);
+          const dlProc = Bun.spawn(
+            ["curl", "-fsSL", "-o", tgzPath, tarballUrl],
+            { stdout: "pipe", stderr: "pipe" }
+          );
+          await dlProc.exited;
+          if (dlProc.exitCode !== 0) {
+            const dlErr = await new Response(dlProc.stderr).text();
+            log.warn(
+              `下载失败: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)} / curl: ${dlErr.slice(0, 200)}`,
+            );
+          } else {
+            fetchedOk = true;
+          }
+        }
 
-        if (dlProc.exitCode !== 0) {
-          const dlErr = await new Response(dlProc.stderr).text();
-          log.warn(`curl 下载失败: ${dlErr.slice(0, 200)}`);
+        if (!fetchedOk) {
           await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
           continue;
         }
@@ -891,6 +993,7 @@ async function placeNativeBinary(client: ClientConfig, clientDir: string): Promi
         }
 
         // 2. 用 tar 只提取二进制文件
+        onProgress?.(`正在解压 ${dep.pkg}...`);
         const tarProc = Bun.spawn(
           ["tar", "xzf", tgzPath, "-C", tmpDir, `package/${binaryName}`],
           { stdout: "pipe", stderr: "pipe" }
@@ -919,15 +1022,26 @@ async function placeNativeBinary(client: ClientConfig, clientDir: string): Promi
     if (registry !== "https://registry.npmjs.org") {
       try {
         const npmjsUrl = `https://registry.npmjs.org/${dep.pkg}/-/${dep.pkg.split("/").pop()}-${dep.version}.tgz`;
-        log.info("正在从 npmjs.org 直连下载...");
+        report("正在从 npmjs.org 直连下载...");
         const tmpDir = join(TAKO_DIR, ".tmp-extract-" + Date.now());
         await fs.mkdir(tmpDir, { recursive: true });
         const tgzPath = join(tmpDir, "pkg.tgz");
 
-        const dlProc = Bun.spawn(["curl", "-fsSL", "-o", tgzPath, npmjsUrl], { stdout: "pipe", stderr: "pipe" });
-        await dlProc.exited;
+        let directOk = false;
+        try {
+          await downloadFile(npmjsUrl, tgzPath, (done, total, elapsedSec) => {
+            onProgress?.(formatDownloadProgress(`正在下载 ${dep.pkg}`, done, total, elapsedSec));
+          });
+          directOk = true;
+        } catch {
+          onProgress?.(`正在从 npmjs.org 下载 ${dep.pkg}...`);
+          const dlProc = Bun.spawn(["curl", "-fsSL", "-o", tgzPath, npmjsUrl], { stdout: "pipe", stderr: "pipe" });
+          await dlProc.exited;
+          directOk = dlProc.exitCode === 0;
+        }
 
-        if (dlProc.exitCode === 0 && Bun.file(tgzPath).size > 1024) {
+        if (directOk && Bun.file(tgzPath).size > 1024) {
+          onProgress?.(`正在解压 ${dep.pkg}...`);
           const tarProc = Bun.spawn(["tar", "xzf", tgzPath, "-C", tmpDir, `package/${binaryName}`], { stdout: "pipe", stderr: "pipe" });
           await tarProc.exited;
           const extractedFile = Bun.file(join(tmpDir, "package", binaryName));
@@ -982,7 +1096,6 @@ export async function installClient(
 
     const action = isInstalled ? "更新" : "安装";
     const prefix = `正在${action} ${client.name}`;
-    s.start(prefix);
 
     // 确保目录存在
     const fs = await import("fs/promises");
@@ -1009,10 +1122,12 @@ export async function installClient(
     // 获取 bun 路径
     const bun = await getBunPath();
 
-    // 根据地区选择 npm registry
+    // 根据地区选择 npm registry（在启动 spinner 前打印，避免打断进度条）
     const registry = await getNpmRegistry();
     const region = await detectRegion();
     log.info(`网络环境: ${region === "cn" ? "国内（npmmirror）" : "海外"} | registry: ${registry}`);
+
+    s.start(prefix);
 
     // 更新时只删 lockfile（强制 bun 重解析以拿到 optional deps 新版本），
     // 保留 node_modules。
@@ -1049,18 +1164,23 @@ export async function installClient(
       return { success: false, error: summarizeInstallError(output) };
     }
 
+    const previousConfigVersion = (await loadConfig()).installedClients[client.id]?.version;
+    const previousVersion =
+      previousConfigVersion && previousConfigVersion !== "latest" ? previousConfigVersion : undefined;
+
     // 确保平台原生二进制就位（Bun 不自动安装 optionalDependencies）
-    await ensurePlatformDep(client, clientDir, bun, registry);
-    await placeNativeBinary(client, clientDir);
+    await ensurePlatformDep(client, clientDir, bun, registry, (msg) => s.update(msg));
+    await placeNativeBinary(client, clientDir, (msg) => s.update(msg));
 
-    // 获取安装的版本并保存到配置
-    const latestVersion = await getLatestVersion(client.package);
-    const previousVersion = (await loadConfig()).installedClients[client.id]?.version;
+    // 优先读取本地 node_modules 真实安装版本，绝不写入 "latest" 占位
+    const resolvedVersion =
+      (await getInstalledClientVersion(client)) ||
+      (await getLatestVersion(client.package));
 
-    if (latestVersion) {
+    if (resolvedVersion && resolvedVersion !== "latest") {
       const config = await loadConfig();
       config.installedClients[client.id] = {
-        version: latestVersion,
+        version: resolvedVersion,
         installedAt: new Date().toISOString(),
       };
       await updateConfig(config);
@@ -1070,12 +1190,12 @@ export async function installClient(
         track("client_updated", {
           client_id: client.id,
           from_version: previousVersion,
-          to_version: latestVersion,
+          to_version: resolvedVersion,
         });
       } else {
         track("client_installed", {
           client_id: client.id,
-          client_version: latestVersion,
+          client_version: resolvedVersion,
         });
       }
     }
@@ -1126,7 +1246,7 @@ async function isStubBinary(filePath: string): Promise<boolean> {
  */
 export async function ensureNativeBinary(
   client: ClientConfig,
-  options: { reinstallOnFailure?: boolean; forcePlace?: boolean } = {},
+  options: { reinstallOnFailure?: boolean; forcePlace?: boolean; onProgress?: (msg: string) => void } = {},
 ): Promise<void> {
   if (client.runtime !== "native") return;
   const reinstallOnFailure = options.reinstallOnFailure ?? true;
@@ -1135,6 +1255,7 @@ export async function ensureNativeBinary(
   const clientDir = getClientDir(client.id);
   const packageJsonPath = join(clientDir, "node_modules", client.package, "package.json");
 
+  let ownSpinner: ReturnType<typeof createSpinner> | null = null;
   try {
     const file = Bun.file(packageJsonPath);
     if (!(await file.exists())) return;
@@ -1155,36 +1276,46 @@ export async function ensureNativeBinary(
     if (!forcePlace && !(await isStubBinary(binPath))) return;
 
     // 是 stub，需要修复：先确保平台包已安装，再直接复制二进制
-    log.info("正在安装原生二进制...");
+    const reportProgress =
+      options.onProgress ??
+      (() => {
+        ownSpinner = createSpinner();
+        ownSpinner.start("正在安装原生二进制...");
+        return (msg: string) => ownSpinner?.update(msg);
+      })();
 
     const bun = await getBunPath();
     const registry = await getNpmRegistry();
-    await ensurePlatformDep(client, clientDir, bun, registry);
-    const placed = await placeNativeBinary(client, clientDir);
+    await ensurePlatformDep(client, clientDir, bun, registry, reportProgress);
+    const placed = await placeNativeBinary(client, clientDir, reportProgress);
 
     if (!placed || await isStubBinary(binPath)) {
       if (!reinstallOnFailure) {
-        log.warn("原生二进制修复失败");
+        ownSpinner?.stop("原生二进制修复失败");
+        if (!ownSpinner) log.warn("原生二进制修复失败");
         return;
       }
       // 修复失败，删掉整个工具目录强制重装
+      ownSpinner?.stop();
+      ownSpinner = null;
       log.warn("原生二进制修复失败，正在重新安装...");
       const fs = await import("fs/promises");
       await fs.rm(clientDir, { recursive: true, force: true });
       const result = await installClient(client);
       if (result.success) {
         // 重装后再次确认二进制就位
-        await placeNativeBinary(client, clientDir);
+        await placeNativeBinary(client, clientDir, reportProgress);
         if (await isStubBinary(binPath)) {
           log.warn("重新安装后仍无法安装原生二进制");
         } else {
           log.success("重新安装完成");
         }
       }
-    } else {
-      log.success("原生二进制安装完成");
+    } else if (ownSpinner) {
+      ownSpinner.stop("原生二进制安装完成");
     }
   } catch {
+    ownSpinner?.stop();
     // 静默失败
   }
 }
@@ -1222,7 +1353,7 @@ export async function ensureClientReady(
   const shouldUpdate = await needsUpdate(client);
   if (shouldUpdate) {
     const latestVersion = await getLatestVersion(client.package);
-    const localVersion = (await loadConfig()).installedClients[client.id]?.version || "未知";
+    const localVersion = (await getLocalVersion(client)) || "未知";
     const versionInfo = latestVersion
       ? `${localVersion} → ${latestVersion}`
       : "有新版本可用";
@@ -1550,15 +1681,9 @@ export async function installAgyFromManifest(
   const tmpFile = join(tmpDir, archiveName);
 
   try {
-    await downloadFile(manifest.url, tmpFile, (done, total) => {
+    await downloadFile(manifest.url, tmpFile, (done, total, elapsedSec) => {
       if (!s) return;
-      if (total) {
-        s.update(
-          `正在下载 Antigravity (agy)${verLabel} ${Math.floor((done / total) * 100)}% (${formatMb(done)}/${formatMb(total)} MB)`,
-        );
-      } else {
-        s.update(`正在下载 Antigravity (agy)${verLabel} ${formatMb(done)} MB`);
-      }
+      s.update(formatDownloadProgress(`正在下载 Antigravity (agy)${verLabel}`, done, total, elapsedSec));
     });
 
     s?.update("正在校验 SHA-512 完整性...");

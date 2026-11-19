@@ -52,6 +52,7 @@ export function ClientVersionView({
   const [scrollTop, setScrollTop] = useState(0);
   const [stateByClient, setStateByClient] = useState<Record<string, VersionState>>({});
   const [installing, setInstalling] = useState<string | null>(null);
+  const [installProgress, setInstallProgress] = useState("");
   const [message, setMessage] = useState("");
 
   const current = clients[tabIdx];
@@ -139,15 +140,19 @@ export function ClientVersionView({
   const doInstall = useCallback(async (version: string) => {
     if (!current || installing) return;
     setInstalling(version);
+    setInstallProgress("");
     try {
-      await installAtVersion(current, version);
-      setMessage(zh ? `✓ 已切换到 ${version}` : `✓ Switched to ${version}`);
+      const resolved = await installAtVersion(current, version, {
+        onProgress: (msg) => setInstallProgress(msg),
+      });
+      setMessage(zh ? `✓ 已切换到 ${resolved}` : `✓ Switched to ${resolved}`);
       // 重新加载该 client 的版本（更新 current 标记）
       await loadFor(current.id);
     } catch (e) {
       setMessage(zh ? `✗ 安装失败：${(e as Error).message}` : `✗ Install failed: ${(e as Error).message}`);
     } finally {
       setInstalling(null);
+      setInstallProgress("");
     }
   }, [current, installing, loadFor, zh]);
 
@@ -243,7 +248,11 @@ export function ClientVersionView({
                   <Box key={v.version} paddingLeft={1}>
                     <Text color={color} bold={focused} dimColor={!focused && !v.isCurrent}>
                       {focused ? "▶ " : "  "}{v.version.padEnd(16)}{date.padEnd(14)}{marker}
-                      {installingThis ? (zh ? "  ⏳ 安装中..." : "  ⏳ installing...") : ""}
+                      {installingThis
+                        ? (installProgress
+                            ? `  ⏳ ${installProgress}`
+                            : (zh ? "  ⏳ 安装中..." : "  ⏳ installing..."))
+                        : ""}
                     </Text>
                   </Box>
                 );

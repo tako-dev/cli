@@ -17,6 +17,8 @@ import {
   ensureNativeBinary,
   getBunPath,
   getGeminiRetiredMessage,
+  getInstalledClientVersion,
+  getLocalVersion,
 } from "./installer";
 import { getNpmRegistry, detectRegion } from "./region";
 import { streamBunInstall } from "./bun-progress";
@@ -73,7 +75,11 @@ export async function listAvailableVersions(packageName: string): Promise<Versio
  *   3. bun add <package>@<version>
  *   4. 更新 ~/.tako/config.json 的 installedClients[client.id]
  */
-export async function installAtVersion(client: ClientConfig, version: string): Promise<void> {
+export async function installAtVersion(
+  client: ClientConfig,
+  version: string,
+  opts?: { onProgress?: (msg: string) => void },
+): Promise<string> {
   if (client.id === "gemini") {
     throw new Error(getGeminiRetiredMessage());
   }
@@ -81,7 +87,7 @@ export async function installAtVersion(client: ClientConfig, version: string): P
     if (!client.installSystem) throw new Error(`${client.name} 不支持 tako install 切换版本`);
     const result = await client.installSystem(version === "latest" ? undefined : version);
     if (!result.success) throw new Error(result.error ?? "安装失败");
-    return;
+    return (client.readSystemVersion ? await client.readSystemVersion() : null) || version;
   }
 
   const fs = await import("node:fs/promises");
@@ -114,46 +120,51 @@ export async function installAtVersion(client: ClientConfig, version: string): P
 
   const s = createSpinner();
   const prefix = `正在切换 ${client.name} 到 ${version}`;
+  const report = (msg: string) => {
+    s.update(msg);
+    opts?.onProgress?.(msg);
+  };
   s.start(prefix);
-  const output = await streamBunInstall(proc, prefix, (msg) => s.update(msg));
+  opts?.onProgress?.(prefix);
+  const output = await streamBunInstall(proc, prefix, report);
   const exitCode = await proc.exited;
   if (exitCode !== 0) {
     s.stop();
     throw new Error(`bun add ${client.package}@${version} failed: ${output.slice(0, 500).trim()}`);
   }
 
-  await ensureNativeBinary(client, { reinstallOnFailure: false, forcePlace: true });
-  s.stop(`${client.name} 已切换到 ${version}`);
+  await ensureNativeBinary(client, {
+    reinstallOnFailure: false,
+    forcePlace: true,
+    onProgress: report,
+  });
+
+  // 优先读取本地 node_modules 真实安装版本，绝不写入 "latest" 占位
+  const installedVersion =
+    (await getInstalledClientVersion(client)) ||
+    (version !== "latest" ? version : null);
+  const displayVersion = installedVersion || version;
+  s.stop(`${client.name} 已切换到 ${displayVersion}`);
 
   // 持久化记录
-  const config = await loadConfig();
-  await updateConfig({
-    installedClients: {
-      ...config.installedClients,
-      [client.id]: { version, installedAt: new Date().toISOString() },
-    },
-  });
+  if (installedVersion && installedVersion !== "latest") {
+    const config = await loadConfig();
+    await updateConfig({
+      installedClients: {
+        ...config.installedClients,
+        [client.id]: { version: installedVersion, installedAt: new Date().toISOString() },
+      },
+    });
+  }
+  return displayVersion;
 }
 
 /**
- * 获取本地当前安装的版本（从配置读）。
+ * 获取本地当前安装的版本（优先从 node_modules 读并自动修正配置）。
  */
 export async function getInstalledVersion(client: ClientConfig): Promise<string | null> {
   if (client.install === "system") {
     return client.readSystemVersion ? client.readSystemVersion() : null;
   }
-
-  // 优先读实际 node_modules 里的版本（真实安装状态）
-  const clientDir = getClientDir(client.id);
-  const pkgPath = join(clientDir, "node_modules", client.package, "package.json");
-  try {
-    const file = Bun.file(pkgPath);
-    if (await file.exists()) {
-      const pkg = await file.json();
-      if (pkg.version) return pkg.version;
-    }
-  } catch { /* fallback to config */ }
-  // 回退到 config 记录
-  const config = await loadConfig();
-  return config.installedClients[client.id]?.version ?? null;
+  return await getLocalVersion(client);
 }
