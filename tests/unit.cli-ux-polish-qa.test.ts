@@ -1021,7 +1021,7 @@ describe("UX-04: Provider / API Key / Version view exports, initial props & <=60
           initialRekeyProviderId: "prov-rekey-qa",
         }),
         80,
-        (frame) => /API Key|输入.*Key|Enter.*Key|更新.*Key|Update.*Key/i.test(frame),
+        (frame) => /API Key|输入.*Key|Enter.*Key|更新.*Key|Update.*Key/i.test(frame) && !frame.includes("添加服务商") && !frame.includes("Add Provider"),
       );
       const launcherFrame = await mountAndCapture(
         React.createElement(LauncherView, { onResult: () => {} }),
