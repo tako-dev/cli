@@ -44,10 +44,27 @@ describe("Claude native model menu", () => {
 
   it("adds only the selected account's chat models using documented picker fields", () => {
     expect(buildClaudeModelPicker(provider, "2.1.242")).toEqual({ options: [
-      { model: "deepseek-fixture[1m]", label: "Fixture chat", description: "Gateway chat" },
+      { model: "deepseek-fixture[1m]", label: "Fixture chat", description: "Gateway chat", behavesAs: "claude-sonnet-4-6" },
     ] });
     expect(buildClaudeModelPicker({ ...provider, apiKey: "fixture-account-b" }, "2.1.316")?.options[0]?.model)
       .toBe("other-account-model");
+  });
+
+  it("sets behavesAs only for non-Claude gateway models so Claude family models keep native identity", () => {
+    const cache = join(directory, "catalog.json");
+    writeFileSync(cache, JSON.stringify({ version: 2, buckets: {
+      [bucket("mixed-key")]: { fetchedAt: Date.now(), entries: [
+        { id: "claude-opus-4-6", displayName: "Claude Opus 4.6", description: "", contextWindow: 1000000, category: "chat" },
+        { id: "gpt-6.2-sol", displayName: "GPT-6.2 Sol", description: "OpenAI flagship", contextWindow: 1000000, category: "chat" },
+      ] },
+    } }));
+    _resetTakoCatalog();
+    expect(buildClaudeModelPicker({ ...provider, apiKey: "mixed-key" }, "2.1.316")).toEqual({
+      options: [
+        { model: "claude-opus-4-6[1m]", label: "Claude Opus 4.6" },
+        { model: "gpt-6.2-sol", label: "GPT-6.2 Sol", description: "OpenAI flagship", behavesAs: "claude-sonnet-4-6" },
+      ],
+    });
   });
 
   it("leaves unsupported versions, subscriptions and missing catalogs alone", () => {
@@ -213,7 +230,7 @@ describe("real adapter setup in an isolated home", () => {
       expect(errors).toBe("");
       expect(code).toBe(0);
       expect(JSON.parse(output)).toEqual({
-        claudeModelPicker: { options: [{ model: "fixture-model", label: "Fixture model", description: "Fixture only" }] },
+        claudeModelPicker: { options: [{ model: "fixture-model", label: "Fixture model", description: "Fixture only", behavesAs: "claude-sonnet-4-6" }] },
         claudeProjectPickerPreserved: true,
         claudeExplicitPickerPreserved: true,
         claudeConfigDirPickerPreserved: true,

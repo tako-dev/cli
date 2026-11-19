@@ -186,10 +186,12 @@ export function resolveClaudeContextWindow(
 
 /** Claude Code 首个支持 `modelPicker` 的版本（官方 settings reference，2026-10-31 核实）。 */
 export const CLAUDE_MODEL_PICKER_MIN_VERSION = "2.1.242";
+const CLAUDE_FAMILY_MODEL_RE = /^(?:full-)?claude[-_]/i;
+export const CLAUDE_THIRD_PARTY_BEHAVES_AS = "claude-sonnet-4-6" as const;
 
 export interface ClaudeModelPicker {
   /** `/model` 选择器里的行，按服务端目录顺序排列。 */
-  options: Array<{ model: string; label: string; description?: string }>;
+  options: Array<{ model: string; label: string; description?: string; behavesAs?: string }>;
   /** 是否替换内置模型行；缺省为追加，保留内置行。 */
   replaceBuiltInOptions?: boolean;
 }
@@ -198,6 +200,8 @@ export interface ClaudeModelPicker {
  * 把当前 Tako / 自定义 provider 的 par 模型目录转换成 Claude Code 原生
  * `/model` 选择器的行。只使用最终启动凭据对应的一小时内目录；路由被覆盖
  * 或凭据不明确时不注入，保留 Claude Code 内置选择器。
+ * 非 Claude 第三方模型会附带 `behavesAs: "claude-sonnet-4-6"`，以便 Claude Code
+ * 在不改写上游请求 model ID 的前提下在 `/model` 中展示并正常调度第三方模型。
  */
 export function buildClaudeModelPicker(
   provider: ProviderContext | undefined,
@@ -224,6 +228,7 @@ export function buildClaudeModelPicker(
       model: appendOneMTagIfNeeded(entry.id, entry.contextWindow),
       label: entry.displayName,
       ...(entry.description ? { description: entry.description } : {}),
+      ...(!CLAUDE_FAMILY_MODEL_RE.test(entry.id) ? { behavesAs: CLAUDE_THIRD_PARTY_BEHAVES_AS } : {}),
     })),
   };
 }

@@ -415,7 +415,7 @@ describe("Antigravity models, filtering, tier resolution & quick-launch args", (
       "claude-opus-4-6[1m]",
       "gemini-2.5-pro",
       "gemini-2.5-flash",
-      "gemini-3.1-pro-preview",
+      "gemini-3.1-pro-image",
       "gemini-3-pro-image",
       "gemini-3.1-flash-image",
       "gemini-4-image",
@@ -522,7 +522,7 @@ describe("Antigravity models, filtering, tier resolution & quick-launch args", (
             fetchedAt: Date.now(),
             entries: [
               { id: "deepseek-v4-flash", displayName: "DeepSeek", description: "", contextWindow: 128000, sortOrder: 0, category: "chat" },
-              { id: "gemini-3.1-pro-preview", displayName: "Gemini 3.1 Pro", description: "", contextWindow: 1000000, sortOrder: 1, category: "chat" },
+              { id: "gemini-2.5-pro", displayName: "Gemini 2.5 Pro", description: "", contextWindow: 1000000, sortOrder: 1, category: "chat" },
             ],
           },
         },

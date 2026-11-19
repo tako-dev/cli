@@ -737,13 +737,16 @@ describe("SRV-EFFORT-04: End-to-end prepareAgyEnv, Launcher model list separatio
     expect(isAgySupportedModelId("gemini-4-hydrogen-xhigh")).toBe(true);
     expect(isAgySupportedModelId("claude-opus-5-5")).toBe(true);
     expect(isAgySupportedModelId("claude-opus-5-5-max")).toBe(true);
+    expect(isAgySupportedModelId("gemini-3.1-pro-preview")).toBe(true);
+    expect(isAgySupportedModelId("gemini-3.1-pro-high")).toBe(true);
+    expect(isAgySupportedModelId("gemini-3.1-pro-low")).toBe(true);
 
     expect(isAgySupportedModelId("gemini-3.9-flash-image")).toBe(false);
     expect(isAgySupportedModelId("models/gemini-3.9-flash-image")).toBe(false);
     expect(isAgySupportedModelId("gemini-3.9-flash-video")).toBe(false);
     expect(isAgySupportedModelId("gemini-3.9-flash-audio")).toBe(false);
     expect(isAgySupportedModelId("gemini-4-hydrogen-image")).toBe(false);
-    expect(isAgySupportedModelId("gemini-3.1-pro-preview")).toBe(false);
+    expect(isAgySupportedModelId("gemini-3.1-pro-image")).toBe(false);
     expect(isAgySupportedModelId("gemini-3.1-flash-image")).toBe(false);
     expect(isAgySupportedModelId("gemma-4-31b-it")).toBe(false);
   });

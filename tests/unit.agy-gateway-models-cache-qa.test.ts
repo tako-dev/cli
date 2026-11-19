@@ -53,7 +53,7 @@ const AGY_ALLOWED_MODELS = [
 ] as const;
 
 const AGY_REJECTED_MODELS = [
-  "gemini-3.1-pro-preview",
+  "gemini-2.5-pro",
   "gemini-3-pro-image",
   "gemini-3.1-flash-image",
   "gemma-4-31b-it",
@@ -81,7 +81,7 @@ const AGY_REJECTED_MODELS = [
 const MIXED_CATALOG_IDS = [
   "claude-opus-4-6",
   "claude-sonnet-4-6",
-  "gemini-3.1-pro-preview",
+  "gemini-2.5-pro",
   "gemini-3-pro-image",
   "gemini-3.5-flash-lite",
   "gemini-3.8-flash",
@@ -179,7 +179,7 @@ describe("AGY-CACHE-01 (AC-1): isAgySupportedModelId strict allowlist", () => {
     }
 
     for (const prefixedRejected of [
-      "models/gemini-3.1-pro-preview",
+      "models/gemini-2.5-pro",
       "models/gemini-3-pro-image",
       "models/gemma-4-31b-it",
       "models/glm-5.3",
@@ -386,7 +386,7 @@ describe("AGY-CACHE-03 (AC-3): buildAgyModelOptions strict agy filtering & cold-
     ]);
 
     for (const forbidden of [
-      "model-gemini-3.1-pro-preview",
+      "model-gemini-2.5-pro",
       "model-gemini-3-pro-image",
       "model-gemma-4-31b-it",
       "model-glm-5.3",
@@ -583,7 +583,7 @@ describe("AGY-CACHE-04 (AC-4): AGY_LLM_GATEWAY_MODELS & AGY_LLM_GATEWAY_TIER_* e
               cacheEntry("glm-5.3", 0),
               cacheEntry("gpt-6-sol", 1),
               cacheEntry("gemma-4-31b-it", 2),
-              cacheEntry("gemini-3.1-pro-preview", 3),
+              cacheEntry("gemini-2.5-pro", 3),
             ],
           },
         },

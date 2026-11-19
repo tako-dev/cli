@@ -1097,6 +1097,7 @@ describe("MCP-02: tako_generate_image tool execution (Mock HTTP E2E)", () => {
       name: "tako_generate_image",
       arguments: {
         prompt: "A serene mountain sunrise",
+        model: "gemini-3.1-flash-image",
         output_path: outputPath,
         aspect_ratio: "16:9",
       },
@@ -1195,6 +1196,7 @@ describe("MCP-02: tako_generate_image tool execution (Mock HTTP E2E)", () => {
       name: "tako_generate_image",
       arguments: {
         prompt: "A pixel art octopus",
+        model: "gemini-3.1-flash-image",
         output_path: outputPath,
       },
     });
@@ -1273,6 +1275,7 @@ describe("MCP-02: tako_generate_image tool execution (Mock HTTP E2E)", () => {
       name: "tako_generate_image",
       arguments: {
         prompt: "Recolor the pixel green",
+        model: "gemini-3.1-flash-image",
         input_image_path: inputPath,
         output_path: outputPath,
       },
@@ -1341,7 +1344,7 @@ describe("MCP-02: tako_generate_image tool execution (Mock HTTP E2E)", () => {
     mode = "http500";
     const err500 = await client.request(2, "tools/call", {
       name: "tako_generate_image",
-      arguments: { prompt: "broken", output_path: join(dir, "fail-500.png") },
+      arguments: { prompt: "broken", model: "gemini-3.1-flash-image", output_path: join(dir, "fail-500.png") },
     });
     assertMcpToolError(err500);
     const pingAfter500 = await client.request(3, "ping", {});
@@ -1351,7 +1354,7 @@ describe("MCP-02: tako_generate_image tool execution (Mock HTTP E2E)", () => {
     mode = "noImage";
     const errNoImg = await client.request(4, "tools/call", {
       name: "tako_generate_image",
-      arguments: { prompt: "blocked", output_path: join(dir, "fail-noimg.png") },
+      arguments: { prompt: "blocked", model: "gemini-3.1-flash-image", output_path: join(dir, "fail-noimg.png") },
     });
     assertMcpToolError(errNoImg);
     const pingAfterNoImg = await client.request(5, "ping", {});
@@ -1381,7 +1384,7 @@ describe("MCP-02: tako_generate_image tool execution (Mock HTTP E2E)", () => {
     noKeyClient.notify("notifications/initialized", {});
     const errNoKey = await noKeyClient.request(2, "tools/call", {
       name: "tako_generate_image",
-      arguments: { prompt: "missing key", output_path: join(noKeyDir, "fail-nokey.png") },
+      arguments: { prompt: "missing key", model: "gemini-3.1-flash-image", output_path: join(noKeyDir, "fail-nokey.png") },
     });
     assertMcpToolError(errNoKey);
     const pingAfterNoKey = await noKeyClient.request(3, "ping", {});
@@ -1389,6 +1392,65 @@ describe("MCP-02: tako_generate_image tool execution (Mock HTTP E2E)", () => {
 
     const closed2 = await noKeyClient.close();
     expect(closed2.nonJsonLines).toEqual([]);
+  });
+
+  it("TC-MCP02-05: defaults tako_generate_image to gpt-image-2 over POST /v1/images/generations with main Bearer apiKey", async () => {
+    const dir = makeTempDir("tako-mcp-img-gpt2-");
+    const mock = startMockTakoServer((req) => {
+      if (req.method === "POST" && req.pathname === "/v1/images/generations") {
+        return Response.json({
+          data: [{ b64_json: RED_PNG_BASE64 }],
+        });
+      }
+      return new Response("Not Found", { status: 404 });
+    });
+
+    const { homeDir, takoHome } = writeIsolatedTakoHome(dir, {
+      withKey: true,
+      serverUrl: mock.url,
+    });
+    const client = new McpStdioClient(
+      cleanChildEnv({
+        HOME: homeDir,
+        USERPROFILE: homeDir,
+        TAKO_HOME: takoHome,
+        PROXY_BASE_URL: mock.url,
+        TAKO_SERVER: mock.url,
+        AGY_LLM_GATEWAY_API_KEY: AGY_ONLY_API_KEY,
+        VERSION: "0.3.61",
+      }),
+    );
+
+    await client.request(1, "initialize", { protocolVersion: "2025-11-25" });
+    client.notify("notifications/initialized", {});
+
+    const outputPath = join(dir, "gpt2", "sunset.png");
+    const resp = await client.request(2, "tools/call", {
+      name: "tako_generate_image",
+      arguments: {
+        prompt: "Minimal geometric sunset poster",
+        output_path: outputPath,
+        aspect_ratio: "16:9",
+      },
+    });
+
+    expect(mock.requests).toHaveLength(1);
+    const httpReq = mock.requests[0]!;
+    expect(httpReq.method).toBe("POST");
+    expect(httpReq.pathname).toBe("/v1/images/generations");
+    expect(httpReq.headers["authorization"]).toBe(`Bearer ${MAIN_API_KEY}`);
+    expect(httpReq.bodyJson?.model).toBe("gpt-image-2");
+    expect(httpReq.bodyJson?.size).toBe("1792x1024");
+
+    expect(resp.error).toBeUndefined();
+    expect(resp.result?.isError).toBeFalsy();
+    expect(existsSync(outputPath)).toBe(true);
+    expect(Buffer.compare(readFileSync(outputPath), RED_PNG_BYTES)).toBe(0);
+    const imageItem = resp.result.content.find((item: any) => item?.type === "image");
+    expect(imageItem).toEqual({ type: "image", data: RED_PNG_BASE64, mimeType: "image/png" });
+
+    const closed = await client.close();
+    expect(closed.nonJsonLines).toEqual([]);
   });
 });
 

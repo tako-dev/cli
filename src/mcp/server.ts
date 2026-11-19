@@ -1,6 +1,11 @@
 import {
+  TAKO_MCP_INITIALIZE_INSTRUCTIONS,
   TAKO_MCP_TOOLS,
+  executeTakoAccountStatus,
+  executeTakoConsult,
+  executeTakoGenerateAudio,
   executeTakoGenerateImage,
+  executeTakoGenerateVideo,
   executeTakoWebSearch,
   type McpToolDeps,
 } from "./tools";
@@ -19,6 +24,36 @@ export interface RunTakoMcpServerOptions {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function normalizeToolArguments(raw: unknown): { args?: Record<string, unknown>; valid: boolean } {
+  if (raw === undefined) return { args: {}, valid: true };
+  let cur: unknown = raw;
+  for (let i = 0; i < 4; i++) {
+    if (typeof cur === "string") {
+      const trimmed = cur.trim();
+      if (!trimmed) return { args: {}, valid: true };
+      try {
+        cur = JSON.parse(trimmed);
+        continue;
+      } catch {
+        return { valid: false };
+      }
+    }
+    if (isPlainObject(cur)) {
+      const keys = Object.keys(cur);
+      if (keys.length === 1 && (keys[0] === "Arguments" || keys[0] === "arguments")) {
+        const inner = cur[keys[0]];
+        if (typeof inner === "string" || isPlainObject(inner)) {
+          cur = inner;
+          continue;
+        }
+      }
+      return { args: cur, valid: true };
+    }
+    return { valid: false };
+  }
+  return isPlainObject(cur) ? { args: cur, valid: true } : { valid: false };
 }
 
 function jsonRpcError(id: unknown, code: number, message: string): Record<string, unknown> {
@@ -76,6 +111,7 @@ export async function handleMcpRequest(
             name: "tako",
             version: deps?.version ?? (process.env.VERSION || "dev"),
           },
+          instructions: TAKO_MCP_INITIALIZE_INSTRUCTIONS,
         },
       };
     }
@@ -100,30 +136,35 @@ export async function handleMcpRequest(
         return jsonRpcError(id, -32602, "Invalid params: missing tool name");
       }
 
-      const rawArgs = params.arguments;
-      if (rawArgs !== undefined && !isPlainObject(rawArgs)) {
+      const normalized = normalizeToolArguments(params.arguments);
+      if (!normalized.valid || !normalized.args) {
         return jsonRpcError(id, -32602, "Invalid params: arguments must be an object");
       }
-      const toolArgs = rawArgs ?? {};
+      const toolArgs = normalized.args;
 
-      if (toolName === "tako_generate_image") {
-        const result = await executeTakoGenerateImage(toolArgs, deps);
-        return { jsonrpc: "2.0", id, result };
+      switch (toolName) {
+        case "tako_generate_image":
+          return { jsonrpc: "2.0", id, result: await executeTakoGenerateImage(toolArgs, deps) };
+        case "tako_generate_video":
+          return { jsonrpc: "2.0", id, result: await executeTakoGenerateVideo(toolArgs, deps) };
+        case "tako_generate_audio":
+          return { jsonrpc: "2.0", id, result: await executeTakoGenerateAudio(toolArgs, deps) };
+        case "tako_web_search":
+          return { jsonrpc: "2.0", id, result: await executeTakoWebSearch(toolArgs, deps) };
+        case "tako_consult":
+          return { jsonrpc: "2.0", id, result: await executeTakoConsult(toolArgs, deps) };
+        case "tako_account_status":
+          return { jsonrpc: "2.0", id, result: await executeTakoAccountStatus(toolArgs, deps) };
+        default:
+          return {
+            jsonrpc: "2.0",
+            id,
+            result: {
+              isError: true,
+              content: [{ type: "text", text: `Unknown tool: ${toolName}` }],
+            },
+          };
       }
-
-      if (toolName === "tako_web_search") {
-        const result = await executeTakoWebSearch(toolArgs, deps);
-        return { jsonrpc: "2.0", id, result };
-      }
-
-      return {
-        jsonrpc: "2.0",
-        id,
-        result: {
-          isError: true,
-          content: [{ type: "text", text: `Unknown tool: ${toolName}` }],
-        },
-      };
     }
 
     case "resources/list":

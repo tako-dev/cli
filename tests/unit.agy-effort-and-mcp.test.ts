@@ -24,10 +24,15 @@ import {
 } from "../src/models/tako";
 import {
   MIN_MCP_VERSION,
+  TAKO_MCP_INITIALIZE_INSTRUCTIONS,
   TAKO_MCP_SERVER_NAME,
   TAKO_MCP_TOOLS,
   buildTakoMcpServerConfig,
+  executeTakoAccountStatus,
+  executeTakoConsult,
+  executeTakoGenerateAudio,
   executeTakoGenerateImage,
+  executeTakoGenerateVideo,
   executeTakoWebSearch,
   getAgyMcpConfigPath,
   handleMcpRequest,
@@ -228,7 +233,7 @@ describe("Feature 1b: Server-driven supportedEffortLevels parsing & dynamic agy 
     expect(Object.hasOwn(parsed[3]!, "supportedEffortLevels")).toBe(false);
   });
 
-  it("supports future gemini-3.x-flash models in allowlist and flash tier without matching flash-lite or image models", () => {
+  it("supports future gemini-3.x-flash and gemini-3.1-pro(-preview) models without matching image models", () => {
     for (const ok of [
       "gemini-3.9-flash",
       "gemini-3.9-flash-high",
@@ -236,6 +241,9 @@ describe("Feature 1b: Server-driven supportedEffortLevels parsing & dynamic agy 
       "gemini-3.0-flash-minimal",
       "gemini-3.5-flash-lite",
       "gemini-3.5-flash-lite-low",
+      "gemini-3.1-pro-preview",
+      "gemini-3.1-pro-high",
+      "gemini-3.1-pro-low",
     ]) {
       expect(isAgySupportedModelId(ok)).toBe(true);
     }
@@ -243,11 +251,16 @@ describe("Feature 1b: Server-driven supportedEffortLevels parsing & dynamic agy 
     for (const bad of [
       "gemini-3.9-flash-image",
       "gemini-3.1-flash-image",
+      "gemini-3.1-pro-image",
       "gemini-2.5-flash",
-      "gemini-3.1-pro-preview",
     ]) {
       expect(isAgySupportedModelId(bad)).toBe(false);
     }
+
+    expect(expandAgyGatewayModelsWithEffort(["gemini-3.1-pro-preview"])).toEqual([
+      "gemini-3.1-pro-high",
+      "gemini-3.1-pro-low",
+    ]);
 
     expect(
       resolveAgyTierModels(["claude-opus-4-6", "gemini-3.5-flash-lite", "gemini-3.9-flash"]),
@@ -457,16 +470,33 @@ describe("Feature 2a: Tako MCP tool schemas, credential priority & API executors
   });
 
   it("exposes valid JSON schemas with real JSON integers (never stringified ints)", () => {
-    expect(TAKO_MCP_TOOLS.map((t) => t.name)).toEqual(["tako_generate_image", "tako_web_search"]);
+    expect(TAKO_MCP_TOOLS.map((t) => t.name)).toEqual([
+      "tako_generate_image",
+      "tako_generate_video",
+      "tako_generate_audio",
+      "tako_web_search",
+      "tako_consult",
+      "tako_account_status",
+    ]);
 
-    const imgSchema = TAKO_MCP_TOOLS[0].inputSchema as {
+    const byName = new Map(TAKO_MCP_TOOLS.map((t) => [t.name, t]));
+    const imgSchema = byName.get("tako_generate_image")!.inputSchema as {
       required: string[];
       properties: Record<string, Record<string, unknown>>;
     };
     expect(imgSchema.required).toEqual(["prompt"]);
     expect(imgSchema.properties.aspect_ratio.enum).toEqual(["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"]);
+    expect(imgSchema.properties.input_image_paths).toBeDefined();
+    expect(imgSchema.properties.size).toBeDefined();
 
-    const searchSchema = TAKO_MCP_TOOLS[1].inputSchema as {
+    const vidSchema = byName.get("tako_generate_video")!.inputSchema as {
+      properties: Record<string, Record<string, unknown>>;
+    };
+    expect(vidSchema.properties.duration.minimum).toBe(1);
+    expect(vidSchema.properties.duration.maximum).toBe(15);
+    expect(typeof vidSchema.properties.wait_timeout_secs.minimum).toBe("number");
+
+    const searchSchema = byName.get("tako_web_search")!.inputSchema as {
       required: string[];
       properties: Record<string, Record<string, unknown>>;
     };
@@ -621,9 +651,9 @@ describe("Feature 2a: Tako MCP tool schemas, credential priority & API executors
       const outDir = join(tmp, "work");
       mkdirSync(outDir, { recursive: true });
 
-      // 1. Text-to-image with nested custom output_path & aspect_ratio
+      // 1. Text-to-image with explicit Gemini model, nested custom output_path & aspect_ratio
       const res1 = await executeTakoGenerateImage(
-        { prompt: "a blue octopus", output_path: "nested/out.png", aspect_ratio: "16:9" },
+        { prompt: "a blue octopus", model: "gemini-3.1-flash-image", output_path: "nested/out.png", aspect_ratio: "16:9" },
         { env: baseEnv, cwd: outDir },
       );
       expect(res1.isError).toBeUndefined();
@@ -675,14 +705,176 @@ describe("Feature 2a: Tako MCP tool schemas, credential priority & API executors
       ).toBe(true);
 
       mode = "no-image";
-      const noImg = await executeTakoGenerateImage({ prompt: "ok" }, { env: baseEnv, cwd: outDir });
+      const noImg = await executeTakoGenerateImage({ prompt: "ok", model: "gemini-3.1-flash-image" }, { env: baseEnv, cwd: outDir });
       expect(noImg.isError).toBe(true);
       expect((noImg.content[0] as { text: string }).text).toContain("Safety refusal");
 
       mode = "http-500";
-      const err500 = await executeTakoGenerateImage({ prompt: "ok" }, { env: baseEnv, cwd: outDir });
+      const err500 = await executeTakoGenerateImage({ prompt: "ok", model: "gemini-3.1-flash-image" }, { env: baseEnv, cwd: outDir });
       expect(err500.isError).toBe(true);
       expect((err500.content[0] as { text: string }).text).toContain("HTTP 500");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("executes default gpt-image-2 and multi-ref grok-imagine-image-quality against mock HTTP server", async () => {
+    const requests: Array<{ path: string; auth: string | null; contentType: string; json?: Record<string, unknown> }> = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        const contentType = req.headers.get("content-type") ?? "";
+        const auth = req.headers.get("authorization");
+        if (url.pathname === "/cdn/generated.png") {
+          return new Response(PNG_1X1_BYTES, { headers: { "content-type": "image/png" } });
+        }
+        const json = contentType.includes("application/json")
+          ? ((await req.json()) as Record<string, unknown>)
+          : undefined;
+        requests.push({ path: url.pathname, auth, contentType, json });
+
+        if (url.pathname === "/v1/images/generations") {
+          return Response.json({ data: [{ url: `http://127.0.0.1:${server.port}/cdn/generated.png` }] });
+        }
+        if (url.pathname === "/v1/images/edits") {
+          return Response.json({ data: [{ b64_json: PNG_1X1_BASE64 }] });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+
+    try {
+      const env = { TAKO_MCP_BASE_URL: `http://127.0.0.1:${server.port}`, TAKO_MCP_API_KEY: "cr_openai_key" };
+      const outDir = join(tmp, "gpt-img");
+      mkdirSync(outDir, { recursive: true });
+
+      const genRes = await executeTakoGenerateImage(
+        { prompt: "red minimalist logo", aspect_ratio: "16:9", output_path: "logo.png" },
+        { env, cwd: outDir },
+      );
+      expect(genRes.isError).toBeUndefined();
+      expect(existsSync(join(outDir, "logo.png"))).toBe(true);
+      expect(requests[0]).toMatchObject({
+        path: "/v1/images/generations",
+        auth: "Bearer cr_openai_key",
+        json: { model: "gpt-image-2", prompt: "red minimalist logo", size: "1792x1024", response_format: "b64_json" },
+      });
+
+      const singleEditRes = await executeTakoGenerateImage(
+        { prompt: "add glow", input_image_path: "logo.png", output_path: "edited1.png" },
+        { env, cwd: outDir },
+      );
+      expect(singleEditRes.isError).toBeUndefined();
+      expect(requests[1]?.path).toBe("/v1/images/edits");
+      expect(requests[1]?.contentType).toContain("multipart/form-data");
+
+      const ref2 = join(outDir, "ref2.png");
+      writeFileSync(ref2, PNG_1X1_BYTES);
+      const grokRes = await executeTakoGenerateImage(
+        {
+          prompt: "blend two logos",
+          model: "grok-imagine-image-quality",
+          input_image_paths: ["logo.png", ref2],
+          output_path: "edited-grok.png",
+        },
+        { env, cwd: outDir },
+      );
+      expect(grokRes.isError).toBeUndefined();
+      expect(requests[2]?.path).toBe("/v1/images/edits");
+      expect((requests[2]?.json?.images as unknown[]).length).toBe(2);
+
+      const grokTooMany = await executeTakoGenerateImage(
+        { prompt: "too many", model: "grok-imagine-image-quality", input_image_paths: ["a.png", "b.png", "c.png", "d.png"] },
+        { env, cwd: outDir },
+      );
+      expect(grokTooMany.isError).toBe(true);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("executes tako_generate_video, tako_generate_audio, tako_consult, and tako_account_status", async () => {
+    const fakeMp4 = Buffer.concat([Buffer.from("\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00"), Buffer.from("videodata")]);
+    let polls = 0;
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (req.method === "POST" && url.pathname === "/v1/videos/generations") {
+          const body = (await req.json()) as Record<string, unknown>;
+          expect(body.model).toBe("grok-imagine-video-1.5");
+          expect(body.resolution).toBe("480p");
+          return Response.json({ id: "vid_123" });
+        }
+        if (req.method === "GET" && url.pathname === "/v1/videos/vid_123") {
+          polls++;
+          return Response.json(polls === 1 ? { status: "processing", progress: 40 } : { status: "succeeded", progress: 100 });
+        }
+        if (req.method === "GET" && url.pathname === "/v1/videos/vid_123/content") {
+          return new Response(fakeMp4, { headers: { "content-type": "video/mp4" } });
+        }
+        if (req.method === "POST" && url.pathname === "/v1/audio/speech") {
+          const body = (await req.json()) as Record<string, unknown>;
+          expect(body.response_format).toBe("wav");
+          return new Response(Buffer.from("RIFFDATA"), {
+            headers: { "content-type": "audio/wav", "x-speech-final-text-preview": "hello" },
+          });
+        }
+        if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
+          const body = (await req.json()) as Record<string, unknown>;
+          expect(body.model).toBe("gpt-6.2-sol");
+          return Response.json({ choices: [{ message: { content: "Looks solid." } }] });
+        }
+        if (req.method === "GET" && url.pathname === "/api/desktop/me") {
+          return Response.json({
+            success: true,
+            data: { user: { id: "42", name: "shiroha" }, plan: { name: "Pro" }, quota: { remain: 1_500_000, used: 500_000 } },
+          });
+        }
+        if (req.method === "POST" && url.pathname === "/apiStats/api/user-quota") {
+          return Response.json({ plan: { daily_cost_limit: 50 }, usage: { dailyCost: 3.5 } });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+
+    try {
+      const env = { TAKO_MCP_BASE_URL: `http://127.0.0.1:${server.port}`, TAKO_MCP_API_KEY: "cr_multi_key" };
+      const outDir = join(tmp, "multi-tools");
+      mkdirSync(outDir, { recursive: true });
+
+      const vidRes = await executeTakoGenerateVideo(
+        { prompt: "calm waves", output_path: "waves.mp4" },
+        { env, cwd: outDir, pollIntervalMs: 1 },
+      );
+      expect(vidRes.isError).toBeUndefined();
+      expect(readFileSync(join(outDir, "waves.mp4"))).toEqual(fakeMp4);
+
+      const resumeRes = await executeTakoGenerateVideo(
+        { resume_task_id: "vid_123", output_path: "waves-resume.mp4" },
+        { env, cwd: outDir, pollIntervalMs: 1 },
+      );
+      expect(resumeRes.isError).toBeUndefined();
+      expect(existsSync(join(outDir, "waves-resume.mp4"))).toBe(true);
+
+      const audioRes = await executeTakoGenerateAudio(
+        { input: "你好世界", output_path: "hello.wav" },
+        { env, cwd: outDir },
+      );
+      expect(audioRes.isError).toBeUndefined();
+      expect(existsSync(join(outDir, "hello.wav"))).toBe(true);
+      expect((await executeTakoGenerateAudio({ input: "bad", response_format: "opus" }, { env, cwd: outDir })).isError).toBe(true);
+
+      const consultRes = await executeTakoConsult({ question: "Review cache design" }, { env });
+      expect(consultRes.isError).toBeUndefined();
+      expect((consultRes.content[0] as { text: string }).text).toBe("[gpt-6.2-sol]\nLooks solid.");
+
+      const acctRes = await executeTakoAccountStatus({}, { env });
+      expect(acctRes.isError).toBeUndefined();
+      const acctJson = JSON.parse((acctRes.content[0] as { text: string }).text) as Record<string, unknown>;
+      expect(acctJson.wallet_remain_usd).toBe(3);
+      expect(acctJson.wallet_used_usd).toBe(1);
     } finally {
       server.stop(true);
     }
@@ -776,6 +968,7 @@ describe("Feature 2b: Tako MCP stdio JSON-RPC 2.0 server", () => {
         protocolVersion: "2025-06-18",
         capabilities: { tools: {} },
         serverInfo: { name: "tako", version: "0.3.58" },
+        instructions: TAKO_MCP_INITIALIZE_INSTRUCTIONS,
       },
     });
 
@@ -905,7 +1098,11 @@ describe("Feature 2b: Tako MCP stdio JSON-RPC 2.0 server", () => {
     expect(parsed[1]).toMatchObject({ id: 2, error: { code: -32601 } });
     expect((parsed[2].result as { tools: Array<{ name: string }> }).tools.map((t) => t.name)).toEqual([
       "tako_generate_image",
+      "tako_generate_video",
+      "tako_generate_audio",
       "tako_web_search",
+      "tako_consult",
+      "tako_account_status",
     ]);
   });
 });
