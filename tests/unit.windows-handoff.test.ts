@@ -68,6 +68,34 @@ describe("Windows handoff script", () => {
     expect(cleanupIdx).toBeGreaterThan(childIdx);
   });
 
+  it("agy --settings must stay a file path — inline JSON args shred under PS 5.1 @argv quoting", () => {
+    // 0.3.57 Windows 回归：--settings 传内联 JSON 时 PowerShell 5.1 把含 `"` 的
+    // 参数重新拼命令行 → JSON 拆碎成多个 token → agy 严格校验拒启动。
+    // 约定：--settings 的值必须是文件路径；argv 元素一律不允许内嵌双引号。
+    const settingsPath =
+      "C:\\Users\\Bob\\AppData\\Local\\tako\\agy\\launch-settings\\abc-123.json";
+    const script = buildWindowsHandoffScript({
+      command: [
+        "C:\\Users\\Bob\\AppData\\Local\\agy\\bin\\agy.exe",
+        "--dangerously-skip-permissions",
+        "--settings",
+        settingsPath,
+      ],
+      cwd: "C:\\repo",
+      cleanupFiles: [settingsPath],
+    });
+
+    expect(script).toContain(
+      `@('--dangerously-skip-permissions', '--settings', '${settingsPath}')`,
+    );
+    const argvLine = script.split("\r\n").find((l) => l.startsWith("$argv =")) ?? "";
+    expect(argvLine).not.toContain("{");
+    expect(argvLine).not.toContain('"');
+    expect(script).toContain(
+      `Remove-Item -LiteralPath '${settingsPath}' -Force`,
+    );
+  });
+
   it("appends a relaunch command inside finally when provided (panel path)", () => {
     const script = buildWindowsHandoffScript({
       command: ["C:\\claude.exe"],

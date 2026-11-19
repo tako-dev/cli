@@ -130,16 +130,29 @@ export function buildAgyStatusLineConfig(): {
 }
 
 /**
- * 判断 settings 对象中是否已有非 Tako 的用户自定义 statusLine（command 字符串不包含 "statusline"）。
+ * 仅当命令指向 Tako 自己的 statusline（`[.../]tako[.cmd|.exe|.bat] statusline`，
+ * 或与当前环境 buildStatusLineCommand() 产物完全相等）才判定为 Tako 自有。
+ * 此前用 includes("statusline") 判别会把任何提及 statusline 的用户自定义
+ * 命令误当自有配置，导致注入覆盖 / 移除误删。
+ */
+export function isTakoStatusLineCommand(command: unknown): boolean {
+  if (typeof command !== "string") return false;
+  const trimmed = command.trim();
+  if (trimmed === buildStatusLineCommand().trim()) return true;
+  return /(?:^|[\s"'/\\])tako(?:\.(?:cmd|exe|bat))?["']?\s+statusline(?:\s|$)/.test(trimmed);
+}
+
+/**
+ * 判断 settings 对象中是否已有非 Tako 的用户自定义 statusLine。
  */
 export function hasCustomNonTakoStatusLine(settings: unknown): boolean {
   if (!settings || typeof settings !== "object" || Array.isArray(settings)) return false;
   const sl = (settings as Record<string, unknown>).statusLine;
   if (!sl) return false;
-  if (typeof sl === "string") return !sl.includes("statusline");
+  if (typeof sl === "string") return !isTakoStatusLineCommand(sl);
   if (typeof sl === "object" && !Array.isArray(sl)) {
     const cmd = (sl as Record<string, unknown>).command;
-    if (typeof cmd === "string") return !cmd.includes("statusline");
+    if (typeof cmd === "string") return !isTakoStatusLineCommand(cmd);
     return Object.keys(sl).length > 0;
   }
   return false;
@@ -147,7 +160,7 @@ export function hasCustomNonTakoStatusLine(settings: unknown): boolean {
 
 /**
  * 注入状态栏配置到 Antigravity (agy) 的 settings.json
- * 若用户已配置非 Tako 自定义 statusLine（command 不包含 "statusline"），绝不覆盖。
+ * 若用户已配置非 Tako 自定义 statusLine，绝不覆盖。
  */
 export async function injectAgyStatusLineConfig(agyHome?: string): Promise<void> {
   const explicitHome = agyHome?.trim() || process.env.AGY_HOME?.trim();
@@ -209,7 +222,7 @@ export async function removeAgyStatusLineConfig(agyHome?: string): Promise<void>
         ? (settings.statusLine as Record<string, unknown>).command
         : null;
 
-    if (typeof currentCommand === "string" && currentCommand.includes("statusline")) {
+    if (isTakoStatusLineCommand(currentCommand)) {
       delete settings.statusLine;
       await Bun.write(settingsPath, JSON.stringify(settings, null, 2));
     }
@@ -255,7 +268,7 @@ export async function injectStatusLineConfig(): Promise<void> {
       ? (settings.statusLine as Record<string, unknown>).command
       : null;
 
-  if (typeof currentCommand === "string" && currentCommand.includes("tako statusline")) {
+  if (isTakoStatusLineCommand(currentCommand)) {
     return;
   }
 
@@ -283,7 +296,7 @@ export async function removeStatusLineConfig(): Promise<void> {
         ? (settings.statusLine as Record<string, unknown>).command
         : null;
 
-    if (typeof currentCommand === "string" && currentCommand.includes("tako statusline")) {
+    if (isTakoStatusLineCommand(currentCommand)) {
       delete settings.statusLine;
       await Bun.write(settingsPath, JSON.stringify(settings, null, 2));
     }

@@ -1,6 +1,7 @@
 import { constants as fsConstants, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, posix as posixPath, win32 as win32Path } from "node:path";
+import { randomUUID } from "node:crypto";
 import { ClientConfig, type ClientLaunchSetupContext, LaunchOption, registerClient } from "./base";
 import type { Provider, ProviderContext } from "../providers/types";
 import { PROXY_BASE_URL } from "../config";
@@ -327,6 +328,37 @@ export function buildAgySkipPermissionsSettings(
   return JSON.stringify(payload);
 }
 
+/** 惰性解析（config.TAKO_DIR 在 import 时绑定，测试需要 TAKO_HOME 后改生效） */
+function agyLaunchSettingsDir(): string {
+  const takoDir = process.env.TAKO_HOME?.trim() || join(homedir(), ".tako");
+  return join(takoDir, "agy", "launch-settings");
+}
+
+/**
+ * 把 session-only settings JSON 落到临时文件并返回文件路径。
+ *
+ * agy 的 `--settings` 同时接受内联 JSON 与文件路径；这里一律用文件路径——
+ * 内联 JSON 里的 `"` 经 Windows PowerShell 5.1 handoff（`& exe @argv` 重新拼接
+ * 原生命令行）会被拆碎成多个 token，agy 严格校验 settings 键直接拒启动。
+ * 文件路径不含引号，可安全穿越所有 shell 交接路径。
+ * 返回的文件随启动 cleanupFiles 在客户端退出后删除。
+ */
+export async function writeAgySessionSettingsFile(
+  workingDir: string,
+  agyHome?: string,
+  dir: string = agyLaunchSettingsDir(),
+): Promise<string> {
+  const fs = await import("node:fs/promises");
+  const targetPath = join(dir, `${process.pid}-${Date.now()}-${randomUUID()}.json`);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(targetPath, buildAgySkipPermissionsSettings(workingDir, agyHome) + "\n", {
+    encoding: "utf-8",
+    flag: "wx",
+    mode: 0o600,
+  });
+  return targetPath;
+}
+
 /**
  * 标准安装路径候选（不含 AGY_PATH 与 PATH）：
  * - macOS/Linux: ~/.local/bin/agy, ~/.gemini/bin/agy, /usr/local/bin/agy, /opt/homebrew/bin/agy
@@ -543,8 +575,12 @@ export const agyClient: ClientConfig = {
     if (launchArgs.some((arg) => arg === "--settings" || arg.startsWith("--settings="))) {
       return undefined;
     }
+    // --settings 传文件路径而非内联 JSON：内联 JSON 的引号会被 Windows
+    // PowerShell 5.1 handoff 拆碎，agy 严格校验即拒启动（0.3.57 Windows 回归）。
+    const settingsPath = await writeAgySessionSettingsFile(context.workingDir || process.cwd());
     return {
-      args: ["--settings", buildAgySkipPermissionsSettings(context.workingDir || process.cwd())],
+      args: ["--settings", settingsPath],
+      cleanupFiles: [settingsPath],
     };
   },
 

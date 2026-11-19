@@ -285,15 +285,21 @@ describe("Session resume preserves lastSelectedOptionIds", () => {
 describe("Antigravity session-only --settings & workspace trust", () => {
   let tmp: string;
   let savedAgyHome: string | undefined;
+  let savedTakoHome: string | undefined;
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "tako-agy-settings-"));
     savedAgyHome = process.env.AGY_HOME;
+    // 会话 settings 临时文件目录随 TAKO_HOME 惰性解析：测试里隔离到 tmp
+    savedTakoHome = process.env.TAKO_HOME;
+    process.env.TAKO_HOME = join(tmp, "tako-home");
   });
 
   afterEach(() => {
     if (savedAgyHome === undefined) delete process.env.AGY_HOME;
     else process.env.AGY_HOME = savedAgyHome;
+    if (savedTakoHome === undefined) delete process.env.TAKO_HOME;
+    else process.env.TAKO_HOME = savedTakoHome;
     rmSync(tmp, { recursive: true, force: true });
   });
 
@@ -424,8 +430,15 @@ describe("Antigravity session-only --settings & workspace trust", () => {
       launchArgs: [AGY_SKIP_PERMISSIONS_FLAG],
       workingDir: workDir,
     });
+    // --settings 值是会话临时文件路径（不是内联 JSON）：内联 JSON 的引号会被
+    // Windows PowerShell 5.1 handoff 拆碎，agy 严格校验即拒启动。
+    const settingsPath = fromArgs?.args?.[1] ?? "";
     expect(fromArgs?.args?.[0]).toBe("--settings");
-    expect(JSON.parse(fromArgs?.args?.[1] ?? "{}")).toMatchObject({
+    expect(settingsPath).not.toContain('"');
+    expect(settingsPath).not.toContain("{");
+    expect(existsSync(settingsPath)).toBe(true);
+    expect(fromArgs?.cleanupFiles).toEqual([settingsPath]);
+    expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toMatchObject({
       allowNonWorkspaceAccess: true,
       toolPermission: "always-proceed",
     });
@@ -436,7 +449,17 @@ describe("Antigravity session-only --settings & workspace trust", () => {
       launchArgs: [],
       workingDir: workDir,
     });
-    expect(fromSelected?.args).toEqual(["--settings", buildAgySkipPermissionsSettings(workDir, agyHome)]);
+    const selectedPath = fromSelected?.args?.[1] ?? "";
+    expect(fromSelected?.args?.[0]).toBe("--settings");
+    expect(fromSelected?.cleanupFiles).toEqual([selectedPath]);
+    expect(JSON.parse(readFileSync(selectedPath, "utf8"))).toEqual(
+      JSON.parse(buildAgySkipPermissionsSettings(workDir, agyHome)),
+    );
+
+    // 测试自清：cleanupFiles 由启动路径统一回收
+    for (const p of [settingsPath, selectedPath]) {
+      rmSync(p, { force: true });
+    }
   });
 });
 
