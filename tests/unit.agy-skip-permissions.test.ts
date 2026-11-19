@@ -346,23 +346,7 @@ describe("Antigravity session-only --settings & workspace trust", () => {
       await agyClient.setupConfigFiles?.(provider, ["skip-permissions"], { forLaunch: false, workingDir: workDir }),
     ).toBeUndefined();
 
-    // Launch without skip-permissions & no custom statusLine -> injects statusLine-only --settings
-    expect(
-      await agyClient.setupConfigFiles?.(provider, ["model-claude-opus-4-6"], {
-        forLaunch: true,
-        launchArgs: ["--model", "claude-opus-4-6"],
-        workingDir: workDir,
-      }),
-    ).toEqual({
-      args: ["--settings", JSON.stringify({ statusLine: buildAgyStatusLineConfig() })],
-    });
-
-    // Launch without skip-permissions & user has custom non-Tako statusLine -> undefined
-    writeFileSync(
-      join(agyHome, "settings.json"),
-      JSON.stringify({ statusLine: { type: "command", command: "/custom/bar" } }),
-      "utf8",
-    );
+    // Launch without skip-permissions (e.g. unchecked or --no-skip-permissions) -> undefined (pure argv)
     expect(
       await agyClient.setupConfigFiles?.(provider, ["model-claude-opus-4-6"], {
         forLaunch: true,
@@ -370,7 +354,13 @@ describe("Antigravity session-only --settings & workspace trust", () => {
         workingDir: workDir,
       }),
     ).toBeUndefined();
-    rmSync(join(agyHome, "settings.json"), { force: true });
+    expect(
+      await agyClient.setupConfigFiles?.(provider, undefined, {
+        forLaunch: true,
+        launchArgs: ["-p", "hi"],
+        workingDir: workDir,
+      }),
+    ).toBeUndefined();
 
     // User already supplied --settings or --settings=... -> undefined
     expect(

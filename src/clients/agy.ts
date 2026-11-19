@@ -491,22 +491,15 @@ export const agyClient: ClientConfig = {
   ) {
     if (context?.forLaunch !== true) return undefined;
     const launchArgs = context.launchArgs ?? [];
-    if (launchArgs.some((arg) => arg === "--settings" || arg.startsWith("--settings="))) {
-      return undefined;
-    }
     const skipActive =
       launchArgs.includes(AGY_SKIP_PERMISSIONS_FLAG) ||
       Boolean(selectedOptionIds?.includes("skip-permissions"));
-    if (skipActive) {
-      return {
-        args: ["--settings", buildAgySkipPermissionsSettings(context.workingDir || process.cwd())],
-      };
-    }
-    if (hasCustomNonTakoStatusLine(readAgySettingsObject())) {
+    if (!skipActive) return undefined;
+    if (launchArgs.some((arg) => arg === "--settings" || arg.startsWith("--settings="))) {
       return undefined;
     }
     return {
-      args: ["--settings", JSON.stringify({ statusLine: buildAgyStatusLineConfig() })],
+      args: ["--settings", buildAgySkipPermissionsSettings(context.workingDir || process.cwd())],
     };
   },
 
