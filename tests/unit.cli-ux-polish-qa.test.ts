@@ -957,7 +957,12 @@ describe("UX-04: Provider / API Key / Version view exports, initial props & <=60
 
       globalThis.fetch = (async () => Response.json({ versions: {}, "dist-tags": {}, data: {} })) as typeof fetch;
 
-      function mountAndCapture(el: React.ReactElement, waitMs = 0): Promise<string> {
+      function mountAndCapture(
+        el: React.ReactElement,
+        waitMs = 0,
+        ready?: (frame: string) => boolean,
+        maxWaitMs = 2000,
+      ): Promise<string> {
         return new Promise((resolve) => {
           class Out extends EventEmitter {
             columns = 140;
@@ -974,22 +979,40 @@ describe("UX-04: Provider / API Key / Version view exports, initial props & <=60
           });
           const stdout = new Out() as any;
           const app = render(el, { stdout, stdin: stdin as any, debug: true, exitOnCtrlC: false, patchConsole: false });
-          setTimeout(() => {
+          const finish = () => {
             const last = stdout.frames.at(-1) ?? "";
             app.unmount();
             stdin.destroy();
             resolve(last);
-          }, waitMs);
+          };
+          if (!ready) {
+            setTimeout(finish, waitMs);
+            return;
+          }
+          const deadline = Date.now() + Math.max(waitMs, maxWaitMs);
+          const poll = () => {
+            const last = stdout.frames.at(-1) ?? "";
+            if (ready(last) || Date.now() >= deadline) {
+              finish();
+              return;
+            }
+            setTimeout(poll, 25);
+          };
+          setTimeout(poll, Math.min(waitMs, 25));
         });
       }
+
+      const stripAnsi = (s: string) => s.replace(/\\u001b\\[[0-9;]*m/g, "").trim();
 
       const versionFrame = await mountAndCapture(
         React.createElement(ClientVersionView, { onDone: () => {}, initialClientId: "agy" }),
         30,
+        (frame) => frame.includes("Antigravity (agy)"),
       );
       const providerTabFrame = await mountAndCapture(
         React.createElement(ProviderMenuView, { onDone: () => {}, initialClientId: "agy" }),
         40,
+        (frame) => frame.includes("Antigravity (agy)"),
       );
       const providerRekeyFrame = await mountAndCapture(
         React.createElement(ProviderMenuView, {
@@ -998,10 +1021,15 @@ describe("UX-04: Provider / API Key / Version view exports, initial props & <=60
           initialRekeyProviderId: "prov-rekey-qa",
         }),
         80,
+        (frame) => /API Key|输入.*Key|Enter.*Key|更新.*Key|Update.*Key/i.test(frame) && !frame.includes("添加服务商") && !frame.includes("Add Provider"),
       );
       const launcherFrame = await mountAndCapture(
         React.createElement(LauncherView, { onResult: () => {} }),
         120,
+        (frame) => {
+          const clean = stripAnsi(frame);
+          return clean.length > 0 && clean !== "Loading..." && /Tako/.test(clean);
+        },
       );
 
       console.log(JSON.stringify({ versionFrame, providerTabFrame, providerRekeyFrame, launcherFrame }));

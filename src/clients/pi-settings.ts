@@ -111,7 +111,10 @@ export async function resolvePiBin(): Promise<string | null> {
   }
   try {
     const { execSync } = await import("node:child_process");
-    const out = execSync(resolvePiLookupCommand(process.platform), { encoding: "utf8" });
+    const out = execSync(resolvePiLookupCommand(process.platform), {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
     return pickPiLookupPath(out, process.platform) || null;
   } catch {
     return null;

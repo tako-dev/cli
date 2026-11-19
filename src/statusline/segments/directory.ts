@@ -11,8 +11,10 @@ import { theme, style, getIcon } from "../colors";
 export class DirectorySegment implements Segment {
   id = "directory";
 
-  render(input: StatusLineInput): string {
-    const dir = this.formatPath(input.workspace.current_dir);
+  render(input: StatusLineInput): string | null {
+    const rawDir = input.workspace?.current_dir || input.cwd;
+    if (!rawDir) return null;
+    const dir = this.formatPath(rawDir);
     const icon = getIcon("directory");
 
     return `${theme.directory.icon}${icon}${style.reset} ${theme.directory.text}${dir}${style.reset}`;

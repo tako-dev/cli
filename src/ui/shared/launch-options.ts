@@ -1,11 +1,17 @@
 import type { LaunchOption } from "../../clients";
-import type { LauncherResult, OptionRow } from "./types";
+import type { OptionRow } from "./types";
 
 export const EXPLICIT_DEFAULT_MODEL_SENTINEL = "__default_model__" as const;
 
 export interface LaunchSelectionSource {
   launchOptions: LaunchOption[];
   enabled: Set<string>;
+}
+
+export interface SelectedLaunchPayload {
+  args: string[];
+  envVars: Record<string, string>;
+  selectedOptionIds: string[];
 }
 
 export function buildOptionRows(options: LaunchOption[], zh: boolean): OptionRow[] {
@@ -43,7 +49,7 @@ export function getGroupSelection(
 
 export function selectedArgs(
   current: LaunchSelectionSource,
-): Pick<Extract<LauncherResult, { type: "launch" }>, "args" | "envVars" | "selectedOptionIds"> {
+): SelectedLaunchPayload {
   const args: string[] = [];
   const envVars: Record<string, string> = {};
   const selectedOptionIds: string[] = [];
@@ -65,7 +71,7 @@ export function selectedArgsWithGroupOverride(
   current: LaunchSelectionSource,
   group: string,
   forcedOptionId?: string,
-): Pick<Extract<LauncherResult, { type: "launch" }>, "args" | "envVars" | "selectedOptionIds"> {
+): SelectedLaunchPayload {
   if (!forcedOptionId) return selectedArgs(current);
 
   const nextEnabled = new Set(current.enabled);

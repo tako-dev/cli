@@ -239,12 +239,21 @@ export async function launchClientUnified(
       is_recent_project: !!options?.projectPath,
     });
 
-    log.info(t("launcher.starting", { client: target.name }));
-
     const mergedArgs = [...setupLaunchArgs, ...effectiveArgs];
+    const finalArgs = target.id === "pi-web" ? stripPiOnlyArgs(mergedArgs) : mergedArgs;
+    const activeDangerousFlag = finalArgs.find(
+      (arg) =>
+        arg === "--dangerously-skip-permissions" ||
+        arg === "--dangerously-bypass-approvals-and-sandbox",
+    );
+    const startingClient = activeDangerousFlag
+      ? `${target.name} (${activeDangerousFlag})`
+      : target.name;
+    log.info(t("launcher.starting", { client: startingClient }));
+
     return await legacyLaunchClient(target, {
       ...options,
-      args: target.id === "pi-web" ? stripPiOnlyArgs(mergedArgs) : mergedArgs,
+      args: finalArgs,
       envVars: { ...setupEnvVars, ...modelEnv, ...(options?.envVars ?? {}) },
       cleanupFiles: [...setupCleanupFiles, ...(options?.cleanupFiles ?? [])],
       providerContext,

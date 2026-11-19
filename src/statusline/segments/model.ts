@@ -4,7 +4,14 @@ import { theme, style, getIcon } from "../colors";
 /**
  * 模型名称映射表
  */
-const MODEL_DISPLAY_NAMES: Record<string, string> = {
+export const MODEL_DISPLAY_NAMES: Record<string, string> = {
+  // Opus 4.6 / Antigravity
+  "claude-opus-4-6": "Opus 4.6",
+  "claude-opus-4-6-thinking": "Opus 4.6",
+  "claude-sonnet-4-6": "Sonnet 4.6",
+  "gemini-3.8-flash": "Gemini 3.8 Flash",
+  "gemini-3.5-flash-lite": "Flash 3.5 Lite",
+  "gpt-oss-120b-medium": "GPT-OSS 120B",
   // Opus 4.5
   "claude-opus-4-5-20251101": "Opus 4.5",
   "claude-opus-4-5": "Opus 4.5",
@@ -32,7 +39,11 @@ export class ModelSegment implements Segment {
 
   render(input: StatusLineInput): string {
     const modelId = input.model.id;
-    const displayName = MODEL_DISPLAY_NAMES[modelId] || this.simplifyModelName(input.model.display_name);
+    const normalizedId = modelId.replace(/^models\//i, "");
+    const displayName =
+      MODEL_DISPLAY_NAMES[modelId] ||
+      MODEL_DISPLAY_NAMES[normalizedId] ||
+      this.simplifyModelName(input.model.display_name || normalizedId);
     const icon = getIcon("model");
 
     return `${theme.model.icon}${icon}${style.reset} ${theme.model.text}${displayName}${style.reset}`;

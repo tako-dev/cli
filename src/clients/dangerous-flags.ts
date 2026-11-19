@@ -7,6 +7,8 @@
  */
 import { getLastSelectedOptionsForClient } from "../project-history";
 
+export const NO_SKIP_PERMISSIONS_FLAG = "--no-skip-permissions" as const;
+
 export const INHERITED_DANGEROUS_FLAGS: Record<string, { optionId: string; flag: string }> = {
   "claude-code": { optionId: "skip-permissions", flag: "--dangerously-skip-permissions" },
   codex: { optionId: "bypass-sandbox", flag: "--dangerously-bypass-approvals-and-sandbox" },
@@ -23,7 +25,8 @@ export interface InheritDangerousFlagOptions {
 /**
  * 返回需要补的危险 flag；不需要补时返回 null。
  *
- * - 已显式带 flag → null（尊重调用方）
+ * - 显式带 --no-skip-permissions → null（单次关闭跳过权限）
+ * - 已显式带 flag（或 agy 的 --yolo 别名）→ null（尊重调用方）
  * - 有记忆：只有勾过对应开关才补
  * - 无记忆（首次）：默认全放行，补 flag
  */
@@ -34,7 +37,9 @@ export async function resolveInheritedDangerousFlag(
 ): Promise<string | null> {
   const entry = INHERITED_DANGEROUS_FLAGS[clientId];
   if (!entry) return null;
+  if (args.includes(NO_SKIP_PERMISSIONS_FLAG)) return null;
   if (args.includes(entry.flag)) return null;
+  if (clientId === "agy" && args.includes("--yolo")) return null;
 
   const reader = opts?.getLastSelectedOptionIds ?? getLastSelectedOptionsForClient;
   const ids = await reader(clientId, opts?.projectPath);
@@ -42,12 +47,36 @@ export async function resolveInheritedDangerousFlag(
   return entry.flag;
 }
 
-/** 在 args 前补上危险 flag（如需要）。 */
+/** 在 args 前补上危险 flag（如需要），剥离 --no-skip-permissions 并归一化 agy --yolo。 */
 export async function withInheritedDangerousFlag(
   clientId: string,
   args: string[],
   opts?: InheritDangerousFlagOptions,
 ): Promise<string[]> {
   const flag = await resolveInheritedDangerousFlag(clientId, args, opts);
-  return flag ? [flag, ...args] : args;
+  const filtered = args.includes(NO_SKIP_PERMISSIONS_FLAG)
+    ? args.filter((a) => a !== NO_SKIP_PERMISSIONS_FLAG)
+    : args;
+
+  if (clientId === "agy" && (filtered.includes("--yolo") || filtered.includes("--dangerously-skip-permissions"))) {
+    const out: string[] = [];
+    let seenSkip = false;
+    if (flag) {
+      out.push(flag);
+      if (flag === "--dangerously-skip-permissions") seenSkip = true;
+    }
+    for (const a of filtered) {
+      if (a === "--yolo" || a === "--dangerously-skip-permissions") {
+        if (!seenSkip) {
+          out.push("--dangerously-skip-permissions");
+          seenSkip = true;
+        }
+        continue;
+      }
+      out.push(a);
+    }
+    return out;
+  }
+
+  return flag ? [flag, ...filtered] : filtered;
 }

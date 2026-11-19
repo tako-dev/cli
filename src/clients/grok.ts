@@ -202,9 +202,16 @@ export async function resolveGrokBin(opts?: {
     return (await opts.lookup()) ?? null;
   }
 
+  if (platform === process.platform && typeof Bun !== "undefined" && typeof Bun.which === "function") {
+    return Bun.which("grok") ?? null;
+  }
+
   try {
     const { execSync } = await import("node:child_process");
-    const output = execSync(pathLookupCommand("grok", platform), { encoding: "utf8" });
+    const output = execSync(pathLookupCommand("grok", platform), {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
     return parsePathLookup(output, platform) ?? null;
   } catch {
     return null;
@@ -228,7 +235,7 @@ export async function installGrokOfficial(version?: string): Promise<{ success: 
   if (process.platform === "win32") {
     try {
       const { execSync } = await import("node:child_process");
-      execSync("where bash", { encoding: "utf8" });
+      execSync("where bash", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
     } catch {
       return {
         success: false,

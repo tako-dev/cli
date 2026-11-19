@@ -15,16 +15,17 @@ export class QuotaSegment implements Segment {
   id = "quota";
 
   async render(input: StatusLineInput): Promise<string | null> {
-    const official = await this.tryRenderOfficial();
+    const official = await this.tryRenderOfficial(input);
     if (official) return official;
     return this.renderSessionCost(input);
   }
 
-  /** 解析当前 Claude Code 绑定的 provider，并按其类型渲染用量 */
-  private async tryRenderOfficial(): Promise<string | null> {
+  /** 解析当前客户端（Claude Code / Antigravity）绑定的 provider，并按其类型渲染用量 */
+  private async tryRenderOfficial(input: StatusLineInput): Promise<string | null> {
     try {
+      const clientId = input.product === "antigravity" ? "agy" : "claude-code";
       const provider =
-        (await getClientProvider("claude-code")) ??
+        (await getClientProvider(clientId)) ??
         (await getDefaultProvider());
 
       if (!provider) return null;

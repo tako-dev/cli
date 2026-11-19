@@ -1,4 +1,4 @@
-import { getAllClients, type ClientConfig } from "../../clients";
+import { getAllClients, type ClientConfig, type LaunchOption } from "../../clients";
 import { getClientBinPath, getClientEntryPath, getClientLaunchOptions } from "../../clients/base";
 import { GROK_DEFAULT_MODEL } from "../../clients/grok";
 import { PI_DEFAULT_MODEL } from "../../clients/pi";
@@ -46,6 +46,26 @@ export function resolveDefaultClientIndex(
   return fallbackIdx >= 0 ? fallbackIdx : 0;
 }
 
+export function resolveInitialClientOptionIds(
+  savedIds: string[],
+  launchOptions: LaunchOption[],
+  providerModel?: string,
+  fallbackModelId?: string,
+): string[] {
+  const validIds = new Set(launchOptions.map((o) => o.id));
+  const baseSet = savedIds.length === 0
+    ? new Set(launchOptions.filter((o) => o.defaultOn).map((o) => o.id))
+    : new Set(savedIds.filter((id) => validIds.has(id) || id === EXPLICIT_DEFAULT_MODEL_SENTINEL));
+  return [
+    ...enabledWithProviderDefaultModel(
+      baseSet,
+      launchOptions,
+      providerModel,
+      fallbackModelId,
+    ),
+  ];
+}
+
 export async function loadLauncherData(projectPathWidth = 45): Promise<LauncherLoadResult> {
   const all = getAllClients();
   const [lastId, defaultProvider, installedFlags] = await Promise.all([
@@ -81,16 +101,15 @@ export async function loadLauncherData(projectPathWidth = 45): Promise<LauncherL
       ? providers.findIndex((provider) => provider.id === activeProvider.id)
       : 0;
     const launchOptions = getClientLaunchOptions(client, activeProvider);
-    const validIds = new Set(launchOptions.map((option) => option.id));
     const savedIds = await getLastSelectedOptionsForClient(client.id);
-    const lastSelectedOptionIds = [...enabledWithProviderDefaultModel(
-      new Set(savedIds.filter((id) => validIds.has(id) || id === EXPLICIT_DEFAULT_MODEL_SENTINEL)),
+    const lastSelectedOptionIds = resolveInitialClientOptionIds(
+      savedIds,
       launchOptions,
       activeProvider?.model,
       client.id === "pi" ? `model-${PI_DEFAULT_MODEL}`
         : client.id === "grok" ? `model-${GROK_DEFAULT_MODEL}`
         : undefined,
-    )];
+    );
 
     clients.push({
       client,

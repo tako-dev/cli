@@ -1,17 +1,22 @@
 /**
- * Claude Code 通过 stdin 传入的数据结构
+ * Claude Code / Antigravity (agy) 通过 stdin 传入的数据结构
  */
 export interface StatusLineInput {
+  product?: string;
+  cwd?: string;
   model: {
     id: string;
     display_name: string;
   };
   workspace: {
     current_dir: string;
+    project_dir?: string;
   };
   transcript_path: string;
   context_window?: {
     context_window_size: number;
+    total_input_tokens?: number;
+    total_output_tokens?: number;
     current_usage: {
       input_tokens: number;
       output_tokens: number;

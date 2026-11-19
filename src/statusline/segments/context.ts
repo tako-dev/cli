@@ -18,8 +18,54 @@ export function resolveContextLimit(modelId: string, envValue = process.env[TAKO
 
 export function statusLineUsageTokens(input: StatusLineInput): number | null {
   const usage = input.context_window?.current_usage;
-  if (!usage) return null;
-  return usage.input_tokens + usage.cache_creation_input_tokens + usage.cache_read_input_tokens;
+  if (usage) {
+    return usage.input_tokens + usage.cache_creation_input_tokens + usage.cache_read_input_tokens;
+  }
+  if (
+    typeof input.context_window?.total_input_tokens === "number" &&
+    input.context_window.total_input_tokens > 0
+  ) {
+    return input.context_window.total_input_tokens;
+  }
+  if (
+    typeof input.context_window?.used_percentage === "number" &&
+    input.context_window.used_percentage > 0
+  ) {
+    return Math.round((input.context_window.used_percentage / 100) * resolveStatusLineContextLimit(input));
+  }
+  return null;
+}
+
+export async function parseTranscriptTokens(transcriptPath: string): Promise<number | null> {
+  try {
+    const file = Bun.file(transcriptPath);
+    if (!(await file.exists())) return null;
+    const content = await file.text();
+    if (!content.trim()) return null;
+
+    const lines = content.split("\n").filter((line) => line.trim());
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const entry = JSON.parse(lines[i]);
+        if (entry.type === "assistant" && entry.message?.usage) {
+          const u = entry.message.usage;
+          return (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) +
+            (u.cache_read_input_tokens || 0);
+        }
+        if (
+          entry.type === "PLANNER_RESPONSE" &&
+          (typeof entry.input_tokens === "number" || typeof entry.cache_read_tokens === "number")
+        ) {
+          return (entry.input_tokens || 0) + (entry.cache_read_tokens || 0);
+        }
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -111,30 +157,8 @@ export class ContextSegment implements Segment {
     ) {
       return ContextSegment.cache.tokens;
     }
-    const tokens = await this.parseTranscriptTokens(transcriptPath);
+    const tokens = await parseTranscriptTokens(transcriptPath);
     ContextSegment.cache = { path: transcriptPath, tokens, timestamp: now };
     return tokens;
-  }
-
-  private async parseTranscriptTokens(transcriptPath: string): Promise<number | null> {
-    try {
-      const file = Bun.file(transcriptPath);
-      if (!(await file.exists())) return null;
-      const content = await file.text();
-      if (!content.trim()) return null;
-
-      const lines = content.split("\n").filter((line) => line.trim());
-      for (let i = lines.length - 1; i >= 0; i--) {
-        try {
-          const entry = JSON.parse(lines[i]);
-          if (entry.type === "assistant" && entry.message?.usage) {
-            const u = entry.message.usage;
-            return (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) +
-              (u.cache_read_input_tokens || 0);
-          }
-        } catch { continue; }
-      }
-      return null;
-    } catch { return null; }
   }
 }

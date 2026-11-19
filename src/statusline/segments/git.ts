@@ -8,7 +8,8 @@ export class GitSegment implements Segment {
   id = "git";
 
   async render(input: StatusLineInput): Promise<string | null> {
-    const cwd = input.workspace.current_dir;
+    const cwd = input.workspace?.current_dir || input.cwd;
+    if (!cwd) return null;
 
     // 检查是否是 git 仓库
     const isGitRepo = await this.isGitRepository(cwd);

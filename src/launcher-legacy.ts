@@ -42,7 +42,10 @@ export async function launchClient(
       // POSIX shell 脚本（如 npm 全局安装的 `claude` shim），直接 spawnSync 会卡死。
       const findCmd = pathLookupCommand(client.command, isWindows ? "win32" : process.platform);
       try {
-        const candidates = execSync(findCmd, { encoding: "utf8" });
+        const candidates = execSync(findCmd, {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        });
         const pick = parsePathLookup(candidates, isWindows ? "win32" : process.platform);
         if (pick) binPath = pick;
         else return { success: false, error: `找不到 ${client.command}，请运行 tako install ${client.id}` };

@@ -8,7 +8,14 @@ import {
 } from "./segments";
 import { StatusLineRenderer } from "./renderer";
 
-export { injectStatusLineConfig, removeStatusLineConfig } from "./inject";
+export {
+  buildStatusLineCommand,
+  buildAgyStatusLineConfig,
+  injectStatusLineConfig,
+  removeStatusLineConfig,
+  injectAgyStatusLineConfig,
+  removeAgyStatusLineConfig,
+} from "./inject";
 export type { StatusLineInput } from "./types";
 
 const SEGMENTS: Segment[] = [
