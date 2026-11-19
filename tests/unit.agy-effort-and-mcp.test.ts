@@ -584,8 +584,8 @@ describe("Feature 2c: Antigravity mcp_config.json injection & opt-out preservati
   });
 
   it("builds cross-platform server configs without writing any secrets or Windows .cmd wrappers", () => {
-    expect(getAgyMcpConfigPath({ configDir: "/custom/dir" })).toBe("/custom/dir/mcp_config.json");
-    expect(getAgyMcpConfigPath({ home: "/Users/alice" })).toBe("/Users/alice/.gemini/config/mcp_config.json");
+    expect(getAgyMcpConfigPath({ configDir: "/custom/dir" })).toBe(join("/custom/dir", "mcp_config.json"));
+    expect(getAgyMcpConfigPath({ home: "/Users/alice" })).toBe(join("/Users/alice", ".gemini", "config", "mcp_config.json"));
 
     const devCfg = buildTakoMcpServerConfig({
       version: "dev",
