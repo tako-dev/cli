@@ -613,14 +613,53 @@ describe("Feature 2c: Antigravity mcp_config.json injection & opt-out preservati
       takoHome: "C:\\Users\\Alice\\.tako",
       platform: "win32",
       version: "0.3.58",
+      execPath: "C:\\Users\\Alice\\.tako\\bun\\bin\\bun.exe",
     });
-    expect(winCfg.command.endsWith(".cmd")).toBe(false);
+    expect(winCfg.command.toLowerCase().endsWith(".exe")).toBe(true);
+    expect(winCfg.command.toLowerCase().endsWith(".cmd")).toBe(false);
     expect(winCfg).toEqual({
       command: "C:\\Users\\Alice\\.tako\\bun\\bin\\bun.exe",
       args: ["C:\\Users\\Alice\\.tako\\cli\\node_modules\\tako-cli\\dist\\index.js", "mcp-server"],
       disabled: false,
     });
     expect(Object.keys(winCfg)).toEqual(["command", "args", "disabled"]);
+
+    const winFallbackCfg = buildTakoMcpServerConfig({
+      takoHome: "C:\\Users\\Alice\\.tako",
+      platform: "win32",
+      version: "0.3.58",
+      execPath: "C:\\Users\\runneradmin\\.bun\\bin\\bun.exe",
+    });
+    expect(winFallbackCfg.command.toLowerCase().endsWith(".exe")).toBe(true);
+    expect(winFallbackCfg.command.toLowerCase().endsWith(".cmd")).toBe(false);
+    expect(winFallbackCfg).toEqual({
+      command:
+        process.platform === "win32"
+          ? "C:\\Users\\runneradmin\\.bun\\bin\\bun.exe"
+          : "C:\\Users\\Alice\\.tako\\bun\\bin\\bun.exe",
+      args: ["C:\\Users\\Alice\\.tako\\cli\\node_modules\\tako-cli\\dist\\index.js", "mcp-server"],
+      disabled: false,
+    });
+    expect(Object.keys(winFallbackCfg)).toEqual(["command", "args", "disabled"]);
+
+    const fakeWinTakoHome = join(tmp, "win-tako");
+    const fakeWinBunExe = join(fakeWinTakoHome, "bun", "bin", "bun.exe");
+    mkdirSync(join(fakeWinTakoHome, "bun", "bin"), { recursive: true });
+    writeFileSync(fakeWinBunExe, "");
+    const winExistingCfg = buildTakoMcpServerConfig({
+      takoHome: fakeWinTakoHome,
+      platform: "win32",
+      version: "0.3.58",
+      execPath: join(tmp, "fallback-bun.exe"),
+    });
+    expect(winExistingCfg.command.toLowerCase().endsWith(".exe")).toBe(true);
+    expect(winExistingCfg.command.toLowerCase().endsWith(".cmd")).toBe(false);
+    expect(winExistingCfg).toEqual({
+      command: fakeWinBunExe,
+      args: [join(fakeWinTakoHome, "cli", "node_modules", "tako-cli", "dist", "index.js"), "mcp-server"],
+      disabled: false,
+    });
+    expect(Object.keys(winExistingCfg)).toEqual(["command", "args", "disabled"]);
   });
 
   it("injects idempotently, preserves other keys/servers, respects disabled:true opt-out, and removes cleanly", async () => {

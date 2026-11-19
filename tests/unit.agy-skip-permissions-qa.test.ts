@@ -826,7 +826,10 @@ describe("SKIP-04: LauncherOptionsSection unfocused flag visibility & session-re
         await Bun.sleep(40);
       }
       stdin.write("\\r");
-      await Bun.sleep(80);
+      const enterDeadline = Date.now() + 1500;
+      while (Date.now() < enterDeadline && !resumeResult) {
+        await Bun.sleep(25);
+      }
       app.unmount();
 
       if (!resumeResult || resumeResult.type !== "launch") {
