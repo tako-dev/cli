@@ -8,6 +8,7 @@ import {
   agyClient,
   buildAgySkipPermissionsSettings,
   DEFAULT_AGY_GATEWAY_MODELS,
+  expandAgyGatewayModelsWithEffort,
 } from "../src/clients/agy";
 import {
   computeFileSha512,
@@ -373,7 +374,9 @@ writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
         expect(handoffText).toContain("'--dangerously-skip-permissions', '--model', 'gemini-2.5-pro', '-p', 'hi'");
         expect(handoffText).toContain("$env:AGY_LLM_GATEWAY_URL = 'https://tako.shiroha.tech'");
         expect(handoffText).toContain("$env:AGY_LLM_GATEWAY_API_KEY = 'cr_agy_dedicated'");
-        expect(handoffText).toContain(`$env:AGY_LLM_GATEWAY_MODELS = '${DEFAULT_AGY_GATEWAY_MODELS.join(",")}'`);
+        expect(handoffText).toContain(
+          `$env:AGY_LLM_GATEWAY_MODELS = '${expandAgyGatewayModelsWithEffort(DEFAULT_AGY_GATEWAY_MODELS).join(",")}'`,
+        );
         expect(handoffText).toContain("$env:AGY_LLM_GATEWAY_TIER_PRO = 'claude-opus-4-6'");
         expect(handoffText).toContain("$env:AGY_LLM_GATEWAY_TIER_FLASH = 'claude-sonnet-4-6'");
         expect(handoffText).toContain("$env:AGY_LLM_GATEWAY_TIER_FLASH_LITE = 'gemini-3.5-flash-lite'");
@@ -398,7 +401,7 @@ writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
         expect(dumped).toMatchObject({
           AGY_LLM_GATEWAY_URL: "https://tako.shiroha.tech",
           AGY_LLM_GATEWAY_API_KEY: "cr_agy_dedicated",
-          AGY_LLM_GATEWAY_MODELS: DEFAULT_AGY_GATEWAY_MODELS.join(","),
+          AGY_LLM_GATEWAY_MODELS: expandAgyGatewayModelsWithEffort(DEFAULT_AGY_GATEWAY_MODELS).join(","),
           AGY_LLM_GATEWAY_TIER_PRO: "claude-opus-4-6",
           AGY_LLM_GATEWAY_TIER_FLASH: "claude-sonnet-4-6",
           AGY_LLM_GATEWAY_TIER_FLASH_LITE: "gemini-3.5-flash-lite",

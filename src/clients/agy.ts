@@ -105,6 +105,50 @@ export const DEFAULT_AGY_GATEWAY_MODELS = [
   "gemini-3.5-flash-lite",
 ] as const;
 
+export const GEMINI_38_FLASH_EFFORT_VARIANTS = [
+  "gemini-3.8-flash-high",
+  "gemini-3.8-flash-medium",
+  "gemini-3.8-flash-low",
+] as const;
+
+const GEMINI_38_FLASH_EFFORT_RE = /^gemini-3\.8-flash-(?:low|medium|high)$/;
+
+/**
+ * 为 agy 1.5.12 网关模式展开官方 Effort 滑块变体：
+ * 当模型列表包含 `gemini-3.8-flash` 且未显式声明任意 `gemini-3.8-flash-(low|medium|high)` 时，
+ * 将其就地替换为 `high / medium / low` 三个变体，使 `/model` 与 `/effort` 显示 `←/→` 滑块；
+ * 其余模型保持原样，按首次出现顺序去重。
+ */
+export function expandAgyGatewayModelsWithEffort(models: readonly string[]): string[] {
+  const hasExplicitEffort = models.some((m) =>
+    GEMINI_38_FLASH_EFFORT_RE.test(normalizeAgyModelId(m).toLowerCase()),
+  );
+  const seen = new Set<string>();
+  const expanded: string[] = [];
+
+  const pushUnique = (id: string) => {
+    const key = id.toLowerCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    expanded.push(id);
+  };
+
+  for (const raw of models) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const normalized = normalizeAgyModelId(trimmed).toLowerCase();
+    if (normalized === "gemini-3.8-flash" && !hasExplicitEffort) {
+      for (const variant of GEMINI_38_FLASH_EFFORT_VARIANTS) {
+        pushUnique(variant);
+      }
+    } else {
+      pushUnique(trimmed);
+    }
+  }
+
+  return expanded;
+}
+
 const AGY_NON_CHAT_MODEL_RE = /(?:^|-)(?:image|video|audio|tts|asr|embedding|veo|lyria|aqa)(?:$|-)/i;
 const AGY_GEMMA_MODEL_RE = /^gemma-/i;
 const AGY_SUPPORTED_MODEL_PATTERNS = [
@@ -177,11 +221,12 @@ function computeAgyGatewayEnvVars(
   const gatewayKey = resolveAgyApiKey(providerOrConfig, fallbackApiKey, baseEnv);
   const models = resolveAgyGatewayModels(providerOrConfig, fallbackApiKey, baseEnv);
   const tiers = resolveAgyTierModels(models);
+  const gatewayModels = expandAgyGatewayModelsWithEffort(models);
 
   const envVars: Record<string, string> = {};
   if (gatewayUrl) envVars.AGY_LLM_GATEWAY_URL = gatewayUrl;
   envVars.AGY_LLM_GATEWAY_API_KEY = gatewayKey;
-  envVars.AGY_LLM_GATEWAY_MODELS = baseEnv.AGY_LLM_GATEWAY_MODELS?.trim() || models.join(",");
+  envVars.AGY_LLM_GATEWAY_MODELS = baseEnv.AGY_LLM_GATEWAY_MODELS?.trim() || gatewayModels.join(",");
   envVars.AGY_LLM_GATEWAY_TIER_PRO = baseEnv.AGY_LLM_GATEWAY_TIER_PRO?.trim() || tiers.pro;
   envVars.AGY_LLM_GATEWAY_TIER_FLASH = baseEnv.AGY_LLM_GATEWAY_TIER_FLASH?.trim() || tiers.flash;
   envVars.AGY_LLM_GATEWAY_TIER_FLASH_LITE = baseEnv.AGY_LLM_GATEWAY_TIER_FLASH_LITE?.trim() || tiers.flashLite;

@@ -27,7 +27,14 @@ const DEFAULT_FALLBACK_MODELS = [
   "gemini-3.8-flash",
   "gemini-3.5-flash-lite",
 ] as const;
-const DEFAULT_FALLBACK_CSV = DEFAULT_FALLBACK_MODELS.join(",");
+const DEFAULT_FALLBACK_CSV = [
+  "claude-opus-4-6",
+  "claude-sonnet-4-6",
+  "gemini-3.8-flash-high",
+  "gemini-3.8-flash-medium",
+  "gemini-3.8-flash-low",
+  "gemini-3.5-flash-lite",
+].join(",");
 
 const AGY_ALLOWED_MODELS = [
   "claude-opus-4-6",
@@ -510,7 +517,7 @@ describe("AGY-CACHE-04 (AC-4): AGY_LLM_GATEWAY_MODELS & AGY_LLM_GATEWAY_TIER_* e
       expect(env.AGY_LLM_GATEWAY_URL).toBe(BASE_URL);
       expect(env.AGY_LLM_GATEWAY_API_KEY).toBe(API_KEY);
       expect(env.AGY_LLM_GATEWAY_MODELS).toBe(
-        "claude-opus-4-6,claude-sonnet-4-6,gemini-3.5-flash-lite,gemini-3.8-flash",
+        "claude-opus-4-6,claude-sonnet-4-6,gemini-3.5-flash-lite,gemini-3.8-flash-high,gemini-3.8-flash-medium,gemini-3.8-flash-low",
       );
       expectValidTierEnvVars(env);
       expect(env.AGY_LLM_GATEWAY_TIER_PRO).toBe("claude-opus-4-6");
@@ -628,7 +635,9 @@ describe("AGY-CACHE-04 (AC-4): AGY_LLM_GATEWAY_MODELS & AGY_LLM_GATEWAY_TIER_* e
       },
       providerCtx,
     );
-    expect(emptyOverridePrepared.AGY_LLM_GATEWAY_MODELS).toBe("claude-opus-4-6,gemini-3.8-flash");
+    expect(emptyOverridePrepared.AGY_LLM_GATEWAY_MODELS).toBe(
+      "claude-opus-4-6,gemini-3.8-flash-high,gemini-3.8-flash-medium,gemini-3.8-flash-low",
+    );
     expect(emptyOverridePrepared.AGY_LLM_GATEWAY_TIER_PRO).toBe("claude-opus-4-6");
     expect(emptyOverridePrepared.AGY_LLM_GATEWAY_TIER_FLASH).toBe("gemini-3.8-flash-medium");
     expect(typeof emptyOverridePrepared.AGY_LLM_GATEWAY_TIER_FLASH_LITE).toBe("string");
