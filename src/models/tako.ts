@@ -28,6 +28,8 @@ export interface TakoModelEntry {
    * 不能在 Claude Code / Codex 里跑 chat，由 filterChatModels 在 UI 层过滤掉。
    */
   category: string;
+  /** Optional server-declared Antigravity effort tiers (e.g. ['low', 'medium', 'high']). */
+  supportedEffortLevels?: string[];
 }
 
 interface CacheBucket {
@@ -186,6 +188,22 @@ function parseCompleteModelList(json: unknown, apiType: TakoApiType): TakoModelE
   return parseCodexResponse(json, apiType);
 }
 
+const VALID_AGY_EFFORT_LEVELS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
+
+function sanitizeSupportedEffortLevels(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const seen = new Set<string>();
+  const levels: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const level = item.trim().toLowerCase();
+    if (!VALID_AGY_EFFORT_LEVELS.has(level) || seen.has(level)) continue;
+    seen.add(level);
+    levels.push(level);
+  }
+  return levels.length > 0 ? levels : undefined;
+}
+
 /** Parse only Gemini-native models that advertise generateContent support. */
 export function parseGeminiModels(json: unknown): TakoModelEntry[] {
   if (!json || typeof json !== "object" || !Array.isArray((json as { models?: unknown }).models)) return [];
@@ -197,7 +215,8 @@ export function parseGeminiModels(json: unknown): TakoModelEntry[] {
     const id = model.name.slice("models/".length);
     if (!id || id.includes("/")) continue;
     if (!Array.isArray(model.supportedGenerationMethods) || !model.supportedGenerationMethods.includes("generateContent")) continue;
-    out.push({
+    const supportedEffortLevels = sanitizeSupportedEffortLevels(model.supportedEffortLevels);
+    const entry: TakoModelEntry = {
       id,
       displayName: typeof model.displayName === "string" && model.displayName ? model.displayName : id,
       description: typeof model.description === "string" ? model.description : "",
@@ -205,7 +224,9 @@ export function parseGeminiModels(json: unknown): TakoModelEntry[] {
         ? model.inputTokenLimit : 0,
       sortOrder: out.length,
       category: "chat",
-    });
+    };
+    if (supportedEffortLevels) entry.supportedEffortLevels = supportedEffortLevels;
+    out.push(entry);
   }
   return out;
 }
