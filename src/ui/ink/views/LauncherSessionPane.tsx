@@ -216,7 +216,7 @@ export function useLauncherSessionSearch({
           projectPath: prepared.projectPath,
           args: prepared.args,
           envVars: {},
-          selectedOptionIds: [],
+          selectedOptionIds: undefined,
           resume: true,
           resumeModelId: selected.session.model,
         });

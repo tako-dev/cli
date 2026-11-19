@@ -7,17 +7,23 @@
  * - 继承 panel 上次勾选的"危险跳过"开关：
  *     claude-code · skip-permissions → --dangerously-skip-permissions
  *     codex       · bypass-sandbox    → --dangerously-bypass-approvals-and-sandbox
+ *     agy         · skip-permissions → --dangerously-skip-permissions
  *   无记忆（首次）默认补全放行 flag；有记忆则尊重上次选择，仅当勾过该开关才补。
- *   若用户已显式传入对应 flag 则不重复补。
+ *   若用户已显式传入对应 flag 则不重复补；传 --no-skip-permissions 可单次关闭并剥离该开关；
+ *   agy 支持 --yolo 别名（归一化为 --dangerously-skip-permissions 且去重）。
  * - 其它 client 原样透传
  *
  * 抽成独立模块是为了让单测能直接 import 而不触发 src/index.ts 的 run() 副作用。
  * `getLastSelectedOptionIds` 通过参数注入，让单测无需读真实 config。
  */
 import { appendOneMTagIfNeeded } from "./clients/claude-code";
-import { normalizeAgyModelId } from "./clients/agy";
+import { AGY_SKIP_PERMISSIONS_FLAG, normalizeAgyModelId } from "./clients/agy";
 import { GROK_DEFAULT_MODEL, mapGrokPassthroughModel, takoGrokModelId } from "./clients/grok";
-import { resolveInheritedDangerousFlag, type InheritDangerousFlagOptions } from "./clients/dangerous-flags";
+import {
+  NO_SKIP_PERMISSIONS_FLAG,
+  resolveInheritedDangerousFlag,
+  type InheritDangerousFlagOptions,
+} from "./clients/dangerous-flags";
 
 export type BuildPassthroughOptions = InheritDangerousFlagOptions;
 
@@ -27,7 +33,7 @@ export async function buildPassthroughArgs(
   shortcutFlag: string,
   opts?: BuildPassthroughOptions,
 ): Promise<string[]> {
-  const rest = !shortcutFlag
+  const restRaw = !shortcutFlag
     ? allArgs
     : shortcutFlag.startsWith("--")
       ? allArgs.filter((a) => a !== shortcutFlag)
@@ -35,7 +41,10 @@ export async function buildPassthroughArgs(
         ? allArgs.slice(1)
         : allArgs;
 
-  const inherited = await resolveInheritedDangerousFlag(clientId, rest, opts);
+  const inherited = await resolveInheritedDangerousFlag(clientId, restRaw, opts);
+  const rest = restRaw.includes(NO_SKIP_PERMISSIONS_FLAG)
+    ? restRaw.filter((a) => a !== NO_SKIP_PERMISSIONS_FLAG)
+    : restRaw;
 
   if (clientId === "grok") {
     const out: string[] = [];
@@ -67,9 +76,20 @@ export async function buildPassthroughArgs(
 
   if (clientId === "agy") {
     const out: string[] = [];
-    if (inherited) out.push(inherited);
+    let seenSkipFlag = false;
+    if (inherited) {
+      out.push(inherited);
+      if (inherited === AGY_SKIP_PERMISSIONS_FLAG) seenSkipFlag = true;
+    }
     for (let i = 0; i < rest.length; i++) {
       const a = rest[i];
+      if (a === "--yolo" || a === AGY_SKIP_PERMISSIONS_FLAG) {
+        if (!seenSkipFlag) {
+          out.push(AGY_SKIP_PERMISSIONS_FLAG);
+          seenSkipFlag = true;
+        }
+        continue;
+      }
       if (a === "--model" && i + 1 < rest.length) {
         out.push(a, normalizeAgyModelId(rest[i + 1]));
         i++;

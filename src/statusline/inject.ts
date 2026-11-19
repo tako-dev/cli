@@ -2,15 +2,28 @@ import { join, dirname } from "path";
 import { homedir } from "os";
 import { mkdir } from "fs/promises";
 
-const TAKO_DIR = join(homedir(), ".tako");
-const TAKO_CLI_DIR = join(TAKO_DIR, "cli");
-const TAKO_BIN_PATH = join(TAKO_DIR, "bin", process.platform === "win32" ? "tako.cmd" : "tako");
+function getTakoDir(): string {
+  return process.env.TAKO_HOME?.trim() || join(homedir(), ".tako");
+}
+
+function getTakoCliDir(): string {
+  return join(getTakoDir(), "cli");
+}
+
+function getTakoBinPath(): string {
+  return join(getTakoDir(), "bin", process.platform === "win32" ? "tako.cmd" : "tako");
+}
 
 function getClaudeSettingsPath(): string {
   if (process.platform === "win32") {
     return join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "claude", "settings.json");
   }
   return join(homedir(), ".claude", "settings.json");
+}
+
+function getAgySettingsPath(agyHome?: string): string {
+  const dir = agyHome?.trim() || process.env.AGY_HOME?.trim() || join(homedir(), ".gemini", "antigravity-cli");
+  return join(dir, "settings.json");
 }
 
 const isWindows = process.platform === "win32";
@@ -41,7 +54,7 @@ function compareVersions(a: string, b: string): number {
  * 获取已安装的 Tako 版本
  */
 async function getInstalledTakoVersion(): Promise<string | null> {
-  const pkgPath = join(TAKO_CLI_DIR, "node_modules", "tako-cli", "package.json");
+  const pkgPath = join(getTakoCliDir(), "node_modules", "tako-cli", "package.json");
 
   try {
     const file = Bun.file(pkgPath);
@@ -75,16 +88,25 @@ async function isStatusLineSupported(): Promise<boolean> {
  */
 function getTakoExecutablePath(): string {
   if (process.env.VERSION === "dev") {
-    // dev 模式：用 bun 直接跑源码入口
-    return process.argv[1] || TAKO_BIN_PATH;
+    return process.argv[1] || getTakoBinPath();
   }
-  return TAKO_BIN_PATH;
+  return getTakoBinPath();
+}
+
+/**
+ * 将路径转换为命令行友好格式（Windows 需要处理反斜杠）
+ */
+function toCommandPath(filePath: string): string {
+  if (isWindows) {
+    return filePath.replace(/\\/g, "/");
+  }
+  return filePath;
 }
 
 /**
  * 构建 statusline 命令（dev 模式需要 bun 前缀）
  */
-function buildStatusLineCommand(): string {
+export function buildStatusLineCommand(): string {
   if (process.env.VERSION === "dev") {
     const entryPath = process.argv[1];
     if (entryPath) {
@@ -95,34 +117,123 @@ function buildStatusLineCommand(): string {
   return `"${takoPath}" statusline`;
 }
 
-/**
- * 将路径转换为命令行友好格式（Windows 需要处理反斜杠）
- */
-function toCommandPath(filePath: string): string {
-  if (isWindows) {
-    // Windows 命令行中可以使用正斜杠，且更不容易出问题
-    return filePath.replace(/\\/g, "/");
-  }
-  return filePath;
+export function buildAgyStatusLineConfig(): {
+  type: "command";
+  command: string;
+  stack_with_default: true;
+} {
+  return {
+    type: "command",
+    command: buildStatusLineCommand(),
+    stack_with_default: true,
+  };
 }
 
 /**
- * 注入状态栏配置到 Claude Code 的 settings.json
+ * 判断 settings 对象中是否已有非 Tako 的用户自定义 statusLine（command 字符串不包含 "statusline"）。
+ */
+export function hasCustomNonTakoStatusLine(settings: unknown): boolean {
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) return false;
+  const sl = (settings as Record<string, unknown>).statusLine;
+  if (!sl) return false;
+  if (typeof sl === "string") return !sl.includes("statusline");
+  if (typeof sl === "object" && !Array.isArray(sl)) {
+    const cmd = (sl as Record<string, unknown>).command;
+    if (typeof cmd === "string") return !cmd.includes("statusline");
+    return Object.keys(sl).length > 0;
+  }
+  return false;
+}
+
+/**
+ * 注入状态栏配置到 Antigravity (agy) 的 settings.json
+ * 若用户已配置非 Tako 自定义 statusLine（command 不包含 "statusline"），绝不覆盖。
+ */
+export async function injectAgyStatusLineConfig(agyHome?: string): Promise<void> {
+  const explicitHome = agyHome?.trim() || process.env.AGY_HOME?.trim();
+  if (!explicitHome && !(await isStatusLineSupported())) {
+    return;
+  }
+
+  const settingsPath = getAgySettingsPath(agyHome);
+  let settings: Record<string, unknown> = {};
+  try {
+    const file = Bun.file(settingsPath);
+    if (await file.exists()) {
+      const parsed = await file.json();
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        settings = parsed as Record<string, unknown>;
+      }
+    }
+  } catch {
+    // 文件不存在或解析失败，使用空对象
+  }
+
+  if (hasCustomNonTakoStatusLine(settings)) {
+    return;
+  }
+
+  const desired = buildAgyStatusLineConfig();
+  const current = settings.statusLine;
+  if (
+    current &&
+    typeof current === "object" &&
+    !Array.isArray(current) &&
+    (current as Record<string, unknown>).type === desired.type &&
+    (current as Record<string, unknown>).command === desired.command &&
+    (current as Record<string, unknown>).stack_with_default === desired.stack_with_default
+  ) {
+    return;
+  }
+
+  settings.statusLine = desired;
+  await mkdir(dirname(settingsPath), { recursive: true });
+  await Bun.write(settingsPath, JSON.stringify(settings, null, 2));
+}
+
+/**
+ * 移除 Antigravity (agy) 中由 Tako 注入的 statusLine（不影响用户的自定义非 Tako statusLine）
+ */
+export async function removeAgyStatusLineConfig(agyHome?: string): Promise<void> {
+  const settingsPath = getAgySettingsPath(agyHome);
+  try {
+    const file = Bun.file(settingsPath);
+    if (!(await file.exists())) return;
+
+    const parsed = await file.json();
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+    const settings = parsed as Record<string, unknown>;
+
+    const currentCommand =
+      typeof settings.statusLine === "object" && settings.statusLine !== null
+        ? (settings.statusLine as Record<string, unknown>).command
+        : null;
+
+    if (typeof currentCommand === "string" && currentCommand.includes("statusline")) {
+      delete settings.statusLine;
+      await Bun.write(settingsPath, JSON.stringify(settings, null, 2));
+    }
+  } catch {
+    // 静默失败
+  }
+}
+
+/**
+ * 注入状态栏配置到 Claude Code（并顺带同步 agy）的 settings.json
  *
  * 注意：只修改 statusLine 字段，保留用户其他配置
  * 只有当已安装的 Tako 版本支持 statusline 时才注入
  */
 export async function injectStatusLineConfig(): Promise<void> {
-  // 检查版本是否支持 statusline
   const supported = await isStatusLineSupported();
   if (!supported) {
-    // 版本过低，跳过注入
     return;
   }
 
+  await injectAgyStatusLineConfig().catch(() => {});
+
   const settingsPath = getClaudeSettingsPath();
 
-  // 读取现有配置
   let settings: Record<string, unknown> = {};
   try {
     const file = Bun.file(settingsPath);
@@ -133,31 +244,23 @@ export async function injectStatusLineConfig(): Promise<void> {
     // 文件不存在或解析失败，使用空对象
   }
 
-  // Tako 的状态栏配置（跨平台）
   const takoStatusLine = {
     type: "command",
     command: buildStatusLineCommand(),
     padding: 0,
   };
 
-  // 检查是否已经是 Tako 的配置
   const currentCommand =
     typeof settings.statusLine === "object" && settings.statusLine !== null
       ? (settings.statusLine as Record<string, unknown>).command
       : null;
 
   if (typeof currentCommand === "string" && currentCommand.includes("tako statusline")) {
-    // 已经配置过，无需重复注入
     return;
   }
 
-  // 注入配置
   settings.statusLine = takoStatusLine;
-
-  // 确保目录存在
   await mkdir(dirname(settingsPath), { recursive: true });
-
-  // 写回文件（保留其他配置）
   await Bun.write(settingsPath, JSON.stringify(settings, null, 2));
 }
 
@@ -175,14 +278,12 @@ export async function removeStatusLineConfig(): Promise<void> {
 
     const settings: Record<string, unknown> = await file.json();
 
-    // 检查是否是 Tako 的配置
     const currentCommand =
       typeof settings.statusLine === "object" && settings.statusLine !== null
         ? (settings.statusLine as Record<string, unknown>).command
         : null;
 
     if (typeof currentCommand === "string" && currentCommand.includes("tako statusline")) {
-      // 移除 Tako 的状态栏配置
       delete settings.statusLine;
       await Bun.write(settingsPath, JSON.stringify(settings, null, 2));
     }

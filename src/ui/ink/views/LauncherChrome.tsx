@@ -202,7 +202,7 @@ export function LauncherOptionsSection({
                 <Text bold={focused} color={focused ? color : undefined}>
                   {opt.label[zh ? "zh" : "en"] || opt.label.en}
                 </Text>
-                {focused && <Text dimColor>{opt.flag}</Text>}
+                {(on || focused) && <Text dimColor>{opt.flag}</Text>}
               </Box>
               {focused && (
                 <Text dimColor>{opt.description[zh ? "zh" : "en"] || opt.description.en}</Text>

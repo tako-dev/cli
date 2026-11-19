@@ -1,11 +1,14 @@
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { posix as posixPath, win32 as win32Path } from "node:path";
-import { ClientConfig, LaunchOption, registerClient } from "./base";
+import { join, posix as posixPath, win32 as win32Path } from "node:path";
+import { ClientConfig, type ClientLaunchSetupContext, LaunchOption, registerClient } from "./base";
 import type { Provider, ProviderContext } from "../providers/types";
 import { PROXY_BASE_URL } from "../config";
 import { installAgy } from "../installer";
 import { filterChatModels, getTakoModels } from "../models/tako";
+import { buildAgyStatusLineConfig, hasCustomNonTakoStatusLine } from "../statusline/inject";
+
+export const AGY_SKIP_PERMISSIONS_FLAG = "--dangerously-skip-permissions" as const;
 
 export const AGY_CONFLICTING_ENV_KEYS = [
   "GOOGLE_GEMINI_BASE_URL",
@@ -213,7 +216,7 @@ export function buildAgyArgs(opts?: {
 }): string[] {
   const args: string[] = [];
   if (opts?.skipPermissions) {
-    args.push("--dangerously-skip-permissions");
+    args.push(AGY_SKIP_PERMISSIONS_FLAG);
   }
   if (opts?.model?.trim()) {
     args.push("--model", normalizeAgyModelId(opts.model));
@@ -222,6 +225,61 @@ export function buildAgyArgs(opts?: {
     args.push(...opts.extraArgs);
   }
   return args;
+}
+
+function readAgySettingsObject(agyHome?: string): Record<string, unknown> | null {
+  const dir = agyHome?.trim() || process.env.AGY_HOME?.trim() || join(homedir(), ".gemini", "antigravity-cli");
+  try {
+    const raw = readFileSync(join(dir, "settings.json"), "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Missing or unreadable settings.json is ignored; disk file is never modified.
+  }
+  return null;
+}
+
+export function buildAgySkipPermissionsSettings(
+  workingDir: string,
+  agyHome?: string,
+): string {
+  const parsed = readAgySettingsObject(agyHome);
+  const seen = new Set<string>();
+  const trustedWorkspaces: string[] = [];
+  const pushUnique = (candidate: string | undefined) => {
+    if (!candidate || seen.has(candidate)) return;
+    seen.add(candidate);
+    trustedWorkspaces.push(candidate);
+  };
+
+  const existing = parsed?.trustedWorkspaces;
+  if (Array.isArray(existing)) {
+    for (const item of existing) {
+      if (typeof item === "string") pushUnique(item);
+    }
+  }
+
+  pushUnique(workingDir);
+  if (workingDir) {
+    try {
+      pushUnique(realpathSync(workingDir));
+    } catch {
+      // Non-existent or inaccessible workingDir realpath is ignored.
+    }
+  }
+
+  const payload: Record<string, unknown> = {
+    trustedWorkspaces,
+    allowNonWorkspaceAccess: true,
+    toolPermission: "always-proceed",
+  };
+  if (!hasCustomNonTakoStatusLine(parsed)) {
+    payload.statusLine = buildAgyStatusLineConfig();
+  }
+
+  return JSON.stringify(payload);
 }
 
 /**
@@ -394,8 +452,8 @@ const AGY_BASE_FLAGS: LaunchOption[] = [
       en: "Auto-approve all tool permission requests without prompting",
       zh: "自动批准所有工具权限请求，无需确认",
     },
-    flag: "--dangerously-skip-permissions",
-    args: ["--dangerously-skip-permissions"],
+    flag: AGY_SKIP_PERMISSIONS_FLAG,
+    args: [AGY_SKIP_PERMISSIONS_FLAG],
     defaultOn: true,
   },
 ];
@@ -423,6 +481,32 @@ export const agyClient: ClientConfig = {
     return {
       AGY_LLM_GATEWAY_URL: resolveAgyGatewayUrl(provider.baseUrl, process.env),
       ...computeAgyGatewayEnvVars(provider, undefined, process.env),
+    };
+  },
+
+  async setupConfigFiles(
+    _provider: ProviderContext,
+    selectedOptionIds?: string[],
+    context?: ClientLaunchSetupContext,
+  ) {
+    if (context?.forLaunch !== true) return undefined;
+    const launchArgs = context.launchArgs ?? [];
+    if (launchArgs.some((arg) => arg === "--settings" || arg.startsWith("--settings="))) {
+      return undefined;
+    }
+    const skipActive =
+      launchArgs.includes(AGY_SKIP_PERMISSIONS_FLAG) ||
+      Boolean(selectedOptionIds?.includes("skip-permissions"));
+    if (skipActive) {
+      return {
+        args: ["--settings", buildAgySkipPermissionsSettings(context.workingDir || process.cwd())],
+      };
+    }
+    if (hasCustomNonTakoStatusLine(readAgySettingsObject())) {
+      return undefined;
+    }
+    return {
+      args: ["--settings", JSON.stringify({ statusLine: buildAgyStatusLineConfig() })],
     };
   },
 

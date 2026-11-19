@@ -7,7 +7,7 @@ import { getClient } from "./clients/base";
 import { launchClientUnified } from "./launcher";
 import { t } from "./i18n";
 import { track, identify, shutdown } from "./analytics";
-import { statusLineCommand, injectStatusLineConfig } from "./statusline";
+import { statusLineCommand, injectStatusLineConfig, injectAgyStatusLineConfig } from "./statusline";
 import { selectProviderForClient } from "./ui/providers";
 import { buildPassthroughArgs } from "./quick-launch-args";
 import { loadCatalog, refreshCatalog } from "./models";
@@ -219,6 +219,10 @@ async function quickLaunch(
   if (!providerContext) {
     console.error("未配置可用的服务商");
     process.exit(1);
+  }
+
+  if (clientId === "agy") {
+    await injectAgyStatusLineConfig().catch(() => {});
   }
 
   const result = await launchClientUnified(client, {
