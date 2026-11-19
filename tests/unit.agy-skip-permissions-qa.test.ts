@@ -66,16 +66,28 @@ function createFakeAgyExecutable(dir: string): { fakeAgyBin: string; argvFile: s
   const argvFile = join(dir, "captured-argv.json");
   const fakeAgyBin = join(dir, "mock-agy");
 
+  // --settings 现在传临时文件路径且随启动清理：子进程内读内容一并捕获，
+  // 父进程断言 payload 时文件可能已被删。
   writeFileSync(
     captureJs,
     [
-      'import { writeFileSync } from "node:fs";',
+      'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
       "const argv = process.argv.slice(2);",
       'if (argv.includes("--version")) {',
       '  console.log("0.2.99");',
       "  process.exit(0);",
       "}",
-      `writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify({ argv, cwd: process.cwd() }));`,
+      "const settingsIdx = argv.indexOf(\"--settings\");",
+      "const settingsPath = settingsIdx >= 0 ? argv[settingsIdx + 1] : undefined;",
+      "let settingsJson = undefined;",
+      "if (settingsPath) {",
+      "  if (existsSync(settingsPath)) {",
+      "    try { settingsJson = JSON.parse(readFileSync(settingsPath, \"utf8\")); } catch {}",
+      "  } else if (settingsPath.trimStart().startsWith(\"{\")) {",
+      "    try { settingsJson = JSON.parse(settingsPath); } catch {}",
+      "  }",
+      "}",
+      `writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify({ argv, cwd: process.cwd(), settingsPath, settingsJson }));`,
     ].join("\n"),
     "utf8",
   );
@@ -379,7 +391,14 @@ describe("SKIP-02: agy default --dangerously-skip-permissions & session-scoped -
     expect(byArgs).toBeDefined();
     expect(byArgs?.args?.[0]).toBe("--settings");
     expect(byArgs?.args).toHaveLength(2);
-    const parsedByArgs = JSON.parse(byArgs!.args![1]) as Record<string, unknown>;
+    // --settings 值是会话临时文件路径（不是内联 JSON）：内联 JSON 的引号会被
+    // Windows PowerShell 5.1 handoff 拆碎，agy 严格校验即拒启动（0.3.57 Windows 回归）。
+    const settingsPathByArgs = byArgs!.args![1];
+    expect(settingsPathByArgs).not.toContain('"');
+    expect(settingsPathByArgs).not.toContain("{");
+    expect(existsSync(settingsPathByArgs)).toBe(true);
+    expect(byArgs?.cleanupFiles).toEqual([settingsPathByArgs]);
+    const parsedByArgs = JSON.parse(readFileSync(settingsPathByArgs, "utf8")) as Record<string, unknown>;
     expect(parsedByArgs.allowNonWorkspaceAccess).toBe(true);
     expect(parsedByArgs.toolPermission).toBe("always-proceed");
     expect(parsedByArgs.trustedWorkspaces).toEqual(
@@ -395,7 +414,10 @@ describe("SKIP-02: agy default --dangerously-skip-permissions & session-scoped -
     expect(byOptionId).toBeDefined();
     expect(byOptionId?.args?.[0]).toBe("--settings");
     expect(byOptionId?.args).toHaveLength(2);
-    const parsedByOptionId = JSON.parse(byOptionId!.args![1]) as Record<string, unknown>;
+    const settingsPathByOptionId = byOptionId!.args![1];
+    expect(settingsPathByOptionId).not.toContain('"');
+    expect(byOptionId?.cleanupFiles).toEqual([settingsPathByOptionId]);
+    const parsedByOptionId = JSON.parse(readFileSync(settingsPathByOptionId, "utf8")) as Record<string, unknown>;
     expect(parsedByOptionId.allowNonWorkspaceAccess).toBe(true);
     expect(parsedByOptionId.toolPermission).toBe("always-proceed");
 
@@ -570,23 +592,34 @@ describe("SKIP-03: Quick launch tako agy / tako --agy args & real subprocess E2E
     const captured = JSON.parse(readFileSync(argvFile, "utf8")) as {
       argv: string[];
       cwd: string;
+      settingsPath?: string;
+      settingsJson?: {
+        allowNonWorkspaceAccess?: boolean;
+        toolPermission?: string;
+        trustedWorkspaces?: string[];
+      };
     };
 
     expect(captured.argv).toContain("--dangerously-skip-permissions");
     const settingsIdx = captured.argv.indexOf("--settings");
     expect(settingsIdx).toBeGreaterThanOrEqual(0);
-    const rawSettingsJson = captured.argv[settingsIdx + 1];
-    expect(typeof rawSettingsJson).toBe("string");
+    // --settings 值是会话临时文件路径（不是内联 JSON）：内联 JSON 的引号会被
+    // Windows PowerShell 5.1 handoff 拆碎，agy 严格校验即拒启动（0.3.57 Windows 回归）。
+    const settingsArg = captured.argv[settingsIdx + 1];
+    expect(typeof settingsArg).toBe("string");
+    expect(settingsArg).toBe(captured.settingsPath);
+    expect(settingsArg).not.toContain('"');
+    expect(settingsArg).not.toContain("{");
 
-    const settingsPayload = JSON.parse(rawSettingsJson) as {
-      allowNonWorkspaceAccess?: boolean;
-      toolPermission?: string;
-      trustedWorkspaces?: string[];
-    };
-    expect(settingsPayload.allowNonWorkspaceAccess).toBe(true);
-    expect(settingsPayload.toolPermission).toBe("always-proceed");
-    expect(settingsPayload.trustedWorkspaces).toContain(tmpWorkDir);
-    expect(settingsPayload.trustedWorkspaces).toContain(realpathSync(tmpWorkDir));
+    const settingsPayload = captured.settingsJson;
+    expect(settingsPayload).toBeDefined();
+    expect(settingsPayload!.allowNonWorkspaceAccess).toBe(true);
+    expect(settingsPayload!.toolPermission).toBe("always-proceed");
+    expect(settingsPayload!.trustedWorkspaces).toContain(tmpWorkDir);
+    expect(settingsPayload!.trustedWorkspaces).toContain(realpathSync(tmpWorkDir));
+
+    // 临时文件由启动路径 cleanupFiles 回收：子进程退出后应已被删除
+    expect(existsSync(settingsArg)).toBe(false);
 
     // User's global settings.json in HOME must remain untouched
     expect(readFileSync(globalSettingsPath, "utf8")).toBe(globalSettingsRaw);
@@ -826,7 +859,8 @@ describe("SKIP-04: LauncherOptionsSection unfocused flag visibility & session-re
         await Bun.sleep(40);
       }
       stdin.write("\\r");
-      const enterDeadline = Date.now() + 1500;
+      // 事件驱动等待 onResult 触发；固定 sleep 在负载下系统性 flaky（CI 红同源）
+      const enterDeadline = Date.now() + 4000;
       while (Date.now() < enterDeadline && !resumeResult) {
         await Bun.sleep(25);
       }

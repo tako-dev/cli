@@ -11,6 +11,8 @@ import { StatusLineRenderer } from "./renderer";
 export {
   buildStatusLineCommand,
   buildAgyStatusLineConfig,
+  hasCustomNonTakoStatusLine,
+  isTakoStatusLineCommand,
   injectStatusLineConfig,
   removeStatusLineConfig,
   injectAgyStatusLineConfig,

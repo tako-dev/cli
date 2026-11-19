@@ -1,12 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import "../src/clients";
 import {
   AGY_CONFLICTING_ENV_KEYS,
   agyClient,
-  buildAgySkipPermissionsSettings,
   DEFAULT_AGY_GATEWAY_MODELS,
   expandAgyGatewayModelsWithEffort,
 } from "../src/clients/agy";
@@ -207,13 +206,23 @@ describe("Antigravity cross-platform one-click installer", () => {
       writeFileSync(payloadPath, "MZ-mock-antigravity-exe");
     } else {
       const mockScript = `#!/usr/bin/env bun
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 if (process.argv.includes("--version")) {
   console.log("1.5.11");
   process.exit(0);
 }
+const argv = process.argv.slice(2);
+// --settings 现在传临时文件路径且随启动清理：进程内读内容一并 dump
+const settingsIdx = argv.indexOf("--settings");
+const settingsPath = settingsIdx >= 0 ? argv[settingsIdx + 1] : undefined;
+let settingsJson = undefined;
+if (settingsPath && existsSync(settingsPath)) {
+  try { settingsJson = JSON.parse(readFileSync(settingsPath, "utf8")); } catch {}
+}
 writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
-  argv: process.argv.slice(2),
+  argv,
+  settingsPath,
+  settingsJson,
   AGY_LLM_GATEWAY_URL: process.env.AGY_LLM_GATEWAY_URL ?? null,
   AGY_LLM_GATEWAY_API_KEY: process.env.AGY_LLM_GATEWAY_API_KEY ?? null,
   AGY_LLM_GATEWAY_MODELS: process.env.AGY_LLM_GATEWAY_MODELS ?? null,
@@ -385,19 +394,20 @@ writeFileSync(${JSON.stringify(dumpFile)}, JSON.stringify({
         }
       } else {
         const dumped = JSON.parse(readFileSync(dumpFile, "utf-8"));
-        const expectedSettings = JSON.parse(
-          buildAgySkipPermissionsSettings(launchCwd, join(fakeHome, ".gemini", "antigravity-cli")),
-        );
         expect(dumped.argv.slice(2)).toEqual(["--dangerously-skip-permissions", "--model", "gemini-2.5-pro", "-p", "hi"]);
         expect(dumped.argv[0]).toBe("--settings");
-        expect(JSON.parse(dumped.argv[1])).toMatchObject({
+        // --settings 值是会话临时文件路径（不是内联 JSON）：内联 JSON 的引号会被
+        // Windows PowerShell 5.1 handoff 拆碎（0.3.57 Windows 回归）
+        expect(dumped.argv[1]).toBe(dumped.settingsPath);
+        expect(dumped.argv[1]).not.toContain('"');
+        expect(dumped.argv[1]).not.toContain("{");
+        expect(dumped.settingsJson).toMatchObject({
           allowNonWorkspaceAccess: true,
           toolPermission: "always-proceed",
         });
-        for (const ws of expectedSettings.trustedWorkspaces) {
-          expect(JSON.parse(dumped.argv[1]).trustedWorkspaces.length).toBeGreaterThan(0);
-          expect(expectedSettings.trustedWorkspaces).toContain(ws);
-        }
+        // 子进程 cwd 被内核按 realpath 解析：trustedWorkspaces 至少含工作目录的
+        // 真实路径（launchCwd 原样与 realpath 在子进程内可能塌缩为同一条）。
+        expect(dumped.settingsJson.trustedWorkspaces).toContain(realpathSync(launchCwd));
         expect(dumped).toMatchObject({
           AGY_LLM_GATEWAY_URL: "https://tako.shiroha.tech",
           AGY_LLM_GATEWAY_API_KEY: "cr_agy_dedicated",

@@ -84,6 +84,10 @@ export function useLauncherSessionSearch({
     Math.min(sessionIdx - sessionPageSize + 1, Math.max(0, sessionResults.length - sessionPageSize)),
   );
   const sessionWindow = sessionResults.slice(sessionWindowStart, sessionWindowStart + sessionPageSize);
+  // useInput 的 listener 在 commit 与 effect 重新订阅之间有一个窗口期；
+  // 期间到达的按键会被绑定到过期闭包。经 ref 读最新结果，避免 Enter 看到空列表。
+  const sessionResultsRef = useRef<SessionSearchResult[]>([]);
+  sessionResultsRef.current = sessionResults;
 
   useEffect(() => {
     const db = openSessionDatabase();
@@ -158,6 +162,7 @@ export function useLauncherSessionSearch({
   const clearDetail = useCallback(() => setSessionDetailKey(null), []);
 
   const handleSearchInput = useCallback((input: string, key: any) => {
+    const results = sessionResultsRef.current;
     if (sessionDetailKey && (key.escape || key.leftArrow)) { setSessionDetailKey(null); return; }
     if (key.escape || key.leftArrow) {
       setSessionQuery("");
@@ -169,28 +174,28 @@ export function useLauncherSessionSearch({
       return;
     }
     if (key.rightArrow) {
-      const selected = sessionResults.find((r) => r.session.key === selectedSessionKeyRef.current) ?? sessionResults[sessionIdxRef.current];
+      const selected = results.find((r) => r.session.key === selectedSessionKeyRef.current) ?? results[sessionIdxRef.current];
       if (selected) setSessionDetailKey(selected.session.key);
       return;
     }
     if (key.downArrow) {
-      if (sessionResults.length === 0) return;
-      if (sessionIdxRef.current >= sessionResults.length - 1 && sessionHasMore) {
+      if (results.length === 0) return;
+      if (sessionIdxRef.current >= results.length - 1 && sessionHasMore) {
         setSessionVisibleLimit((value) => value + sessionPageSize);
         sessionIdxRef.current += 1;
         setSessionIdx(sessionIdxRef.current);
       } else {
-        sessionIdxRef.current = Math.min(sessionResults.length - 1, sessionIdxRef.current + 1);
+        sessionIdxRef.current = Math.min(results.length - 1, sessionIdxRef.current + 1);
         setSessionIdx(sessionIdxRef.current);
       }
-      selectedSessionKeyRef.current = sessionResults[sessionIdxRef.current]?.session.key ?? null;
+      selectedSessionKeyRef.current = results[sessionIdxRef.current]?.session.key ?? null;
       setSelectedSessionKey(selectedSessionKeyRef.current);
       return;
     }
     if (key.upArrow) {
       sessionIdxRef.current = Math.max(0, sessionIdxRef.current - 1);
       setSessionIdx(sessionIdxRef.current);
-      selectedSessionKeyRef.current = sessionResults[sessionIdxRef.current]?.session.key ?? null;
+      selectedSessionKeyRef.current = results[sessionIdxRef.current]?.session.key ?? null;
       setSelectedSessionKey(selectedSessionKeyRef.current);
       return;
     }
@@ -205,7 +210,7 @@ export function useLauncherSessionSearch({
       return;
     }
     if (key.return) {
-      const selected = sessionResults.find((r) => r.session.key === selectedSessionKeyRef.current) ?? sessionResults[sessionIdxRef.current];
+      const selected = results.find((r) => r.session.key === selectedSessionKeyRef.current) ?? results[sessionIdxRef.current];
       if (!selected) return;
       if (selected.session.resumeCapability === "unsupported") { setSessionDetailKey(selected.session.key); return; }
       try {
@@ -235,7 +240,7 @@ export function useLauncherSessionSearch({
       setSessionDetailKey(null);
       setSessionVisibleLimit(sessionPageSize);
     }
-  }, [sessionDetailKey, sessionResults, sessionHasMore, sessionPageSize, currentCwd, onExitSearch, onResult]);
+  }, [sessionDetailKey, sessionHasMore, sessionPageSize, currentCwd, onExitSearch, onResult]);
 
   return {
     sessionQuery,

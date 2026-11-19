@@ -313,12 +313,17 @@ describe("Antigravity (agy) statusLine segments, transcript parsing & config inj
     });
 
     // 2. Preserves other fields on update & removes cleanly via removeAgyStatusLineConfig
+    // （命令指向 tako bin → 判为 Tako 自有，允许更新与移除）
     writeFileSync(
       settingsPath,
       JSON.stringify({
         theme: "solarized",
         trustedWorkspaces: ["/a"],
-        statusLine: { type: "command", command: "old-tako statusline", stack_with_default: true },
+        statusLine: {
+          type: "command",
+          command: "/home/u/.tako/bin/tako statusline",
+          stack_with_default: true,
+        },
       }),
       "utf8",
     );
@@ -347,5 +352,18 @@ describe("Antigravity (agy) statusLine segments, transcript parsing & config inj
 
     await removeAgyStatusLineConfig(agyHome);
     expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual(customSettings);
+
+    // 4. 判别收窄：提及 statusline 但不指向 tako bin 的用户命令判为自定义，
+    //    不再被注入覆盖 / 移除误删（0.3.57 缺陷：子串匹配 "statusline" 即自有）。
+    const lookalikeSettings = {
+      statusLine: { type: "command", command: "/opt/tools/my-statusline" },
+    };
+    writeFileSync(settingsPath, JSON.stringify(lookalikeSettings, null, 2), "utf8");
+
+    await injectAgyStatusLineConfig(agyHome);
+    expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual(lookalikeSettings);
+
+    await removeAgyStatusLineConfig(agyHome);
+    expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual(lookalikeSettings);
   });
 });
