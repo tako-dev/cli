@@ -395,3 +395,95 @@ describe("TP-QUOTA-10 dispatcher 缓存", () => {
     expect(calls).toHaveLength(1); // 没有第二次 fetch
   });
 });
+
+describe("TP-QUOTA-14 短预算超时控制（statusline 防宿主 5s SIGKILL）", () => {
+  it("Tako 串联请求共享 timeoutMs 总预算，首步卡住时按预算中止且不发后续请求", async () => {
+    const calls = mockFetch((_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      })
+    );
+    const provider: Provider = {
+      id: "p-tako-slow", name: "Tako", type: "tako", apiKey: "cr_slow",
+      createdAt: new Date().toISOString(),
+    };
+
+    const start = Date.now();
+    const q = await fetchTakoQuota(provider, { timeoutMs: 80 });
+    const elapsed = Date.now() - start;
+
+    expect(q.status).toBe("error");
+    expect(elapsed).toBeLessThan(1000);
+    expect(calls).toHaveLength(1); // 仅发了 get-key-id，未继续发 user-quota / user-stats
+  });
+
+  it("Claude fetcher 遵循短 timeoutMs 并在超时时中止挂起请求", async () => {
+    mockFetch((_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      })
+    );
+    const provider: Provider = {
+      id: "p-claude-slow", name: "Claude", type: "claude-subscription",
+      authData: { credentials: { claudeAiOauth: { accessToken: "tok" } } },
+      createdAt: new Date().toISOString(),
+    };
+
+    const start = Date.now();
+    const q = await fetchClaudeSubscriptionQuota(provider, { timeoutMs: 80 });
+    const elapsed = Date.now() - start;
+
+    expect(q.status).toBe("error");
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it("Codex fetcher 遵循短 timeoutMs 并透传 skipCodexRpc，挂起时按预算返回错误", async () => {
+    let seenSkipRpc: boolean | undefined;
+    _setHttpFnForTest((_token, _accountId, opts) => {
+      seenSkipRpc = opts?.skipCodexRpc;
+      return new Promise(() => {}); // 永远挂起
+    });
+    const provider: Provider = {
+      id: "p-codex-slow", name: "Codex", type: "codex-subscription",
+      authData: { tokens: { access_token: "tok" } },
+      createdAt: new Date().toISOString(),
+    };
+
+    try {
+      const start = Date.now();
+      const q = await fetchCodexSubscriptionQuota(provider, { timeoutMs: 80, skipCodexRpc: true });
+      const elapsed = Date.now() - start;
+
+      expect(q.status).toBe("error");
+      expect(seenSkipRpc).toBe(true);
+      expect(elapsed).toBeLessThan(1000);
+    } finally {
+      _setHttpFnForTest(null);
+    }
+  });
+
+  it("getOfficialQuota 超时后落盘缓存，跨进程 60s 内直接命中不再重复阻塞", async () => {
+    const calls = mockFetch((_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      })
+    );
+    const provider: Provider = {
+      id: "p-timeout-cache", name: "Claude", type: "claude-subscription",
+      authData: { credentials: { claudeAiOauth: { accessToken: "tok" } } },
+      createdAt: new Date().toISOString(),
+    };
+
+    const q1 = await getOfficialQuota(provider, { timeoutMs: 60 });
+    expect(q1.status).toBe("error");
+    expect(calls).toHaveLength(1);
+
+    // 模拟下一次 statusline 新进程
+    _clearQuotaCache();
+    const start = Date.now();
+    const q2 = await getOfficialQuota(provider, { timeoutMs: 60 });
+    expect(q2.status).toBe("error");
+    expect(Date.now() - start).toBeLessThan(50);
+    expect(calls).toHaveLength(1);
+  });
+});

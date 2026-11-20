@@ -1,10 +1,42 @@
 import { getOfficialQuota, type OfficialQuota } from "../../quota";
-import { getClientProvider, getDefaultProvider } from "../../providers";
+import {
+  getClientProvider,
+  getDefaultProvider,
+  getProvidersForClient,
+  type Provider,
+} from "../../providers";
 import type { Segment, StatusLineInput } from "../types";
 import { theme, style, getIcon, fg } from "../colors";
 
 /**
- * Quota Segment：显示当前 Claude Code 绑定的 provider 用量
+ * statusline 场景的配额请求总预算（ms）。
+ * 宿主 CLI（如 Antigravity / agy）对 statusline 有 5s 硬超时并直接 SIGKILL，
+ * 留出充裕余量给进程启动与其他 segment，避免网络抖动触发弹窗报错。
+ */
+export const STATUSLINE_QUOTA_TIMEOUT_MS = 2500;
+
+/**
+ * 解析当前客户端在 statusline 中应展示配额的 Provider。
+ * 优先级与 launcher 保持一致：客户端显式绑定 → 兼容的默认 Provider → 第一个兼容 Provider。
+ * 避免把不兼容的默认 Provider（例如给 agy / claude-code 回落到 codex-subscription）错派去发无效网络请求。
+ */
+export async function resolveStatusLineProvider(clientId: string): Promise<Provider | undefined> {
+  const bound = await getClientProvider(clientId);
+  if (bound) return bound;
+
+  const compatible = await getProvidersForClient(clientId);
+  if (compatible.length === 0) return undefined;
+  if (compatible.length === 1) return compatible[0];
+
+  const defaultProvider = await getDefaultProvider();
+  if (defaultProvider && compatible.some((p) => p.id === defaultProvider.id)) {
+    return defaultProvider;
+  }
+  return compatible[0];
+}
+
+/**
+ * Quota Segment：显示当前 Claude Code / Antigravity 绑定的 provider 用量
  *
  * - Tako provider:        💰 5h:$2.30/$50
  * - claude-subscription:  💰 5h:45% · wk:78%   (opus 单独额度时再追加 · opus:93%)
@@ -14,23 +46,26 @@ import { theme, style, getIcon, fg } from "../colors";
 export class QuotaSegment implements Segment {
   id = "quota";
 
+  constructor(private readonly quotaTimeoutMs = STATUSLINE_QUOTA_TIMEOUT_MS) {}
+
   async render(input: StatusLineInput): Promise<string | null> {
     const official = await this.tryRenderOfficial(input);
     if (official) return official;
     return this.renderSessionCost(input);
   }
 
-  /** 解析当前客户端（Claude Code / Antigravity）绑定的 provider，并按其类型渲染用量 */
+  /** 解析当前客户端（Claude Code / Antigravity）绑定的兼容 provider，并按其类型渲染用量 */
   private async tryRenderOfficial(input: StatusLineInput): Promise<string | null> {
     try {
       const clientId = input.product === "antigravity" ? "agy" : "claude-code";
-      const provider =
-        (await getClientProvider(clientId)) ??
-        (await getDefaultProvider());
+      const provider = await resolveStatusLineProvider(clientId);
 
       if (!provider) return null;
 
-      const quota = await getOfficialQuota(provider);
+      const quota = await getOfficialQuota(provider, {
+        timeoutMs: this.quotaTimeoutMs,
+        skipCodexRpc: true,
+      });
       if (quota.status !== "ok") return null;
       switch (quota.provider) {
         case "tako":

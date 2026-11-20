@@ -14,7 +14,7 @@
  * }
  */
 import type { Provider } from "../providers/types";
-import type { OfficialQuota, QuotaSlot } from "./types";
+import type { OfficialQuota, QuotaFetchOptions, QuotaSlot } from "./types";
 
 interface CodexUsageWindow {
   used_percent?: number;
@@ -63,10 +63,19 @@ function extractAuth(provider: Provider): { accessToken?: string; accountId?: st
  * 测试通过 _setHttpFnForTest 替换。
  */
 export interface HttpResult { status: number; body: string }
-type HttpFn = (token: string, accountId?: string) => Promise<HttpResult>;
+type HttpFn = (token: string, accountId?: string, options?: QuotaFetchOptions) => Promise<HttpResult>;
+
+const DEFAULT_CODEX_RPC_TIMEOUT_MS = 8000;
+const DEFAULT_CODEX_CURL_TIMEOUT_MS = 10_000;
+const MIN_CODEX_RPC_BUDGET_MS = 4000;
 
 /** 走 codex app-server JSON-RPC：写隔离 CODEX_HOME，不污染用户主 codex 状态 */
-async function fetchViaCodexRpc(token: string, accountId?: string): Promise<HttpResult | null> {
+async function fetchViaCodexRpc(
+  token: string,
+  accountId?: string,
+  timeoutMs = DEFAULT_CODEX_RPC_TIMEOUT_MS,
+): Promise<HttpResult | null> {
+  if (timeoutMs <= 0) return null;
   // codex 必须存在
   const hasCodex = await Bun.spawn(["which", "codex"], { stdout: "pipe", stderr: "pipe" }).exited;
   if (hasCodex !== 0) return null;
@@ -76,6 +85,7 @@ async function fetchViaCodexRpc(token: string, accountId?: string): Promise<Http
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
   const dir = await mkdtemp(join(tmpdir(), "tako-codex-"));
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     // 写一份临时 auth.json，强制 chatgpt 模式
     const auth = {
@@ -94,7 +104,7 @@ async function fetchViaCodexRpc(token: string, accountId?: string): Promise<Http
       env: { ...process.env, CODEX_HOME: dir },
     });
     proc.stdin.write(lines);
-    const wait = new Promise((r) => setTimeout(r, 8000));
+    const wait = new Promise<void>((r) => { timer = setTimeout(r, timeoutMs); });
     await Promise.race([proc.exited, wait]);
     proc.kill();
     const out = await new Response(proc.stdout).text();
@@ -117,14 +127,21 @@ async function fetchViaCodexRpc(token: string, accountId?: string): Promise<Http
     }
     return null;
   } finally {
+    if (timer) clearTimeout(timer);
     fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
 /** 兜底：curl 直接打 wham/usage（Bun fetch 被 CF 拦） */
-async function fetchViaCurl(token: string, accountId?: string): Promise<HttpResult> {
+async function fetchViaCurl(
+  token: string,
+  accountId?: string,
+  timeoutMs = DEFAULT_CODEX_CURL_TIMEOUT_MS,
+): Promise<HttpResult> {
+  if (timeoutMs <= 0) return { status: 0, body: "" };
+  const maxTimeSec = Math.max(1, Math.ceil(timeoutMs / 1000));
   const args = [
-    "-s", "-S", "--max-time", "10",
+    "-s", "-S", "--max-time", String(maxTimeSec),
     "-w", "\n__HTTP__%{http_code}",
     "https://chatgpt.com/backend-api/wham/usage",
     "-H", `Authorization: Bearer ${token}`,
@@ -133,16 +150,39 @@ async function fetchViaCurl(token: string, accountId?: string): Promise<HttpResu
   ];
   if (accountId) args.push("-H", `ChatGPT-Account-Id: ${accountId}`);
   const proc = Bun.spawn(["curl", ...args], { stdout: "pipe", stderr: "pipe" });
-  const raw = await new Response(proc.stdout).text();
-  await proc.exited;
-  const m = raw.match(/^([\s\S]*?)\n__HTTP__(\d+)$/);
-  return { body: m ? m[1] : raw, status: m ? parseInt(m[2], 10) : 0 };
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const stdoutPromise = new Response(proc.stdout).text();
+    const completed = Promise.all([stdoutPromise, proc.exited]).then(([raw]) => raw);
+    const guard = new Promise<null>((resolve) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        try { proc.kill(); } catch { /* ignore */ }
+        resolve(null);
+      }, timeoutMs);
+    });
+    const raw = await Promise.race([completed, guard]);
+    if (timedOut || raw === null) return { status: 0, body: "" };
+    const m = raw.match(/^([\s\S]*?)\n__HTTP__(\d+)$/);
+    return { body: m ? m[1] : raw, status: m ? parseInt(m[2], 10) : 0 };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
-const defaultHttpFn: HttpFn = async (token, accountId) => {
-  const viaRpc = await fetchViaCodexRpc(token, accountId).catch(() => null);
-  if (viaRpc) return viaRpc;
-  return fetchViaCurl(token, accountId);
+const defaultHttpFn: HttpFn = async (token, accountId, options) => {
+  const deadline = options?.timeoutMs != null ? Date.now() + options.timeoutMs : undefined;
+  const skipRpc = Boolean(
+    options?.skipCodexRpc || (options?.timeoutMs != null && options.timeoutMs < MIN_CODEX_RPC_BUDGET_MS),
+  );
+  if (!skipRpc) {
+    const rpcBudget = deadline !== undefined ? Math.max(0, deadline - Date.now()) : DEFAULT_CODEX_RPC_TIMEOUT_MS;
+    const viaRpc = await fetchViaCodexRpc(token, accountId, rpcBudget).catch(() => null);
+    if (viaRpc) return viaRpc;
+  }
+  const curlBudget = deadline !== undefined ? Math.max(0, deadline - Date.now()) : DEFAULT_CODEX_CURL_TIMEOUT_MS;
+  return fetchViaCurl(token, accountId, curlBudget);
 };
 
 let httpFn: HttpFn = defaultHttpFn;
@@ -150,7 +190,10 @@ export function _setHttpFnForTest(fn: HttpFn | null): void {
   httpFn = fn ?? defaultHttpFn;
 }
 
-export async function fetchCodexSubscriptionQuota(provider: Provider): Promise<OfficialQuota> {
+export async function fetchCodexSubscriptionQuota(
+  provider: Provider,
+  options?: QuotaFetchOptions,
+): Promise<OfficialQuota> {
   const fetchedAt = Date.now();
   const base: OfficialQuota = { provider: "codex-subscription", status: "error", fetchedAt };
 
@@ -163,8 +206,21 @@ export async function fetchCodexSubscriptionQuota(provider: Provider): Promise<O
     };
   }
 
+  if (options?.timeoutMs != null && options.timeoutMs <= 0) {
+    return { ...base, hint: "ChatGPT 用量接口请求超时", error: "timeout" };
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const { status, body } = await httpFn(accessToken, accountId);
+    const req = httpFn(accessToken, accountId, options);
+    const { status, body } = options?.timeoutMs != null
+      ? await Promise.race([
+          req,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("timeout")), options.timeoutMs);
+          }),
+        ])
+      : await req;
     if (status === 401) {
       return {
         ...base,
@@ -200,5 +256,7 @@ export async function fetchCodexSubscriptionQuota(provider: Provider): Promise<O
       hint: "ChatGPT 用量接口请求失败",
       error: String((e as Error).message ?? e),
     };
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }

@@ -83,6 +83,14 @@ type: testplan
 - 期望：命令不请求 legacy `apiId`，而是用 provider `apiKey` 解析 fresh provider `apiId`
 - 防护：避免显示旧账号 quota
 
+### TP-QUOTA-14：短预算超时共享与错误落盘（statusline 防 SIGKILL 回归）
+
+- 输入：向 `getOfficialQuota` / 各 fetcher 传入较短 `timeoutMs`（模拟 statusline 2.5s 预算）并让上游请求卡死
+- 期望：
+  - Tako 串联步骤（`get-key-id` → `user-quota` → `user-stats`）共享总预算，第一步耗尽后不发起后续请求
+  - Claude / Codex fetcher 在 `timeoutMs` 内及时中止并返回 `status: "error"`，且 `skipCodexRpc` 透传
+  - 超时结果落盘到 `quota-cache.json`，60 秒内下一次跨进程调用直接命中缓存不再卡死
+
 ## 运行方式
 
 ```bash

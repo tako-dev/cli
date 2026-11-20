@@ -8,14 +8,14 @@
  */
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Provider } from "../providers/types";
-import type { OfficialQuota } from "./types";
+import type { OfficialQuota, QuotaFetchOptions } from "./types";
 import { fetchTakoQuota, fetchTakoQuotaByApiId } from "./tako";
 import { fetchClaudeSubscriptionQuota } from "./claude-subscription";
 import { fetchCodexSubscriptionQuota } from "./codex-subscription";
 
-export type { OfficialQuota, QuotaSlot, QuotaStatus } from "./types";
+export type { OfficialQuota, QuotaFetchOptions, QuotaSlot, QuotaStatus } from "./types";
 export { fetchTakoQuotaByApiId };
 
 const CACHE_TTL_MS = 60_000;
@@ -53,7 +53,7 @@ function writeDiskCache(map: Record<string, OfficialQuota>): void {
   try {
     const fs = require("node:fs") as typeof import("node:fs");
     const path = diskCachePath();
-    const dir = path.slice(0, path.lastIndexOf("/"));
+    const dir = dirname(path);
     if (dir) fs.mkdirSync(dir, { recursive: true });
     // 简单 atomic write：先写 tmp 再 rename
     const tmp = `${path}.tmp.${process.pid}`;
@@ -80,7 +80,10 @@ function unsupported(provider: Provider): OfficialQuota {
  * - codex-subscription    → ChatGPT backend-api/wham/usage
  * - 其他类型              → 返回 unsupported（UI 不展示）
  */
-export async function getOfficialQuota(provider: Provider): Promise<OfficialQuota> {
+export async function getOfficialQuota(
+  provider: Provider,
+  options?: QuotaFetchOptions,
+): Promise<OfficialQuota> {
   const key = cacheKey(provider);
   const now = Date.now();
 
@@ -100,13 +103,13 @@ export async function getOfficialQuota(provider: Provider): Promise<OfficialQuot
   let result: OfficialQuota;
   switch (provider.type) {
     case "tako":
-      result = await fetchTakoQuota(provider);
+      result = await fetchTakoQuota(provider, options);
       break;
     case "claude-subscription":
-      result = await fetchClaudeSubscriptionQuota(provider);
+      result = await fetchClaudeSubscriptionQuota(provider, options);
       break;
     case "codex-subscription":
-      result = await fetchCodexSubscriptionQuota(provider);
+      result = await fetchCodexSubscriptionQuota(provider, options);
       break;
     default:
       result = unsupported(provider);

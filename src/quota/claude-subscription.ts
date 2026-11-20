@@ -12,7 +12,7 @@
  * }
  */
 import type { Provider } from "../providers/types";
-import type { OfficialQuota, QuotaSlot } from "./types";
+import type { OfficialQuota, QuotaFetchOptions, QuotaSlot } from "./types";
 
 interface ClaudeUsageWindow {
   utilization?: number;
@@ -53,7 +53,10 @@ function extractToken(provider: Provider): string | undefined {
   return creds?.claudeAiOauth?.accessToken;
 }
 
-export async function fetchClaudeSubscriptionQuota(provider: Provider): Promise<OfficialQuota> {
+export async function fetchClaudeSubscriptionQuota(
+  provider: Provider,
+  options?: QuotaFetchOptions,
+): Promise<OfficialQuota> {
   const fetchedAt = Date.now();
   const base: OfficialQuota = { provider: "claude-subscription", status: "error", fetchedAt };
 
@@ -66,6 +69,11 @@ export async function fetchClaudeSubscriptionQuota(provider: Provider): Promise<
     };
   }
 
+  const timeoutMs = options?.timeoutMs ?? 5000;
+  if (timeoutMs <= 0) {
+    return { ...base, hint: "Anthropic 用量接口请求超时", error: "timeout" };
+  }
+
   try {
     const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
       method: "GET",
@@ -73,7 +81,7 @@ export async function fetchClaudeSubscriptionQuota(provider: Provider): Promise<
         Authorization: `Bearer ${token}`,
         "anthropic-beta": "oauth-2025-04-20",
       },
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     if (res.status === 401) {

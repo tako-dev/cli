@@ -366,4 +366,170 @@ describe("Antigravity (agy) statusLine segments, transcript parsing & config inj
     await removeAgyStatusLineConfig(agyHome);
     expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual(lookalikeSettings);
   });
+
+  it("skips incompatible default provider (codex-subscription) for agy and picks compatible tako provider", async () => {
+    const takoHome = join(tmp, ".tako-compat");
+    mkdirSync(takoHome, { recursive: true });
+    writeFileSync(
+      join(takoHome, "config.json"),
+      JSON.stringify({
+        installedClients: {},
+        defaultProviderId: "prov-codex",
+        clientProviderMap: { codex: "prov-tako" },
+        providers: [
+          {
+            id: "prov-codex",
+            name: "Codex Plus",
+            type: "codex-subscription",
+            supportedClients: ["codex"],
+            authData: { tokens: { access_token: "expired-token" } },
+            createdAt: "2026-11-19T00:00:00.000Z",
+          },
+          {
+            id: "prov-tako",
+            name: "Tako 官方",
+            type: "tako",
+            apiKey: "cr_agy_compat",
+            baseUrl: "https://tako.example.test/v1",
+            createdAt: "2026-11-19T00:00:00.000Z",
+          },
+        ],
+      }),
+    );
+
+    const quotaCachePath = join(takoHome, "quota-cache.json");
+    const statuslineUrl = new URL("../src/statusline/index.ts", import.meta.url).href;
+    const quotaSegUrl = new URL("../src/statusline/segments/quota.ts", import.meta.url).href;
+    const quotaModUrl = new URL("../src/quota/index.ts", import.meta.url).href;
+    const crypto = await import("node:crypto");
+    const takoFp = crypto.createHash("sha256").update("cr_agy_compat").digest("hex").slice(0, 12);
+    writeFileSync(
+      quotaCachePath,
+      JSON.stringify({
+        [`tako:prov-tako:${takoFp}`]: {
+          provider: "tako",
+          status: "ok",
+          daily: { usedPct: 0, costUsed: 4.56 },
+          fetchedAt: Date.now(),
+        },
+      }),
+    );
+
+    const proc = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        `const q = await import(${JSON.stringify(quotaModUrl)});
+         q._setQuotaDiskCachePathForTest(${JSON.stringify(quotaCachePath)});
+         const { resolveStatusLineProvider } = await import(${JSON.stringify(quotaSegUrl)});
+         const resolvedAgy = await resolveStatusLineProvider("agy");
+         const resolvedClaude = await resolveStatusLineProvider("claude-code");
+         const { renderStatusLine } = await import(${JSON.stringify(statuslineUrl)});
+         const agyLine = await renderStatusLine({
+           product: "antigravity",
+           cwd: ${JSON.stringify(tmp)},
+           model: { id: "gemini-3-pro-high", display_name: "Gemini 3 Pro" },
+           workspace: { current_dir: ${JSON.stringify(tmp)} },
+           transcript_path: "",
+         });
+         console.log(JSON.stringify({
+           agyProviderId: resolvedAgy?.id ?? null,
+           claudeProviderId: resolvedClaude?.id ?? null,
+           agyLine,
+         }));`,
+      ],
+      {
+        env: { ...process.env, TAKO_HOME: takoHome, TAKO_DEV: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const [out, err, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    expect(err).toBe("");
+    expect(code).toBe(0);
+    const parsed = JSON.parse(out.trim()) as {
+      agyProviderId: string | null;
+      claudeProviderId: string | null;
+      agyLine: string;
+    };
+    expect(parsed.agyProviderId).toBe("prov-tako");
+    expect(parsed.claudeProviderId).toBe("prov-tako");
+    expect(parsed.agyLine).toContain("Day:$4.56");
+  });
+
+  it("finishes promptly without hanging when quota upstream stalls in QuotaSegment", async () => {
+    const takoHome = join(tmp, ".tako-hang");
+    mkdirSync(takoHome, { recursive: true });
+    writeFileSync(
+      join(takoHome, "config.json"),
+      JSON.stringify({
+        installedClients: {},
+        defaultProviderId: "prov-tako",
+        clientProviderMap: { agy: "prov-tako" },
+        providers: [
+          {
+            id: "prov-tako",
+            name: "Tako 官方",
+            type: "tako",
+            apiKey: "cr_hung_upstream",
+            baseUrl: "https://tako.example.test/v1",
+            createdAt: "2026-11-19T00:00:00.000Z",
+          },
+        ],
+      }),
+    );
+
+    const quotaCachePath = join(takoHome, "quota-cache.json");
+    const quotaSegUrl = new URL("../src/statusline/segments/quota.ts", import.meta.url).href;
+    const quotaModUrl = new URL("../src/quota/index.ts", import.meta.url).href;
+
+    const proc = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        `globalThis.fetch = ((_input, init) => new Promise((_resolve, reject) => {
+           init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+         }));
+         const q = await import(${JSON.stringify(quotaModUrl)});
+         q._setQuotaDiskCachePathForTest(${JSON.stringify(quotaCachePath)});
+         const { QuotaSegment } = await import(${JSON.stringify(quotaSegUrl)});
+         const seg = new QuotaSegment(100);
+         const start = Date.now();
+         const rendered = await seg.render({
+           product: "antigravity",
+           cwd: ${JSON.stringify(tmp)},
+           model: { id: "claude-opus-4-6", display_name: "Claude Opus 4.6" },
+           workspace: { current_dir: ${JSON.stringify(tmp)} },
+           transcript_path: "",
+         });
+         console.log(JSON.stringify({ rendered, elapsedMs: Date.now() - start }));`,
+      ],
+      {
+        env: { ...process.env, TAKO_HOME: takoHome, TAKO_DEV: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const [out, err, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    expect(err).toBe("");
+    expect(code).toBe(0);
+    const { rendered, elapsedMs } = JSON.parse(out.trim()) as {
+      rendered: string | null;
+      elapsedMs: number;
+    };
+    expect(rendered).toBeNull();
+    expect(elapsedMs).toBeLessThan(1000);
+    // 超时结果已写入磁盘缓存，避免紧接着的下一次 statusline 再次阻塞
+    expect(existsSync(quotaCachePath)).toBe(true);
+    const cacheJson = JSON.parse(readFileSync(quotaCachePath, "utf8")) as Record<string, { status: string }>;
+    expect(Object.values(cacheJson)[0]?.status).toBe("error");
+  });
 });
