@@ -487,3 +487,111 @@ describe("TP-QUOTA-14 短预算超时控制（statusline 防宿主 5s SIGKILL）
     expect(calls).toHaveLength(1);
   });
 });
+
+describe("TP-QUOTA-15 Tako 纯余额用户展示与 /api/desktop/me 兜底", () => {
+  it("/api/user-quota 返回纯余额（无 plan 仅 balance）→ 直接解析 balanceUsd，不再额外请求", async () => {
+    const calls = mockFetch((url) => {
+      if (url.endsWith("/api/get-key-id")) return jsonResponse({ success: true, data: { id: "42" } });
+      if (url.endsWith("/api/user-quota")) {
+        return jsonResponse({
+          usage: { windowCost: 0, dailyCost: 1.5, weeklyCost: 0 },
+          balance: { remain_usd: 12.5, used_usd: 3.25, remain: 6250000, used: 1625000 },
+        });
+      }
+      return jsonResponse({ success: false }, 500);
+    });
+    const provider: Provider = {
+      id: "p-tako-bal", name: "Tako", type: "tako", apiKey: "cr_bal",
+      createdAt: new Date().toISOString(),
+    };
+    const q = await fetchTakoQuota(provider);
+    expect(q.status).toBe("ok");
+    expect(q.balanceUsd).toBe(12.5);
+    expect(q.primary).toBeUndefined();
+    expect(q.secondary).toBeUndefined();
+    expect(q.daily?.costUsed).toBe(1.5);
+    expect(calls.map((c) => new URL(c.url).pathname)).toEqual([
+      "/apiStats/api/get-key-id",
+      "/apiStats/api/user-quota",
+    ]);
+  });
+
+  it("/api/user-quota 同时返回 plan 与 balance → 保留套餐槽位和 balanceUsd", async () => {
+    mockFetch((url) => {
+      if (url.endsWith("/api/user-quota")) {
+        return jsonResponse({
+          plan: { window_cost_limit: 36, window_minutes: 300, weekly_cost_limit: 400 },
+          usage: { windowCost: 18, dailyCost: 18, weeklyCost: 100 },
+          balance: { remain_usd: 25, used_usd: 10, remain: 12500000, used: 5000000 },
+        });
+      }
+      return jsonResponse({ success: false }, 500);
+    });
+    const q = await fetchTakoQuotaByApiId("42");
+    expect(q.status).toBe("ok");
+    expect(q.primary?.usedPct).toBe(50);
+    expect(q.secondary?.usedPct).toBe(25);
+    expect(q.balanceUsd).toBe(25);
+  });
+
+  it("旧后端 /api/user-quota 返回空对象或全 0 plan → 兜底调 /api/desktop/me 取钱包余额", async () => {
+    const calls = mockFetch((url, init) => {
+      if (url.endsWith("/api/get-key-id")) return jsonResponse({ success: true, data: { id: "42" } });
+      if (url.endsWith("/api/user-quota")) {
+        return jsonResponse({
+          plan: { window_cost_limit: 0, daily_cost_limit: 0, weekly_cost_limit: 0 },
+          usage: { windowCost: 0, dailyCost: 2.1, weeklyCost: 0 },
+        });
+      }
+      if (url.endsWith("/api/desktop/me")) {
+        expect((init?.headers as Record<string, string>)?.Authorization).toBe("Bearer cr_legacy_backend");
+        return jsonResponse({
+          success: true,
+          data: { quota: { remain: 6250000, used: 500000 } },
+        });
+      }
+      return jsonResponse({ success: false }, 500);
+    });
+    const provider: Provider = {
+      id: "p-tako-me", name: "Tako", type: "tako", apiKey: "cr_legacy_backend",
+      createdAt: new Date().toISOString(),
+    };
+    const q = await fetchTakoQuota(provider);
+    expect(q.status).toBe("ok");
+    expect(q.balanceUsd).toBe(12.5);
+    expect(calls.map((c) => new URL(c.url).pathname)).toEqual([
+      "/apiStats/api/get-key-id",
+      "/apiStats/api/user-quota",
+      "/api/desktop/me",
+    ]);
+  });
+
+  it("/api/desktop/me 也不可用（如 429）→ 最终回落 /api/user-stats 今日消费", async () => {
+    const calls = mockFetch((url) => {
+      if (url.endsWith("/api/get-key-id")) return jsonResponse({ success: true, data: { id: "42" } });
+      if (url.endsWith("/api/user-quota")) return jsonResponse({});
+      if (url.endsWith("/api/desktop/me")) return new Response("too many requests", { status: 429 });
+      if (url.endsWith("/api/user-stats")) {
+        return jsonResponse({
+          success: true,
+          data: { id: "42", limits: { currentDailyCost: 3.45 } },
+        });
+      }
+      return jsonResponse({ success: false }, 500);
+    });
+    const provider: Provider = {
+      id: "p-tako-fallback", name: "Tako", type: "tako", apiKey: "cr_fb",
+      createdAt: new Date().toISOString(),
+    };
+    const q = await fetchTakoQuota(provider);
+    expect(q.status).toBe("ok");
+    expect(q.balanceUsd).toBeUndefined();
+    expect(q.daily?.costUsed).toBe(3.45);
+    expect(calls.map((c) => new URL(c.url).pathname)).toEqual([
+      "/apiStats/api/get-key-id",
+      "/apiStats/api/user-quota",
+      "/api/desktop/me",
+      "/apiStats/api/user-stats",
+    ]);
+  });
+});

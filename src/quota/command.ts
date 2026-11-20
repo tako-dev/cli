@@ -27,6 +27,7 @@ type QuotaJsonPayload =
       fiveHour?: QuotaJsonSlot;
       daily?: QuotaJsonSlot;
       weekly?: QuotaJsonSlot;
+      balanceUsd?: number;
       fetchedAt: string;
     }
   | {
@@ -88,6 +89,7 @@ function successPayload(quota: OfficialQuota): QuotaCommandResult {
       fiveHour: toJsonSlot(quota.primary),
       daily: toJsonSlot(quota.daily),
       weekly: toJsonSlot(quota.secondary),
+      ...(quota.balanceUsd !== undefined ? { balanceUsd: quota.balanceUsd } : {}),
       fetchedAt: new Date(quota.fetchedAt).toISOString(),
     },
   };
@@ -113,7 +115,8 @@ export async function buildQuotaPayload(
   const resolved = await resolveApiId(provider.apiKey);
   if (!resolved.valid) return errorPayload(resolved.error, resolved.message);
 
-  const fetchQuota = deps.fetchQuotaByApiId ?? fetchTakoQuotaByApiId;
+  const fetchQuota =
+    deps.fetchQuotaByApiId ?? ((apiId: string) => fetchTakoQuotaByApiId(apiId, { apiKey: provider.apiKey }));
   const quota = await fetchQuota(resolved.apiId);
   return quota.status === "ok" ? successPayload(quota) : quotaErrorResult(quota);
 }

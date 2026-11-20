@@ -30,6 +30,8 @@ export interface OfficialQuota {
   secondary?: QuotaSlot;
   /** 自然日窗口（仅 Tako 提供） */
   daily?: QuotaSlot;
+  /** 钱包剩余余额（USD，仅 Tako 提供） */
+  balanceUsd?: number;
   /** Pro/Max 套餐独立模型额度（如 Claude 的 Opus） */
   modelLimits?: { opus?: QuotaSlot };
   /** 套餐类型 "plus" / "pro" / "max" / "team" 等，用于 UI 显示徽标 */
