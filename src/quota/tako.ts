@@ -1,7 +1,14 @@
 import { apiErrorText } from "../api-error";
 import { PROXY_BASE_URL } from "../config";
 import type { Provider } from "../providers/types";
-import type { OfficialQuota, QuotaSlot } from "./types";
+import type { OfficialQuota, QuotaFetchOptions, QuotaSlot } from "./types";
+
+const DEFAULT_STEP_TIMEOUT_MS = 5000;
+
+function remainingTimeout(deadline: number | undefined, fallbackMs = DEFAULT_STEP_TIMEOUT_MS): number {
+  if (deadline === undefined) return fallbackMs;
+  return Math.max(0, deadline - Date.now());
+}
 
 export type ApiIdResult =
   | { valid: true; apiId: string }
@@ -83,9 +90,15 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-export async function resolveTakoApiId(apiKey: string): Promise<ApiIdResult> {
+export async function resolveTakoApiId(
+  apiKey: string,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS,
+): Promise<ApiIdResult> {
   if (!apiKey) {
     return { valid: false, error: "missing_api_key", message: "Tako provider is missing its API key" };
+  }
+  if (timeoutMs <= 0) {
+    return { valid: false, error: "request_failed", message: "Tako key validation timed out" };
   }
 
   try {
@@ -93,7 +106,7 @@ export async function resolveTakoApiId(apiKey: string): Promise<ApiIdResult> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ apiKey }),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const json = await readJson(response) as (ApiErrorResponse & { data?: { id?: string } }) | null;
 
@@ -133,13 +146,14 @@ export async function resolveTakoApiId(apiKey: string): Promise<ApiIdResult> {
   }
 }
 
-async function tryFullQuota(apiId: string): Promise<OfficialQuota | null> {
+async function tryFullQuota(apiId: string, timeoutMs = DEFAULT_STEP_TIMEOUT_MS): Promise<OfficialQuota | null> {
+  if (timeoutMs <= 0) return null;
   try {
     const response = await fetch(`${PROXY_BASE_URL}/apiStats/api/user-quota`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ apiId }),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) return null;
 
@@ -159,19 +173,29 @@ async function tryFullQuota(apiId: string): Promise<OfficialQuota | null> {
   }
 }
 
-export async function fetchTakoQuotaByApiId(apiId: string): Promise<OfficialQuota> {
+export async function fetchTakoQuotaByApiId(
+  apiId: string,
+  options?: QuotaFetchOptions,
+): Promise<OfficialQuota> {
   const fetchedAt = Date.now();
   if (!apiId) return errorQuota("missing_api_id", "缺少 Tako 数字用户 ID", fetchedAt);
 
-  const full = await tryFullQuota(apiId);
+  const deadline = options?.timeoutMs != null ? fetchedAt + options.timeoutMs : undefined;
+  const fullTimeout = remainingTimeout(deadline);
+  if (fullTimeout <= 0) return errorQuota("request_failed", "Tako 用量请求超时", fetchedAt);
+
+  const full = await tryFullQuota(apiId, fullTimeout);
   if (full) return full;
+
+  const fallbackTimeout = remainingTimeout(deadline);
+  if (fallbackTimeout <= 0) return errorQuota("request_failed", "Tako 用量请求超时", fetchedAt);
 
   try {
     const response = await fetch(`${PROXY_BASE_URL}/apiStats/api/user-stats`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ apiId }),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(fallbackTimeout),
     });
     const json = await readJson(response) as RsCompatStatsResponse | null;
 
@@ -202,12 +226,26 @@ export async function fetchTakoQuotaByApiId(apiId: string): Promise<OfficialQuot
   }
 }
 
-export async function fetchTakoQuota(provider: Provider): Promise<OfficialQuota> {
+export async function fetchTakoQuota(
+  provider: Provider,
+  options?: QuotaFetchOptions,
+): Promise<OfficialQuota> {
   if (!provider.apiKey) {
     return errorQuota("missing_api_key", "Tako provider 缺少 API key，请重新配置");
   }
 
-  const resolved = await resolveTakoApiId(provider.apiKey);
+  const deadline = options?.timeoutMs != null ? Date.now() + options.timeoutMs : undefined;
+  const resolveTimeout = remainingTimeout(deadline);
+  if (resolveTimeout <= 0) return errorQuota("request_failed", "Tako 用量请求超时");
+
+  const resolved = await resolveTakoApiId(provider.apiKey, resolveTimeout);
   if (!resolved.valid) return errorQuota(resolved.error, resolved.message);
-  return fetchTakoQuotaByApiId(resolved.apiId);
+
+  const remaining = remainingTimeout(deadline);
+  if (remaining <= 0) return errorQuota("request_failed", "Tako 用量请求超时");
+
+  return fetchTakoQuotaByApiId(
+    resolved.apiId,
+    deadline !== undefined ? { ...options, timeoutMs: remaining } : options,
+  );
 }

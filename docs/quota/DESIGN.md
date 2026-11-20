@@ -110,16 +110,20 @@ interface OfficialQuota {
 ## Dispatcher (`index.ts`)
 
 ```ts
-export async function getOfficialQuota(provider: Provider): Promise<OfficialQuota>;
+export async function getOfficialQuota(
+  provider: Provider,
+  options?: QuotaFetchOptions,
+): Promise<OfficialQuota>;
 ```
 
 - 60 秒双层缓存：进程内 `Map` + `~/.tako/quota-cache.json` 跨进程磁盘缓存。基础 key 为 `${provider.type}:${provider.id}`；Tako 额外拼接 API key 的 SHA-256 短指纹，换 key 后不会读到旧账号缓存
+- 支持可选 `QuotaFetchOptions`（`timeoutMs` / `skipCodexRpc`）：供 statusline 等短预算调用方在所有串联请求（如 Tako `get-key-id` → `user-quota` → `user-stats` 或 Codex RPC/curl）间共享同一总超时预算，避免超出宿主 CLI 的 5s 强杀阈值
 - 按 `provider.type` 分发：
   - `tako` → `fetchTakoQuota`
-  - `claude-subscription` → `fetchClaudeSubscriptionQuota(provider)`
-  - `codex-subscription` → `fetchCodexSubscriptionQuota(provider)`
+  - `claude-subscription` → `fetchClaudeSubscriptionQuota(provider, options)`
+  - `codex-subscription` → `fetchCodexSubscriptionQuota(provider, options)`
   - 其他 → 返回 `{ status: "unsupported" }`
-- 每个 fetcher 自己处理超时（5s）和异常，dispatcher 不做 try/catch
+- 每个 fetcher 自己处理超时（默认 5s，或遵循 `options.timeoutMs`）和异常，dispatcher 不做 try/catch
 
 ## UI 接入（LauncherView）
 

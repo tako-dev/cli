@@ -51,11 +51,19 @@ statusline input 不带 `maxOutputTokens`，默认按 20000 上限算。
 **precompute** 阈值（提前预计算摘要），不是真正触发 compaction 的阈值。旧实现
 抄错后，1M 窗口会在约 793K 就显示 0%，而 Claude Code 实际到 967K 才压缩。
 
+## 额度与超时约束
+
+宿主 CLI（如 Antigravity / `agy`）对自定义 statusline 命令施加 5 秒硬超时，超时直接 `SIGKILL` 并在 TUI 报 `Statusline Error`。
+
+- **Provider 解析（`resolveStatusLineProvider`）**：按 `clientId`（`antigravity` → `agy`，其余 → `claude-code`）按「客户端显式绑定 → 兼容的默认 Provider → 第一个兼容 Provider」解析，不会把不兼容的默认 Provider（例如 `codex-subscription`）误用于 `agy` / `claude-code` 去发无效网络请求。
+- **网络预算（`STATUSLINE_QUOTA_TIMEOUT_MS = 2500`）**：`QuotaSegment` 调用 `getOfficialQuota(provider, { timeoutMs: 2500, skipCodexRpc: true })`，保证单次 statusline 刷新在最坏情况下也远早于宿主 5 秒强杀上限完成并落盘缓存，避免连续超时弹窗。
+
 ## 依赖
 
 - `src/models/` - models.dev / bundled 模型目录
-- `src/quota/` - 额度 segment 的缓存
+- `src/quota/` - 额度 segment 的缓存与有界超时拉取
 
 ## 已有测试
 
 - `tests/unit.statusline-context.test.ts` - 窗口优先级、压缩阈值、剩余百分比
+- `tests/unit.agy-statusline.test.ts` - Antigravity 字段解析、兼容 provider 解析与配额超时防强杀回归

@@ -41,3 +41,10 @@ export interface OfficialQuota {
   /** 拉取时间戳 */
   fetchedAt: number;
 }
+
+export interface QuotaFetchOptions {
+  /** 总网络超时预算（ms）。statusline 场景需显著低于宿主 CLI 的 5s 强杀上限 */
+  timeoutMs?: number;
+  /** 跳过耗时较长的 codex app-server RPC 探活（statusline 等短超时场景） */
+  skipCodexRpc?: boolean;
+}

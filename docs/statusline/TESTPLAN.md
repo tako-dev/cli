@@ -25,9 +25,11 @@
 - INV-CTX-01：窗口优先级固定为 `context_window_size` → `TAKO_MODEL_CONTEXT_WINDOW` → catalog → 200K。
 - INV-CTX-02：压缩阈值只减 `min(maxOutputTokens, 20000) + 13000`，不再乘 20% precompute buffer。
 - INV-CTX-03：`CLAUDE_CODE_AUTO_COMPACT_WINDOW` 只允许把窗口调低，不能调高。
+- INV-QUOTA-01：`QuotaSegment` 只查询兼容当前客户端（`agy` / `claude-code`）的 Provider，不回落到不兼容的默认 Provider（如 `codex-subscription`）。
+- INV-QUOTA-02：`QuotaSegment` 网络拉取受 `STATUSLINE_QUOTA_TIMEOUT_MS`（2500ms）总预算约束，远低于宿主 CLI 5s 强杀阈值，超时后正常渲染其余 segment 并退出。
 
 ## 运行
 
 ```bash
-bun test tests/unit.statusline-context.test.ts
+bun test tests/unit.statusline-context.test.ts tests/unit.agy-statusline.test.ts
 ```
