@@ -32,6 +32,10 @@ function remainColor(remainPct: number): string {
   return remainPct > 30 ? "green" : remainPct > 10 ? "yellow" : "red";
 }
 
+function balanceColor(balanceUsd: number): string {
+  return balanceUsd > 5 ? "green" : balanceUsd > 1 ? "yellow" : "red";
+}
+
 export function ProviderBadge({ provider, zh }: { provider: Provider | undefined; zh: boolean }) {
   if (!provider) {
     return <Text color="yellow">⚠ {zh ? "未绑定" : "no provider"}</Text>;
@@ -70,6 +74,14 @@ export function QuotaLine({ quota, zh }: { quota: OfficialQuota; zh: boolean }) 
   if (quota.provider === "tako") {
     const hasLimits = !!(quota.primary?.costLimit || quota.secondary?.costLimit || quota.daily?.costLimit);
     if (!hasLimits) {
+      if (typeof quota.balanceUsd === "number" && Number.isFinite(quota.balanceUsd)) {
+        const safe = Math.max(0, quota.balanceUsd);
+        return (
+          <Text dimColor>
+            💰 {zh ? "余额" : "Balance"}: <Text color={balanceColor(safe)}>${safe.toFixed(2)}</Text>
+          </Text>
+        );
+      }
       const slot = quota.daily ?? quota.primary ?? quota.secondary;
       if (!slot) return null;
       const used = slot.costUsed ?? 0;

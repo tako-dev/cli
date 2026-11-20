@@ -84,17 +84,30 @@ export class QuotaSegment implements Segment {
 
   // ─── 渲染：Tako ─────────────────────────────────────────────
   // 订阅（有窗口限额）→ 与 Claude/Codex 一样走剩余 % 展示
-  // 按量（无任何限额）→ 展示已花费金额
+  // 纯余额（无窗口限额且有钱包余额）→ 展示钱包余额（低余额变黄/红）
+  // 兜底（旧后端无余额字段）→ 展示已花费金额
 
   private renderTako(quota: OfficialQuota): string | null {
     if (quota.status !== "ok") return null;
     const hasLimits = !!(quota.primary?.costLimit || quota.secondary?.costLimit || quota.daily?.costLimit);
     if (hasLimits) return this.renderSub(quota);
 
+    if (typeof quota.balanceUsd === "number" && Number.isFinite(quota.balanceUsd)) {
+      return this.renderBalance(quota.balanceUsd);
+    }
+
     const slot = quota.daily ?? quota.primary ?? quota.secondary;
     if (!slot) return null;
     const used = slot.costUsed ?? 0;
     return `${this.icon()} ${fg.brightGreen}Day:${this.fmtCost(used)}${style.reset}`;
+  }
+
+  private renderBalance(balanceUsd: number): string {
+    const safe = Math.max(0, balanceUsd);
+    const color = safe <= 1 ? fg.brightRed
+      : safe <= 5 ? fg.brightYellow
+      : fg.brightGreen;
+    return `${this.icon()} 余额 ${color}$${safe.toFixed(2)}${style.reset}`;
   }
 
   // ─── 渲染：Claude/Codex 订阅（百分比制）──────────────────────

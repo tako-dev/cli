@@ -144,4 +144,28 @@ describe("tako quota command", () => {
     });
     expect(output.endsWith("\n")).toBe(true);
   });
+
+  it("includes balanceUsd in JSON output for pay-as-you-go users", async () => {
+    const result = await buildQuotaPayload(config({ providers: [takoProvider()] }), {
+      resolveApiIdFromKey: async () => ({ valid: true, apiId: "42" }),
+      fetchQuotaByApiId: async () => ({
+        provider: "tako",
+        status: "ok",
+        balanceUsd: 12.5,
+        daily: { usedPct: 0, costUsed: 1.2 },
+        fetchedAt: Date.parse("2026-11-20T11:00:00.000Z"),
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.payload).toEqual({
+      provider: "tako",
+      status: "ok",
+      fiveHour: undefined,
+      daily: { used: 1.2, usedPct: 0 },
+      weekly: undefined,
+      balanceUsd: 12.5,
+      fetchedAt: "2026-11-20T11:00:00.000Z",
+    });
+  });
 });

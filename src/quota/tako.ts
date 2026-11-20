@@ -52,6 +52,33 @@ interface FullQuotaResponse extends ApiErrorResponse {
     weeklyCost?: number;
     windowCost?: number;
   };
+  balance?: {
+    remain_usd?: number;
+    used_usd?: number;
+    remain?: number;
+    used?: number;
+  };
+}
+
+interface DesktopMeResponse {
+  success?: boolean;
+  data?: {
+    quota?: {
+      remain?: number;
+      used?: number;
+    };
+  };
+}
+
+function parseBalanceUsd(balance: FullQuotaResponse["balance"]): number | undefined {
+  if (!balance) return undefined;
+  if (typeof balance.remain_usd === "number" && Number.isFinite(balance.remain_usd)) {
+    return Math.max(0, balance.remain_usd);
+  }
+  if (typeof balance.remain === "number" && Number.isFinite(balance.remain)) {
+    return Math.max(0, balance.remain / 500_000);
+  }
+  return undefined;
 }
 
 function makeSlot(used: number, limit: number, windowMinutes?: number): QuotaSlot | undefined {
@@ -158,24 +185,67 @@ async function tryFullQuota(apiId: string, timeoutMs = DEFAULT_STEP_TIMEOUT_MS):
     if (!response.ok) return null;
 
     const json = await readJson(response) as FullQuotaResponse | null;
-    if (!json?.plan || !json.usage) return null;
+    if (!json) return null;
 
-    return {
-      provider: "tako",
-      status: "ok",
-      primary: makeSlot(json.usage.windowCost ?? 0, json.plan.window_cost_limit ?? 0, json.plan.window_minutes),
-      daily: makeSlot(json.usage.dailyCost ?? 0, json.plan.daily_cost_limit ?? 0),
-      secondary: makeSlot(json.usage.weeklyCost ?? 0, json.plan.weekly_cost_limit ?? 0),
-      fetchedAt: Date.now(),
-    };
+    const balanceUsd = parseBalanceUsd(json.balance);
+    const hasPlan = !!(
+      json.plan &&
+      ((json.plan.window_cost_limit ?? 0) > 0 ||
+        (json.plan.daily_cost_limit ?? 0) > 0 ||
+        (json.plan.weekly_cost_limit ?? 0) > 0)
+    );
+
+    if (hasPlan && json.plan && json.usage) {
+      return {
+        provider: "tako",
+        status: "ok",
+        primary: makeSlot(json.usage.windowCost ?? 0, json.plan.window_cost_limit ?? 0, json.plan.window_minutes),
+        daily: makeSlot(json.usage.dailyCost ?? 0, json.plan.daily_cost_limit ?? 0),
+        secondary: makeSlot(json.usage.weeklyCost ?? 0, json.plan.weekly_cost_limit ?? 0),
+        ...(balanceUsd !== undefined ? { balanceUsd } : {}),
+        fetchedAt: Date.now(),
+      };
+    }
+
+    if (balanceUsd !== undefined) {
+      const dailyUsed = json.usage?.dailyCost;
+      return {
+        provider: "tako",
+        status: "ok",
+        ...(typeof dailyUsed === "number" ? { daily: makeSpentSlot(dailyUsed) } : {}),
+        balanceUsd,
+        fetchedAt: Date.now(),
+      };
+    }
+
+    return null;
   } catch {
     return null;
   }
 }
 
+async function tryDesktopMeBalance(apiKey: string, timeoutMs = DEFAULT_STEP_TIMEOUT_MS): Promise<number | undefined> {
+  if (!apiKey || timeoutMs <= 0) return undefined;
+  try {
+    const response = await fetch(`${PROXY_BASE_URL}/api/desktop/me`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) return undefined;
+    const json = await readJson(response) as DesktopMeResponse | null;
+    if (json?.success !== true) return undefined;
+    const remain = json.data?.quota?.remain;
+    if (typeof remain !== "number" || !Number.isFinite(remain)) return undefined;
+    return Math.max(0, remain / 500_000);
+  } catch {
+    return undefined;
+  }
+}
+
 export async function fetchTakoQuotaByApiId(
   apiId: string,
-  options?: QuotaFetchOptions,
+  options?: QuotaFetchOptions & { apiKey?: string },
 ): Promise<OfficialQuota> {
   const fetchedAt = Date.now();
   if (!apiId) return errorQuota("missing_api_id", "缺少 Tako 数字用户 ID", fetchedAt);
@@ -186,6 +256,20 @@ export async function fetchTakoQuotaByApiId(
 
   const full = await tryFullQuota(apiId, fullTimeout);
   if (full) return full;
+
+  if (options?.apiKey) {
+    const meTimeout = remainingTimeout(deadline);
+    if (meTimeout <= 0) return errorQuota("request_failed", "Tako 用量请求超时", fetchedAt);
+    const balanceUsd = await tryDesktopMeBalance(options.apiKey, meTimeout);
+    if (balanceUsd !== undefined) {
+      return {
+        provider: "tako",
+        status: "ok",
+        balanceUsd,
+        fetchedAt: Date.now(),
+      };
+    }
+  }
 
   const fallbackTimeout = remainingTimeout(deadline);
   if (fallbackTimeout <= 0) return errorQuota("request_failed", "Tako 用量请求超时", fetchedAt);
@@ -244,8 +328,9 @@ export async function fetchTakoQuota(
   const remaining = remainingTimeout(deadline);
   if (remaining <= 0) return errorQuota("request_failed", "Tako 用量请求超时");
 
-  return fetchTakoQuotaByApiId(
-    resolved.apiId,
-    deadline !== undefined ? { ...options, timeoutMs: remaining } : options,
-  );
+  return fetchTakoQuotaByApiId(resolved.apiId, {
+    ...options,
+    apiKey: provider.apiKey,
+    ...(deadline !== undefined ? { timeoutMs: remaining } : {}),
+  });
 }
