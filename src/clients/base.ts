@@ -52,6 +52,17 @@ export interface ClientLaunchSetup {
   cleanupFiles?: string[];
 }
 
+export interface SystemClientUpdateStatus {
+  localVersion: string | null;
+  latestVersion: string | null;
+  hasUpdate: boolean;
+  belowMinSupported?: boolean;
+  aheadOfManaged?: boolean;
+  minSupportedVersion?: string;
+  supportedVersions?: string[];
+  source?: string;
+}
+
 /**
  * 客户端配置接口
  * 所有客户端都需要实现这个接口
@@ -74,9 +85,11 @@ export interface ClientConfig {
   /** system 客户端解析真实二进制。返回值可以在 TAKO_DIR 外（如 ~/.grok/bin/grok）。 */
   resolveBin?: () => Promise<string | null>;
   /** system 客户端安装 / 切换版本。version 缺省或 latest 表示官方 latest。 */
-  installSystem?: (version?: string) => Promise<{ success: boolean; error?: string }>;
+  installSystem?: (version?: string, opts?: { force?: boolean }) => Promise<{ success: boolean; version?: string; previousVersion?: string | null; error?: string }>;
   /** system 客户端读取当前版本号。 */
   readSystemVersion?: () => Promise<string | null>;
+  /** system 客户端检查受控远端更新清单状态。 */
+  checkSystemUpdate?: (opts?: { forceRefresh?: boolean }) => Promise<SystemClientUpdateStatus | null>;
   /** 启动子进程前必须从继承环境中删除（unset）的冲突变量名 */
   unsetEnvVars?: readonly string[];
   /** 生成环境变量（根据 Provider 上下文） */

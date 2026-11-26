@@ -4,7 +4,7 @@ import { join, posix as posixPath, win32 as win32Path } from "node:path";
 import { randomUUID } from "node:crypto";
 import { ClientConfig, type ClientLaunchSetupContext, LaunchOption, registerClient } from "./base";
 import type { Provider, ProviderContext } from "../providers/types";
-import { installAgy } from "../installer";
+import { checkAgyManagedUpdate, installAgy } from "../installer";
 import { buildAgyStatusLineConfig, hasCustomNonTakoStatusLine } from "../statusline/inject";
 import {
   type AgyProviderLike,
@@ -355,7 +355,15 @@ export const agyClient: ClientConfig = {
   unsetEnvVars: AGY_CONFLICTING_ENV_KEYS,
   resolveBin: () => findAgyBinary(),
   readSystemVersion: () => readAgyVersion(),
-  installSystem: (version?: string) => installAgy({ version }),
+  installSystem: (version?: string, opts?: { force?: boolean }) =>
+    installAgy({ version, force: opts?.force }),
+  checkSystemUpdate: async (opts?: { forceRefresh?: boolean }) => {
+    const localVersion = await readAgyVersion();
+    return checkAgyManagedUpdate({
+      localVersion,
+      forceRefresh: opts?.forceRefresh,
+    });
+  },
 
   getEnvVars(provider: ProviderContext) {
     return {
