@@ -12,7 +12,7 @@ import { runTakoMcpServer, injectAgyMcpConfig } from "./mcp";
 import { selectProviderForClient } from "./ui/providers";
 import { buildPassthroughArgs } from "./quick-launch-args";
 import { loadCatalog, refreshCatalog } from "./models";
-import { getGeminiRetiredMessage } from "./installer";
+import { getGeminiRetiredMessage, updateAgyClient } from "./installer";
 import { listAvailableVersions, installAtVersion, getInstalledVersion } from "./installer-versions";
 import { IS_DEV } from "./config";
 
@@ -106,14 +106,15 @@ ${t("cli.shortcutGrok")}
 ${t("cli.shortcutAgy")}
 
 Commands:
-  tako update                Update Tako CLI to the latest version
-  tako install <client>     Install AI coding tool
-  tako quota                Print Tako quota as JSON
-  tako agent [--model X]    Start agent mode
-  tako sessions [search]    Search and resume native sessions
-  tako skill list           List available skills
-  tako skill install <name> Install skill to current project
-  tako models [--refresh]   List models exposed by Tako providers
+  tako update                  Update Tako CLI to the latest version
+  tako update agy [--check]    Independently check/update Antigravity (agy) via Tako managed channel
+  tako install <client>        Install AI coding tool
+  tako quota                   Print Tako quota as JSON
+  tako agent [--model X]       Start agent mode
+  tako sessions [search]       Search and resume native sessions
+  tako skill list              List available skills
+  tako skill install <name>    Install skill to current project
+  tako models [--refresh]      List models exposed by Tako providers
 
 ${t("cli.examples")}
 ${t("cli.exampleInteractive")}
@@ -278,8 +279,13 @@ export async function runCli(main: UiMain): Promise<void> {
     return;
   }
 
-  // update 命令：tako update
+  // update 命令：tako update [agy [--check] [--force] [--json]]
   if (args[0] === "update") {
+    if (args[1] === "agy" || args[1] === "antigravity") {
+      const code = await updateAgyClient(args.slice(2));
+      if (code !== 0) process.exit(code);
+      return;
+    }
     await runUpdateCommand();
     return;
   }

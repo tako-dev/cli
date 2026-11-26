@@ -4,7 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { join, posix as posixPath, win32 as win32Path } from "path";
 import { log, createSpinner } from "./logger";
 import { confirmPrompt } from "./ui/shared/terminal";
-import { ClientConfig, getClientDir } from "./clients/base";
+import { ClientConfig, getClient, getClientDir, type SystemClientUpdateStatus } from "./clients/base";
 import { loadConfig, updateConfig, TAKO_DIR, TAKO_BUN_DIR, TAKO_BUN_BIN, TAKO_BUN_CACHE_DIR, TAKO_NODE_BIN, TAKO_NODE_DIR, TAKO_NODE_VERSION } from "./config";
 import { getNpmRegistry, getBunInstallCommand, detectRegion, showRegionInfo, getBunMirrorDownloadUrl, MIRRORS } from "./region";
 import { track } from "./analytics";
@@ -1330,9 +1330,63 @@ export async function ensureClientReady(
     return { success: false, error: getGeminiRetiredMessage() };
   }
   if (client.install === "system") {
-    if (await isClientInstalled(client)) return { success: true };
-    if (client.installSystem) return client.installSystem();
-    return { success: false, error: `${client.name} 未安装。请先安装官方 Grok Build CLI` };
+    const installed = await isClientInstalled(client);
+    if (!installed) {
+      if (client.installSystem) return client.installSystem();
+      return { success: false, error: `${client.name} 未安装。请先安装官方 Grok Build CLI` };
+    }
+    if (
+      client.checkSystemUpdate &&
+      client.installSystem &&
+      process.stdin.isTTY &&
+      process.stdout.isTTY &&
+      process.env.TAKO_SKIP_CLIENT_UPDATE_CHECK !== "1"
+    ) {
+      try {
+        const status = await client.checkSystemUpdate();
+        if (status?.aheadOfManaged && status.localVersion && status.latestVersion) {
+          log.warn(
+            `${client.name} 当前版本 v${status.localVersion} 高于 Tako 受控已验证版本 v${status.latestVersion}；如遇网关兼容问题，可运行 \`tako update ${client.id} --force\` 切回受控版本`,
+          );
+        } else if (status && (status.hasUpdate || status.belowMinSupported) && status.latestVersion) {
+          const localLabel = status.localVersion ? `v${status.localVersion}` : "未知";
+          const targetLabel = `v${status.latestVersion}`;
+          if (status.belowMinSupported) {
+            log.warn(
+              `${client.name} 当前版本 ${localLabel} 低于网关最低支持版本 v${status.minSupportedVersion ?? status.latestVersion}，建议立即升级至 ${targetLabel}`,
+            );
+          } else {
+            log.info(`${client.name} 发现已验证更新: ${localLabel} → ${targetLabel}`);
+          }
+
+          if (!status.belowMinSupported && (await wasUpdateDismissedToday(client.id))) {
+            log.info("今日已跳过更新，使用当前版本");
+            return { success: true };
+          }
+
+          const shouldDoUpdate = await confirmPrompt({
+            message: status.belowMinSupported
+              ? `是否立即升级 ${client.name} 至 ${targetLabel}（避免网关拒接旧版）？`
+              : `是否更新 ${client.name} 至已验证版本 ${targetLabel}？`,
+            defaultValue: Boolean(status.belowMinSupported),
+          });
+          if (!shouldDoUpdate) {
+            await recordUpdateDismissed(client.id);
+            log.info(`跳过更新，继续使用当前版本（随时可运行 \`tako update ${client.id}\` 单独升级）`);
+            return { success: true };
+          }
+
+          const updateRes = await client.installSystem(undefined, { force: true });
+          if (updateRes.success) return updateRes;
+          log.warn(`更新 ${client.name} 失败：${updateRes.error ?? "未知错误"}`);
+          log.info("继续使用当前已安装版本");
+          return { success: true, skippedUpdate: true, error: updateRes.error };
+        }
+      } catch {
+        // 离线或受控清单暂时不可达时静默放行，不阻塞客户端启动
+      }
+    }
+    return { success: true };
   }
 
   const isInstalled = await isClientInstalled(client);
@@ -1420,15 +1474,27 @@ async function recordUpdateDismissed(clientId: string): Promise<void> {
   } catch { /* ignore */ }
 }
 
-// ─── Antigravity CLI (agy) 跨平台一键安装 ─────────────────────
+// ─── Antigravity CLI (agy) 跨平台一键安装与受控独立更新 ──────────
 
 export const AGY_DEFAULT_MANIFEST_BASE =
-  "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests";
+  "https://dl.lven.asia/tako-switch/agy-cli/manifests";
+
+export const AGY_FALLBACK_MANIFEST_BASE =
+  "https://raw.githubusercontent.com/tako-dev/tako-switch/main/manifest/agy-cli/manifests";
+
+export const AGY_UPDATE_CHECK_TTL_MS = 6 * 60 * 60 * 1000;
 
 export interface AgyManifest {
   version?: string;
   url: string;
+  fallbackUrl?: string;
   sha512: string;
+  size?: number;
+  minSupportedVersion?: string;
+  supportedVersions?: string[];
+  channel?: string;
+  approvedAt?: string;
+  manifestUrl?: string;
 }
 
 export interface AgyPlatformOptions {
@@ -1444,10 +1510,34 @@ export interface AgyInstallTargetOptions {
 
 export interface AgyInstallOptions extends AgyInstallTargetOptions {
   version?: string;
+  force?: boolean;
+  localVersion?: string | null;
   manifestBaseUrl?: string;
+  fallbackManifestBaseUrl?: string;
   arch?: string;
   isMusl?: boolean;
   quiet?: boolean;
+  cachePath?: string;
+}
+
+export interface AgyUpdateCheckOptions {
+  localVersion?: string | null;
+  forceRefresh?: boolean;
+  manifestBaseUrl?: string;
+  fallbackManifestBaseUrl?: string;
+  platform?: NodeJS.Platform;
+  arch?: string;
+  isMusl?: boolean;
+  env?: Record<string, string | undefined>;
+  cachePath?: string;
+  ttlMs?: number;
+  timeoutMs?: number;
+}
+
+interface AgyUpdateCheckCache {
+  checkedAt: number;
+  manifestUrl: string;
+  manifest: AgyManifest;
 }
 
 function joinAgyPath(platform: NodeJS.Platform, base: string, ...parts: string[]): string {
@@ -1458,6 +1548,39 @@ function joinAgyPath(platform: NodeJS.Platform, base: string, ...parts: string[]
     return posixPath.join(base, ...parts);
   }
   return (platform === "win32" ? win32Path : posixPath).join(base, ...parts);
+}
+
+/**
+ * 比较 Antigravity CLI 版本号（支持前导 v 与 prerelease 后缀，如 1.5.17-beta.1 < 1.5.17）
+ * 返回: -1 (a < b), 0 (a == b), 1 (a > b)
+ */
+export function compareAgyVersions(a: string, b: string): number {
+  const split = (raw: string) => {
+    const clean = raw.trim().replace(/^v/i, "");
+    const dashIdx = clean.indexOf("-");
+    const core = dashIdx >= 0 ? clean.slice(0, dashIdx) : clean;
+    const pre = dashIdx >= 0 ? clean.slice(dashIdx + 1) : "";
+    return {
+      parts: core.split(".").map((n) => {
+        const parsed = Number.parseInt(n, 10);
+        return Number.isFinite(parsed) ? parsed : 0;
+      }),
+      pre,
+    };
+  };
+  const va = split(a);
+  const vb = split(b);
+  const len = Math.max(va.parts.length, vb.parts.length);
+  for (let i = 0; i < len; i++) {
+    const na = va.parts[i] || 0;
+    const nb = vb.parts[i] || 0;
+    if (na < nb) return -1;
+    if (na > nb) return 1;
+  }
+  if (va.pre === vb.pre) return 0;
+  if (!va.pre && vb.pre) return 1;
+  if (va.pre && !vb.pre) return -1;
+  return va.pre < vb.pre ? -1 : 1;
 }
 
 /** 检测 Linux 是否为 musl 运行时（如 Alpine） */
@@ -1508,25 +1631,59 @@ export function resolveAgyPlatform(
   throw new Error(`Unsupported platform for Antigravity (agy): ${platform}`);
 }
 
-export function resolveAgyManifestUrl(opts?: {
+/**
+ * 返回按优先级排序的 Antigravity 受控 manifest URL 列表（主源国内 CDN -> 备源 GitHub raw）。
+ * 若调用方显式指定 manifestBaseUrl 或 AGY_INSTALL_MANIFEST_BASE，则仅按显式源（及可选显式备源）解析，
+ * 绝不静默回退到未受控的上游自动更新源。
+ */
+export function resolveAgyManifestUrls(opts?: {
   manifestBaseUrl?: string;
+  fallbackManifestBaseUrl?: string;
   platform?: NodeJS.Platform;
   arch?: string;
   isMusl?: boolean;
   env?: Record<string, string | undefined>;
-}): string {
+}): string[] {
   const env = opts?.env ?? process.env;
-  const base = (
-    opts?.manifestBaseUrl?.trim() ||
-    env.AGY_INSTALL_MANIFEST_BASE?.trim() ||
-    AGY_DEFAULT_MANIFEST_BASE
-  ).replace(/\/+$/, "");
   const platformKey = resolveAgyPlatform(
     opts?.platform ?? process.platform,
     opts?.arch ?? process.arch,
     opts?.isMusl !== undefined ? { isMusl: opts.isMusl } : undefined,
   );
-  return `${base}/${platformKey}.json`;
+  const explicitBase = (
+    opts?.manifestBaseUrl?.trim() ||
+    env.AGY_INSTALL_MANIFEST_BASE?.trim() ||
+    ""
+  ).replace(/\/+$/, "");
+  const explicitFallback = (
+    opts?.fallbackManifestBaseUrl?.trim() ||
+    env.AGY_INSTALL_MANIFEST_FALLBACK_BASE?.trim() ||
+    ""
+  ).replace(/\/+$/, "");
+
+  if (explicitBase) {
+    const urls = [`${explicitBase}/${platformKey}.json`];
+    if (explicitFallback && explicitFallback !== explicitBase) {
+      urls.push(`${explicitFallback}/${platformKey}.json`);
+    }
+    return urls;
+  }
+
+  const primary = `${AGY_DEFAULT_MANIFEST_BASE.replace(/\/+$/, "")}/${platformKey}.json`;
+  const fallbackBase = explicitFallback || AGY_FALLBACK_MANIFEST_BASE.replace(/\/+$/, "");
+  const fallback = `${fallbackBase}/${platformKey}.json`;
+  return fallback === primary ? [primary] : [primary, fallback];
+}
+
+export function resolveAgyManifestUrl(opts?: {
+  manifestBaseUrl?: string;
+  fallbackManifestBaseUrl?: string;
+  platform?: NodeJS.Platform;
+  arch?: string;
+  isMusl?: boolean;
+  env?: Record<string, string | undefined>;
+}): string {
+  return resolveAgyManifestUrls(opts)[0];
 }
 
 export function resolveAgyInstallTarget(opts?: AgyInstallTargetOptions): {
@@ -1603,30 +1760,172 @@ export async function computeFileSha512(filePath: string): Promise<string> {
   });
 }
 
+function parseAgyManifestPayload(raw: unknown, manifestUrl: string): AgyManifest {
+  const json = raw as Record<string, unknown> | null;
+  if (!json || typeof json !== "object") {
+    throw new Error(`Antigravity manifest 格式无效 (${manifestUrl})`);
+  }
+  if (typeof json.url !== "string" || !json.url.trim()) {
+    throw new Error(`Antigravity manifest 缺少有效的 url 字段 (${manifestUrl})`);
+  }
+  if (typeof json.sha512 !== "string" || !json.sha512.trim()) {
+    throw new Error(`Antigravity manifest 缺少有效的 sha512 字段 (${manifestUrl})`);
+  }
+  const supportedVersions = Array.isArray(json.supportedVersions)
+    ? json.supportedVersions.filter((v): v is string => typeof v === "string" && v.trim().length > 0).map((v) => v.trim())
+    : undefined;
+  return {
+    version: typeof json.version === "string" && json.version.trim() ? json.version.trim() : undefined,
+    url: json.url.trim(),
+    fallbackUrl: typeof json.fallbackUrl === "string" && json.fallbackUrl.trim() ? json.fallbackUrl.trim() : undefined,
+    sha512: json.sha512.trim(),
+    size: typeof json.size === "number" && Number.isFinite(json.size) ? json.size : undefined,
+    minSupportedVersion:
+      typeof json.minSupportedVersion === "string" && json.minSupportedVersion.trim()
+        ? json.minSupportedVersion.trim()
+        : undefined,
+    supportedVersions: supportedVersions && supportedVersions.length > 0 ? supportedVersions : undefined,
+    channel: typeof json.channel === "string" && json.channel.trim() ? json.channel.trim() : undefined,
+    approvedAt: typeof json.approvedAt === "string" && json.approvedAt.trim() ? json.approvedAt.trim() : undefined,
+    manifestUrl,
+  };
+}
+
 export async function fetchAgyManifest(opts?: {
   manifestBaseUrl?: string;
+  fallbackManifestBaseUrl?: string;
   platform?: NodeJS.Platform;
   arch?: string;
   isMusl?: boolean;
   env?: Record<string, string | undefined>;
+  timeoutMs?: number;
 }): Promise<AgyManifest> {
-  const url = resolveAgyManifestUrl(opts);
-  const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
-  if (!res.ok) {
-    throw new Error(`获取 Antigravity manifest 失败: HTTP ${res.status} (${url})`);
+  const urls = resolveAgyManifestUrls(opts);
+  const timeoutMs = opts?.timeoutMs ?? 15_000;
+  const errors: string[] = [];
+
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!res.ok) {
+        errors.push(`HTTP ${res.status} (${url})`);
+        continue;
+      }
+      const json = await res.json();
+      return parseAgyManifestPayload(json, url);
+    } catch (err) {
+      errors.push(`${err instanceof Error ? err.message : String(err)} (${url})`);
+    }
   }
-  const json = (await res.json()) as Record<string, unknown>;
-  if (typeof json?.url !== "string" || !json.url.trim()) {
-    throw new Error("Antigravity manifest 缺少有效的 url 字段");
+
+  throw new Error(`获取 Antigravity 受控 manifest 失败: ${errors.join("; ")}`);
+}
+
+function getAgyUpdateCachePath(opts?: { cachePath?: string; env?: Record<string, string | undefined> }): string {
+  if (opts?.cachePath) return opts.cachePath;
+  const takoHome = opts?.env?.TAKO_HOME?.trim();
+  return join(takoHome || TAKO_DIR, "agy-update-check.json");
+}
+
+async function readAgyUpdateCache(cachePath: string): Promise<AgyUpdateCheckCache | null> {
+  try {
+    const file = Bun.file(cachePath);
+    if (!(await file.exists())) return null;
+    const parsed = (await file.json()) as Partial<AgyUpdateCheckCache> | null;
+    if (
+      !parsed ||
+      typeof parsed.checkedAt !== "number" ||
+      !Number.isFinite(parsed.checkedAt) ||
+      typeof parsed.manifestUrl !== "string" ||
+      !parsed.manifest ||
+      typeof parsed.manifest.url !== "string" ||
+      typeof parsed.manifest.sha512 !== "string"
+    ) {
+      return null;
+    }
+    return parsed as AgyUpdateCheckCache;
+  } catch {
+    return null;
   }
-  if (typeof json?.sha512 !== "string" || !json.sha512.trim()) {
-    throw new Error("Antigravity manifest 缺少有效的 sha512 字段");
+}
+
+async function writeAgyUpdateCache(cachePath: string, manifest: AgyManifest): Promise<void> {
+  try {
+    const fs = await import("node:fs/promises");
+    const { dirname } = await import("node:path");
+    await fs.mkdir(dirname(cachePath), { recursive: true });
+    const payload: AgyUpdateCheckCache = {
+      checkedAt: Date.now(),
+      manifestUrl: manifest.manifestUrl || "",
+      manifest,
+    };
+    await Bun.write(cachePath, JSON.stringify(payload, null, 2));
+  } catch {
+    // best-effort cache persistence
   }
+}
+
+export function evaluateAgyUpdateStatus(
+  localVersion: string | null,
+  manifest: AgyManifest,
+): SystemClientUpdateStatus {
+  const latestVersion = manifest.version?.trim() || null;
+  const minSupportedVersion = manifest.minSupportedVersion?.trim() || undefined;
+  const supportedVersions =
+    Array.isArray(manifest.supportedVersions) && manifest.supportedVersions.length > 0
+      ? manifest.supportedVersions
+      : undefined;
+
+  const hasUpdate = Boolean(
+    localVersion && latestVersion && compareAgyVersions(latestVersion, localVersion) > 0,
+  );
+  const belowMinSupported = Boolean(
+    localVersion && minSupportedVersion && compareAgyVersions(localVersion, minSupportedVersion) < 0,
+  );
+  const inSupportedWindow = Boolean(
+    localVersion && supportedVersions?.some((v) => compareAgyVersions(v, localVersion) === 0),
+  );
+  const aheadOfManaged = Boolean(
+    localVersion &&
+      latestVersion &&
+      compareAgyVersions(localVersion, latestVersion) > 0 &&
+      !inSupportedWindow,
+  );
+
   return {
-    version: typeof json.version === "string" ? json.version : undefined,
-    url: json.url.trim(),
-    sha512: json.sha512.trim(),
+    localVersion,
+    latestVersion,
+    hasUpdate,
+    belowMinSupported,
+    aheadOfManaged,
+    minSupportedVersion,
+    supportedVersions,
+    source: manifest.manifestUrl,
   };
+}
+
+export async function checkAgyManagedUpdate(
+  opts?: AgyUpdateCheckOptions,
+): Promise<SystemClientUpdateStatus | null> {
+  const localVersion = opts?.localVersion ?? null;
+  const ttlMs = opts?.ttlMs ?? AGY_UPDATE_CHECK_TTL_MS;
+  const cachePath = getAgyUpdateCachePath(opts);
+  const candidateUrls = resolveAgyManifestUrls(opts);
+
+  if (!opts?.forceRefresh) {
+    const cached = await readAgyUpdateCache(cachePath);
+    if (
+      cached &&
+      candidateUrls.includes(cached.manifestUrl) &&
+      Date.now() - cached.checkedAt < ttlMs
+    ) {
+      return evaluateAgyUpdateStatus(localVersion, cached.manifest);
+    }
+  }
+
+  const manifest = await fetchAgyManifest(opts);
+  await writeAgyUpdateCache(cachePath, manifest);
+  return evaluateAgyUpdateStatus(localVersion, manifest);
 }
 
 async function findExtractedAgyBinary(rootDir: string): Promise<string | null> {
@@ -1652,12 +1951,13 @@ async function findExtractedAgyBinary(rootDir: string): Promise<string | null> {
 
 /**
  * 根据 manifest 下载、校验 sha512 并安装 agy 二进制。
+ * 支持主源 CDN 下载失败时自动回退至 fallbackUrl（仍执行相同 SHA-512 校验）。
  * 校验失败时立即删除临时下载文件并抛错，绝不写入目标路径。
  */
 export async function installAgyFromManifest(
   manifest: AgyManifest,
   opts?: AgyInstallTargetOptions & { quiet?: boolean },
-): Promise<{ binPath: string; version?: string; onPath: boolean }> {
+): Promise<{ binPath: string; version?: string; onPath: boolean; downloadUrl?: string }> {
   if (!manifest?.url || !manifest?.sha512) {
     throw new Error("Invalid Antigravity manifest: url and sha512 are required");
   }
@@ -1676,15 +1976,43 @@ export async function installAgyFromManifest(
   s?.start(`正在下载 Antigravity (agy)${verLabel}...`);
 
   const tmpDir = await fs.mkdtemp(join(tmpdir(), "tako-agy-install-"));
-  const isTarGz = /\.tar\.gz($|\?)|\.tgz($|\?)/i.test(manifest.url);
-  const archiveName = platform === "win32" && !isTarGz ? "agy-download.exe" : "agy-download.tar.gz";
-  const tmpFile = join(tmpDir, archiveName);
+  const candidateUrls = [manifest.url];
+  if (manifest.fallbackUrl && manifest.fallbackUrl !== manifest.url) {
+    candidateUrls.push(manifest.fallbackUrl);
+  }
+
+  let downloadedUrl = candidateUrls[0];
+  let isTarGz = /\.tar\.gz($|\?)|\.tgz($|\?)/i.test(downloadedUrl);
+  let archiveName = platform === "win32" && !isTarGz ? "agy-download.exe" : "agy-download.tar.gz";
+  let tmpFile = join(tmpDir, archiveName);
 
   try {
-    await downloadFile(manifest.url, tmpFile, (done, total, elapsedSec) => {
-      if (!s) return;
-      s.update(formatDownloadProgress(`正在下载 Antigravity (agy)${verLabel}`, done, total, elapsedSec));
-    });
+    let lastDownloadErr: unknown = null;
+    let downloaded = false;
+    for (let i = 0; i < candidateUrls.length; i++) {
+      const url = candidateUrls[i];
+      isTarGz = /\.tar\.gz($|\?)|\.tgz($|\?)/i.test(url);
+      archiveName = platform === "win32" && !isTarGz ? "agy-download.exe" : "agy-download.tar.gz";
+      tmpFile = join(tmpDir, archiveName);
+      if (i > 0) {
+        s?.update(`主源下载失败，正在切换备源下载 Antigravity (agy)${verLabel}...`);
+      }
+      try {
+        await downloadFile(url, tmpFile, (done, total, elapsedSec) => {
+          if (!s) return;
+          s.update(formatDownloadProgress(`正在下载 Antigravity (agy)${verLabel}`, done, total, elapsedSec));
+        });
+        downloadedUrl = url;
+        downloaded = true;
+        break;
+      } catch (err) {
+        lastDownloadErr = err;
+        await fs.rm(tmpFile, { force: true }).catch(() => {});
+      }
+    }
+    if (!downloaded) {
+      throw lastDownloadErr instanceof Error ? lastDownloadErr : new Error(String(lastDownloadErr ?? "下载失败"));
+    }
 
     s?.update("正在校验 SHA-512 完整性...");
     const actualSha512 = await computeFileSha512(tmpFile);
@@ -1756,7 +2084,7 @@ export async function installAgyFromManifest(
       log.info("可使用 `tako --agy` 直接启动 Antigravity CLI！");
     }
 
-    return { binPath, version: manifest.version, onPath };
+    return { binPath, version: manifest.version, onPath, downloadUrl: downloadedUrl };
   } catch (err) {
     s?.stop();
     throw err;
@@ -1769,6 +2097,7 @@ export async function installAgy(opts?: AgyInstallOptions): Promise<{
   success: boolean;
   binPath?: string;
   version?: string;
+  previousVersion?: string | null;
   error?: string;
 }> {
   try {
@@ -1776,10 +2105,23 @@ export async function installAgy(opts?: AgyInstallOptions): Promise<{
     if (opts?.version && opts.version !== "latest" && manifest.version && manifest.version !== opts.version) {
       return {
         success: false,
-        error: `官方更新源当前提供版本为 ${manifest.version}，无法安装指定旧版本 ${opts.version}`,
+        error: `Tako 受控更新源当前已验证版本为 ${manifest.version}，无法安装指定版本 ${opts.version}`,
       };
     }
+
+    let previousVersion: string | null = opts?.localVersion ?? null;
+    if (previousVersion === null) {
+      try {
+        const cfg = await loadConfig();
+        previousVersion = cfg.installedClients?.agy?.version ?? null;
+      } catch {
+        // ignore
+      }
+    }
+
     const installed = await installAgyFromManifest(manifest, opts);
+    await writeAgyUpdateCache(getAgyUpdateCachePath(opts), manifest);
+
     if (installed.version) {
       try {
         const config = await loadConfig();
@@ -1792,10 +2134,18 @@ export async function installAgy(opts?: AgyInstallOptions): Promise<{
             },
           },
         });
-        track("client_installed", {
-          client_id: "agy",
-          client_version: installed.version,
-        });
+        if (previousVersion && previousVersion !== installed.version) {
+          track("client_updated", {
+            client_id: "agy",
+            from_version: previousVersion,
+            to_version: installed.version,
+          });
+        } else {
+          track("client_installed", {
+            client_id: "agy",
+            client_version: installed.version,
+          });
+        }
       } catch {
         // best-effort config persistence
       }
@@ -1804,6 +2154,7 @@ export async function installAgy(opts?: AgyInstallOptions): Promise<{
       success: true,
       binPath: installed.binPath,
       version: installed.version,
+      previousVersion,
     };
   } catch (error) {
     return {
@@ -1811,4 +2162,214 @@ export async function installAgy(opts?: AgyInstallOptions): Promise<{
       error: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+/**
+ * 独立检查 / 更新 Antigravity CLI (`tako update agy [--check] [--force] [--json]`)。
+ * 完全解耦于 Tako CLI 自身发版周期，仅跟随 Tako 受控云端清单。
+ */
+export async function updateAgyClient(
+  args: string[] = [],
+  opts?: AgyInstallOptions & {
+    readLocalVersion?: () => Promise<string | null>;
+  },
+): Promise<number> {
+  if (args.includes("-h") || args.includes("--help")) {
+    console.log(`用法: tako update agy [--check] [--force] [--json]
+
+说明:
+  独立从 Tako 受控通道检查或更新 Antigravity CLI (agy)，无需等待 Tako CLI 发版。
+  --check   仅检查版本与网关支持窗口，不执行下载安装
+  --force   强制对齐 / 重新安装 Tako 受控已验证版本（可用于回退超前版本）
+  --json    以 JSON 格式输出检查或更新结果`);
+    return 0;
+  }
+
+  const checkOnly = args.includes("--check");
+  const force = args.includes("--force") || Boolean(opts?.force);
+  const jsonOutput = args.includes("--json");
+
+  const localVersion = opts?.readLocalVersion
+    ? await opts.readLocalVersion()
+    : (await getClient("agy")?.readSystemVersion?.()) ?? null;
+
+  let status: SystemClientUpdateStatus | null;
+  try {
+    status = await checkAgyManagedUpdate({
+      localVersion,
+      forceRefresh: true,
+      manifestBaseUrl: opts?.manifestBaseUrl,
+      fallbackManifestBaseUrl: opts?.fallbackManifestBaseUrl,
+      platform: opts?.platform,
+      arch: opts?.arch,
+      isMusl: opts?.isMusl,
+      env: opts?.env,
+      cachePath: opts?.cachePath,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (jsonOutput) {
+      console.log(JSON.stringify({ ok: false, error: msg, localVersion }, null, 2));
+    } else {
+      console.error(`检查 Antigravity (agy) 受控更新失败: ${msg}`);
+    }
+    return 1;
+  }
+
+  if (!status || !status.latestVersion) {
+    const msg = "受控更新清单未返回有效版本号";
+    if (jsonOutput) {
+      console.log(JSON.stringify({ ok: false, error: msg, localVersion }, null, 2));
+    } else {
+      console.error(msg);
+    }
+    return 1;
+  }
+
+  const windowLabel = status.supportedVersions?.length
+    ? status.supportedVersions.join(", ")
+    : status.minSupportedVersion
+      ? `>= ${status.minSupportedVersion}`
+      : status.latestVersion;
+
+  if (checkOnly) {
+    if (jsonOutput) {
+      console.log(
+        JSON.stringify(
+          {
+            ok: true,
+            installed: Boolean(localVersion),
+            ...status,
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      console.log(`Antigravity (agy) 受控更新状态:`);
+      console.log(`  本地版本: ${localVersion ? `v${localVersion}` : "未安装"}`);
+      console.log(`  受控推荐: v${status.latestVersion}`);
+      console.log(`  支持窗口: ${windowLabel}`);
+      if (status.source) console.log(`  清单来源: ${status.source}`);
+      if (!localVersion) {
+        console.log("  状态: 未安装，可运行 `tako update agy` 一键安装受控版本");
+      } else if (status.belowMinSupported) {
+        console.log("  状态: 低于网关最低支持版本，请运行 `tako update agy` 立即升级");
+      } else if (status.hasUpdate) {
+        console.log("  状态: 有已验证更新，可运行 `tako update agy` 独立升级");
+      } else if (status.aheadOfManaged) {
+        console.log("  状态: 本地版本高于受控已验证版本；如遇兼容问题可运行 `tako update agy --force` 对齐");
+      } else {
+        console.log("  状态: 已在受控支持窗口内且为最新已验证版本");
+      }
+    }
+    return 0;
+  }
+
+  if (localVersion && status.aheadOfManaged && !force) {
+    if (jsonOutput) {
+      console.log(
+        JSON.stringify(
+          {
+            ok: true,
+            updated: false,
+            reason: "ahead_of_managed",
+            ...status,
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      log.warn(
+        `Antigravity (agy) 当前版本 v${localVersion} 高于 Tako 受控已验证版本 v${status.latestVersion}（支持窗口: ${windowLabel}）。`,
+      );
+      log.info("如需回退对齐到受控已验证版本，请运行 `tako update agy --force`。");
+    }
+    return 0;
+  }
+
+  if (localVersion && !status.hasUpdate && !status.belowMinSupported && !force) {
+    if (jsonOutput) {
+      console.log(
+        JSON.stringify(
+          {
+            ok: true,
+            updated: false,
+            reason: "up_to_date",
+            ...status,
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      console.log(`✓ Antigravity (agy) 已是 Tako 受控最新已验证版本 v${localVersion}（支持窗口: ${windowLabel}）`);
+    }
+    return 0;
+  }
+
+  const installRes = await installAgy({
+    ...opts,
+    force: true,
+    localVersion,
+    quiet: jsonOutput ? true : opts?.quiet,
+  });
+  if (!installRes.success) {
+    if (jsonOutput) {
+      console.log(
+        JSON.stringify(
+          {
+            ok: false,
+            updated: false,
+            error: installRes.error ?? "安装失败",
+            localVersion,
+            targetVersion: status.latestVersion,
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      console.error(`更新 Antigravity (agy) 失败: ${installRes.error ?? "未知错误"}`);
+    }
+    return 1;
+  }
+
+  const resolvedAfter = await getClient("agy")?.resolveBin?.();
+  const normBin = (p: string) => p.replace(/[\\/]+$/, "").toLowerCase();
+  const shadowedBy =
+    resolvedAfter && installRes.binPath && normBin(resolvedAfter) !== normBin(installRes.binPath)
+      ? resolvedAfter
+      : undefined;
+
+  if (jsonOutput) {
+    console.log(
+      JSON.stringify(
+        {
+          ok: true,
+          updated: true,
+          previousVersion: localVersion,
+          version: installRes.version ?? status.latestVersion,
+          binPath: installRes.binPath,
+          ...(shadowedBy ? { shadowedBy } : {}),
+          source: status.source,
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    if (localVersion && installRes.version) {
+      console.log(`✓ Antigravity (agy) 已更新: v${localVersion} → v${installRes.version}`);
+    } else {
+      console.log(`✓ Antigravity (agy) 已就绪: v${installRes.version ?? status.latestVersion}`);
+    }
+    if (shadowedBy && installRes.binPath) {
+      log.warn(
+        `检测到另一份 agy (${shadowedBy}) 在 PATH 中优先级高于刚更新的 ${installRes.binPath}，建议删除旧版本或调整 PATH 顺序。`,
+      );
+    }
+  }
+  return 0;
 }

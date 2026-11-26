@@ -224,6 +224,8 @@ export function computeAgyGatewayEnvVars(
   const envVars: Record<string, string> = {};
   if (gatewayUrl) envVars.AGY_LLM_GATEWAY_URL = gatewayUrl;
   envVars.AGY_LLM_GATEWAY_API_KEY = gatewayKey;
+  envVars.AGY_LLM_GATEWAY_WIRE_PROTOCOL = baseEnv.AGY_LLM_GATEWAY_WIRE_PROTOCOL?.trim() || "genai";
+  envVars.AGY_CLI_DISABLE_AUTO_UPDATE = baseEnv.AGY_CLI_DISABLE_AUTO_UPDATE?.trim() || "1";
   envVars.AGY_LLM_GATEWAY_MODELS = baseEnv.AGY_LLM_GATEWAY_MODELS?.trim() || gatewayModels.join(",");
   envVars.AGY_LLM_GATEWAY_TIER_PRO = baseEnv.AGY_LLM_GATEWAY_TIER_PRO?.trim() || tiers.pro;
   envVars.AGY_LLM_GATEWAY_TIER_FLASH = baseEnv.AGY_LLM_GATEWAY_TIER_FLASH?.trim() || tiers.flash;

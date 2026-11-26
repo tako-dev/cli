@@ -207,6 +207,8 @@ describe("Antigravity environment & gateway URL preparation", () => {
     expect(childEnv.PATH).toBe("/usr/bin:/bin");
     expect(childEnv.AGY_LLM_GATEWAY_URL).toBe("https://tako.shiroha.tech");
     expect(childEnv.AGY_LLM_GATEWAY_API_KEY).toBe("cr_dedicated_agy_key");
+    expect(childEnv.AGY_LLM_GATEWAY_WIRE_PROTOCOL).toBe("genai");
+    expect(childEnv.AGY_CLI_DISABLE_AUTO_UPDATE).toBe("1");
     expect(childEnv.AGY_LLM_GATEWAY_MODELS).toBe(
       expandAgyGatewayModelsWithEffort(DEFAULT_AGY_GATEWAY_MODELS).join(","),
     );
@@ -222,6 +224,8 @@ describe("Antigravity environment & gateway URL preparation", () => {
         AGY_LLM_GATEWAY_TIER_PRO: "claude-opus-5-5",
         AGY_LLM_GATEWAY_TIER_FLASH: "   ",
         AGY_LLM_GATEWAY_TIER_FLASH_LITE: "gpt-oss-120b",
+        AGY_LLM_GATEWAY_WIRE_PROTOCOL: "openai",
+        AGY_CLI_DISABLE_AUTO_UPDATE: "0",
       },
       {
         baseUrl: "https://tako.shiroha.tech/v1",
@@ -233,6 +237,8 @@ describe("Antigravity environment & gateway URL preparation", () => {
     expect(childEnv.AGY_LLM_GATEWAY_TIER_PRO).toBe("claude-opus-5-5");
     expect(childEnv.AGY_LLM_GATEWAY_TIER_FLASH).toBe("claude-sonnet-4-6");
     expect(childEnv.AGY_LLM_GATEWAY_TIER_FLASH_LITE).toBe("gpt-oss-120b");
+    expect(childEnv.AGY_LLM_GATEWAY_WIRE_PROTOCOL).toBe("openai");
+    expect(childEnv.AGY_CLI_DISABLE_AUTO_UPDATE).toBe("0");
 
     const saved: Record<string, string | undefined> = {};
     const keys = [
@@ -240,6 +246,8 @@ describe("Antigravity environment & gateway URL preparation", () => {
       "AGY_LLM_GATEWAY_TIER_PRO",
       "AGY_LLM_GATEWAY_TIER_FLASH",
       "AGY_LLM_GATEWAY_TIER_FLASH_LITE",
+      "AGY_LLM_GATEWAY_WIRE_PROTOCOL",
+      "AGY_CLI_DISABLE_AUTO_UPDATE",
       "TAKO_AGY_GATEWAY_URL",
       "TAKO_AGY_API_KEY",
     ];
@@ -258,6 +266,8 @@ describe("Antigravity environment & gateway URL preparation", () => {
       expect(envVars).toEqual({
         AGY_LLM_GATEWAY_URL: "https://tako.shiroha.tech",
         AGY_LLM_GATEWAY_API_KEY: "cr_agy_key",
+        AGY_LLM_GATEWAY_WIRE_PROTOCOL: "genai",
+        AGY_CLI_DISABLE_AUTO_UPDATE: "1",
         AGY_LLM_GATEWAY_MODELS: "claude-sonnet-5-5,gemini-3.5-flash-lite",
         AGY_LLM_GATEWAY_TIER_PRO: "gemini-4-pro",
         AGY_LLM_GATEWAY_TIER_FLASH: "claude-sonnet-4-6",
